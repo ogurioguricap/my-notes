@@ -5,6 +5,35 @@
 
 一个**没有后端、没有框架、没有构建依赖**的个人笔记网站。内容写成 Markdown，一条命令生成网页，推到 GitHub 就有一个手机/平板/电脑都能打开的网址。
 
+## 在线编辑（浏览器里直接写，不用碰代码）
+
+打开站点 → 任意笔记页右上角 **✎ 编辑这篇**，或侧栏 **＋新建笔记**，就能在全屏编辑器里写：
+
+- **左写右预览**：预览用的是 `lib/markdown.mjs`（与构建脚本同一份代码），**所见即线上**
+- **元数据表单**：标题、分类、标签、日期、置顶、摘要，不用手写 frontmatter
+- **18 个工具栏按钮**：标题、粗体、表格、代码块、公式、提示框、双链……点一下插入
+- **上传图片**：选图即上传到 `content/assets/` 并自动插入引用
+- **草稿自动保存**：写的东西每 0.8 秒存进浏览器，刷新、关标签页都不丢
+- **冲突检测**：如果这篇在别处被改过，保存前会提示，不会静默覆盖
+
+**保存后会做什么**：
+
+```
+浏览器里点「保存并发布」
+   → 用 GitHub API 提交 content/xxx.md
+   → 同时用 lib/site-build.mjs 在浏览器里重建 docs/data/index.json 并提交
+   → GitHub Pages 约 1 分钟后自动更新线上
+```
+
+所以**不需要本地构建、不需要命令行**，手机上也能改笔记。
+
+### 首次使用要填一次令牌
+
+点编辑器右上角 **⚙** → 填 Personal Access Token（`repo` 权限，生成地址 github.com/settings/tokens/new）→ 验证 → 保存。
+
+> 🔒 令牌**只存在你这台设备的浏览器 localStorage**，只发往 `api.github.com`，不经过任何第三方服务器，也不会写进仓库（`.gitignore` 已排除 `.env`/`*.token`/`*.pem`）。公用电脑上用完点「清除令牌」即可。
+> 侧栏「新建笔记」原来的**模板面板**仍然保留：想按模板手写 `.md` 自己提交也可以。
+
 ## 它长什么样
 
 界面语言参考「笔记本 App」的思路：**每篇笔记是一本笔记本，封面按分类自动上色**。
@@ -36,6 +65,10 @@ notes-site/
 │   ├── assets/                 图片、PDF 等附件
 │   └── _extracted.json         附件文字提取结果（图片 OCR / PDF 文本）
 │
+├── lib/                        Markdown 渲染内核（构建脚本与浏览器共用，保证预览＝线上）
+│   ├── markdown.mjs            frontmatter / 块级行内解析 / 公式与代码块
+│   └── site-build.mjs          站点数据构建（浏览器在线保存时重建索引用）
+│
 ├── tools/
 │   ├── update.mjs              一键更新：提取 → 构建 → 自检 → 测试 → 提交 → 推送
 │   ├── deploy-github.mjs       授权后自动部署：建仓库 → 推送 → 开 Pages
@@ -50,7 +83,7 @@ notes-site/
 ├── docs/                       ← 构建产物，GitHub Pages 直接托管这一层
 │   ├── index.html
 │   ├── css/style.css
-│   ├── js/{app,search,graph,highlight}.js
+│   ├── js/{app,editor,search,graph,highlight}.js
 │   ├── data/index.json         所有笔记的 HTML + 目录 + 搜索索引
 │   ├── assets/                 附件副本（自动复制）
 │   ├── sw.js                   离线缓存
