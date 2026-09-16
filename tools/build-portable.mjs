@@ -16,11 +16,6 @@ const OUT = path.join(DIST, '我的笔记-离线版.html');
 const ASSET_PREFIX = '../docs/';
 
 export function main() {
-  const pkg = path.join(ROOT, 'package.json');
-  if (fs.existsSync(pkg)) {
-    console.log('  ℹ 提示：便携版内联的是 docs/ 当前内容；若刚改了 content/，先跑 node tools/build.mjs');
-  }
-
   const idxPath = path.join(DOCS, 'data', 'index.json');
   if (!fs.existsSync(idxPath)) {
     console.error('✗ 缺少 docs/data/index.json，请先运行 node tools/build.mjs');
