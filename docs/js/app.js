@@ -5,6 +5,8 @@
 import { buildIndex, search, hlMark as highlight } from './search.js';
 import { highlightAll, escapeHtml } from './highlight.js';
 import { createGraph } from './graph.js';
+import { Editor } from './editor.mjs';
+import { applyEdit } from '../../lib/site-build.mjs';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -379,6 +381,10 @@ function openNote(slug, opts = {}) {
         ${note.attachments.length ? `<span class="pill">📎 ${note.attachments.length} 个附件文字已进检索</span>` : ''}
         ${note.tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
       </div>
+      <div class="article-tools">
+        <button class="ql-btn primary" data-edit="${escapeHtml(note.slug)}" type="button">✎ 编辑这篇</button>
+        <button class="ql-btn" data-quick="${escapeHtml(note.slug)}" type="button">👁 速览</button>
+      </div>
     </header>
     <div class="article-body" id="articleBody">${note.html}</div>
     ${backlinks ? `<div class="backlinks"><h4>被这些笔记引用</h4><div class="backlink-chips">${backlinks}</div></div>` : ''}
@@ -504,6 +510,7 @@ function openCtx(slug, x, y) {
   const menu = $('#ctxMenu');
   menu.innerHTML = `
     <button data-act="open">📖 打开阅读</button>
+    <button data-act="edit">✎ 在线编辑</button>
     <button data-act="quick">👁 速览</button>
     <button data-act="copy">🔗 复制链接</button>
     <div class="sep"></div>
@@ -524,6 +531,7 @@ function handleCtxAction(act) {
   const url = `${location.origin}${location.pathname}#/note/${encodeURIComponent(note.slug)}`;
   switch (act) {
     case 'open': location.hash = `#/note/${encodeURIComponent(note.slug)}`; break;
+    case 'edit': openEditor(note.slug); break;
     case 'quick': openQuickLook(note.slug); break;
     case 'copy': copyText(url, null, null); showToast('链接已复制'); break;
     case 'cat':
@@ -908,6 +916,12 @@ function bindInteractions() {
     if (ctxBtn) { handleCtxAction(ctxBtn.dataset.act); return; }
     if (!e.target.closest('#ctxMenu')) closeCtx();
 
+    // 在线编辑
+    const editBtn = e.target.closest('[data-edit]');
+    if (editBtn) { openEditor(editBtn.dataset.edit); return; }
+    const quickBtn = e.target.closest('[data-quick]');
+    if (quickBtn) { openQuickLook(quickBtn.dataset.quick); return; }
+
     const catEl = e.target.closest('[data-cat]');
     if (catEl) {
       e.preventDefault();
@@ -951,11 +965,70 @@ function bindInteractions() {
 
   $('#lightboxClose').addEventListener('click', () => $('#lightbox').classList.remove('on'));
   $('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') $('#lightbox').classList.remove('on'); });
-  $('#newBtn').addEventListener('click', openNewSheet);
+  $('#newBtn').addEventListener('click', () => openEditor(''));
   $$('#newSheet [data-close]').forEach((el) => el.addEventListener('click', closeNewSheet));
   $$('#quicklook [data-close]').forEach((el) => el.addEventListener('click', closeQuickLook));
   $('#quicklook').addEventListener('click', (e) => { if (e.target.classList.contains('ql-mask')) closeQuickLook(); });
   $('#newSheet').addEventListener('click', (e) => { if (e.target.classList.contains('sheet-mask')) closeNewSheet(); });
+}
+
+/* ============================ 在线编辑 ============================ */
+let editor = null;
+
+function rebuildIndexJs({ source, slug, raw, attachments }) {
+  const payload = applyEdit(state.payload, { source, slug, raw, attachments });
+  return JSON.stringify(payload);
+}
+
+/** 保存成功后：刷新本地状态与界面（无需刷新页面即可读到新内容） */
+function afterSaved(slug, info) {
+  try {
+    const markdown = editor ? editor.buildMarkdown(slug) : null;
+    if (markdown) {
+      state.payload = applyEdit(state.payload, {
+        source: info.fileName ? `content/${info.fileName}` : `content/${slug}.md`,
+        slug,
+        raw: markdown,
+        attachments: (state.bySlug.get(slug) || {}).attachments || [],
+      });
+      state.notes = state.payload.notes || [];
+      state.bySlug = new Map(state.notes.map((n) => [n.slug, n]));
+      state.index = buildIndex(state.payload);
+      renderSidebar();
+      renderHome();
+      state.currentSlug = slug;
+      openNote(slug);
+    }
+  } catch (e) {
+    console.warn('本地刷新失败（线上已保存）', e);
+  }
+}
+
+function initEditor() {
+  const host = document.getElementById('editor');
+  if (!host) return;
+  editor = new Editor({
+    host,
+    site: { payload: state.payload, notes: state.notes, bySlug: state.bySlug },
+    rebuildIndex: rebuildIndexJs,
+    onToast: (msg, kind) => {
+      showToast(msg);
+      if (kind === 'error') console.warn('[editor]', msg);
+    },
+    onSaved: afterSaved,
+  });
+
+  // 编辑器预览里的公式交给 KaTeX 渲染
+  document.addEventListener('note-editor-preview', (ev) => {
+    if (ev.detail && ev.detail.root) renderMath(ev.detail.root);
+  });
+}
+
+function openEditor(slug) {
+  if (!editor) initEditor();
+  if (!editor) { showToast('编辑器没能初始化，请刷新页面重试'); return; }
+  if (editor._keyHandler) document.removeEventListener('keydown', editor._keyHandler);
+  editor.open(slug || '');
 }
 
 /* ============================ 启动 ============================ */
@@ -1050,6 +1123,7 @@ async function boot() {
   $$('.view').forEach((v) => v.classList.remove('on'));
 
   renderSidebar();
+  initEditor();
   bindInteractions();
   bindScroll();
 
