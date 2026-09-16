@@ -43,6 +43,7 @@ notes-site/
 │   ├── extract-attachments.mjs 附件文字提取
 │   ├── make-demo-image.mjs     生成演示图（自写 PNG 编码器）
 │   ├── selfcheck.mjs           静态自检（DOM 契约 + 产物完整性）
+│   ├── test-modules.mjs        模块链接测试（import/export 对账 + 真实加载启动）
 │   ├── test-search.mjs         检索功能实测（28 项断言）
 │   └── test-ui-lib.mjs         资料库界面数据契约（23 项断言）
 │
@@ -247,6 +248,7 @@ node tools/deploy-github.mjs --repo my-notes --dry-run
 
 ```bash
 node tools/selfcheck.mjs      # 静态契约 22 项：JS↔HTML 元素对账、关键 class 覆盖、产物标签配平、锚点可达、路径安全
+node tools/test-modules.mjs   # 模块链接 11 项：import/export 对账 + 真跑一遍启动流程（防「页面卡在载入中」）
 node tools/test-search.mjs    # 检索实测 28 项：标题/正文/代码/标签/附件文字/多词/边界/性能
 node tools/test-ui-lib.mjs    # 界面契约 23 项：封面配色、卡片渲染、书架分组、速览字段、封面亮度可读性
 ```
