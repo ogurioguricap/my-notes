@@ -26,11 +26,16 @@ export function main() {
   const css = fs.readFileSync(path.join(DOCS, 'css', 'style.css'), 'utf8');
   const html = fs.readFileSync(path.join(DOCS, 'index.html'), 'utf8');
 
-  // 三个模块按顺序拼接为一个脚本（解析出来的所有顶层标识符都存在，运行时才求值）
-  const parts = ['search.js', 'highlight.js', 'graph.js', 'app.js'].map((f) => ({
-    f,
-    code: fs.readFileSync(path.join(DOCS, 'js', f), 'utf8'),
-  }));
+  // 内联顺序即依赖顺序（被依赖的在前），全部拍平到同一作用域
+  const parts = [
+    'lib/markdown.mjs',
+    'lib/site-build.mjs',
+    'docs/js/search.js',
+    'docs/js/highlight.js',
+    'docs/js/graph.js',
+    'docs/js/editor.mjs',
+    'docs/js/app.js',
+  ].map((f) => ({ f, code: fs.readFileSync(path.join(ROOT, f), 'utf8') }));
 
   // 打包后同一作用域内不得有重复的顶层声明
   const declRe = /^(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/gm;
@@ -56,7 +61,8 @@ export function main() {
         .replace(/^\s*import\s+[^;]+;\s*$/gm, '')          // 去掉 import（已在同一作用域）
         .replace(/^export\s+(?=(?:async\s+)?(?:function|class|const|let|var)\s)/gm, '') // 去掉 export
         .replace(/^const isDirect = process\.argv[\s\S]*?^\}\s*$/gm, '')               // 去掉 Node 专用入口守卫
-        .replace(/boot\(\);\s*$/m, '')                                                  // 末尾统一启动一次
+        .replace(/^\s*boot\(\)\.catch[\s\S]*?;\s*$/gm, '')                             // 启动改为末尾统一执行
+        .replace(/^\s*boot\(\);\s*$/gm, '')
     )
     .join('\n\n');
 
@@ -66,11 +72,20 @@ export function main() {
 
   let out = html
     .replace(/<link rel="manifest"[^>]*>\s*/g, '')
-    .replace(/<link rel="stylesheet" href="css\/style\.css">/, `<style>\n${css}\n</style>`)
-    .replace(/<script type="module" src="js\/app\.js"><\/script>/, `<script>${escScript(bundle)}\n\n/* ---- 启动 ---- */\nboot();\n</script>`)
-    .replace(/<script defer src="https:\/\/cdn\.jsdelivr\.net\/npm\/katex[^>]*><\/script>/, '')
-    .replace(/<link rel="stylesheet" href="https:\/\/cdn\.jsdelivr\.net\/npm\/katex[^>]*>/, '<!-- 离线版不含 KaTeX：公式会降级为等宽文本，内容不丢 -->')
+    .replace(/<link rel="stylesheet" href="css\/style\.css"[^>]*>/, `<style>\n${css}\n</style>`)
+    .replace(
+      /<script[^>]*src="js\/app\.js[^"]*"[^>]*><\/script>/,
+      `<script>${escScript(bundle)}\n\n/* ---- 启动 ---- */\nboot().catch(function (e) { showFatal(e); });\n</script>`
+    )
+    .replace(/<script[^>]*src="https:\/\/cdn\.jsdelivr\.net\/npm\/katex[^>]*><\/script>/, '')
+    .replace(/<link[^>]*href="https:\/\/cdn\.jsdelivr\.net\/npm\/katex[^>]*>/, '<!-- 离线便携版不含 KaTeX：公式会降级为等宽文本，内容不丢 -->')
     .replace(/<title>(.*?)<\/title>/, '<title>$1 · 离线版</title>');
+
+  // 校验：脚本真的内联进去了
+  if (!/class Editor/.test(out) || !/function renderDocument/.test(out)) {
+    console.error('✗ 内联失败：index.html 里的 app.js 引用没能被替换（请检查 index.html 的 script 标签写法）');
+    return false;
+  }
 
   // 注入数据 + 附件路径前缀
   const inject = `
