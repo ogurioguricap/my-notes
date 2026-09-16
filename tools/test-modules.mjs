@@ -92,6 +92,27 @@ while (queue.length) {
   }
 }
 
+/* ---------- 1.5 浏览器解析路径检查（import 的目标必须在 docs/ 下真实存在） ---------- */
+console.log('\n— 浏览器实际请求路径检查 —');
+const servedFiles = [];
+function walkDocs(dir, base = '') {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = base ? base + '/' + e.name : e.name;
+    if (e.isDirectory()) walkDocs(path.join(dir, e.name), rel);
+    else servedFiles.push(rel);
+  }
+}
+walkDocs(path.join(ROOT, 'docs'));
+for (const from of visited) {
+  const code = readModule(from);
+  if (!code) continue;
+  for (const m of code.matchAll(/from\s*'([^']+)'/g)) {
+    const target = resolveSpecifier(from, m[1]);
+    if (!target || !/\.(m?js)$/.test(target)) continue;
+    expect(`${from} 引用的 ${target} 已发布（docs/ 下存在）`, servedFiles.includes(target), '线上会 404 → 整站脚本不执行');
+  }
+}
+
 /* ---------- 2. 在 Node 里真的 import 一遍（DOM 桩） ---------- */
 console.log('\n— 真实加载（含启动流程）—');
 function makeStub(name) {
