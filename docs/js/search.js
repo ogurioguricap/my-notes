@@ -147,18 +147,18 @@ function makeSnippet(doc, terms) {
       matched = t;
     }
   }
-  if (pos === -1) return highlight(doc.excerpt || '', terms);
+  if (pos === -1) return hlMark(doc.excerpt || '', terms);
   const start = Math.max(0, pos - 60);
   const end = Math.min(source.length, pos + 160);
   let s = (start > 0 ? '…' : '') + source.slice(start, end) + (end < source.length ? '…' : '');
-  return highlight(s, terms);
+  return hlMark(s, terms);
 }
 
-export function highlight(text, terms) {
-  let out = escapeHtml(text);
+export function hlMark(text, terms) {
+  let out = escSearch(text);
   const sorted = [...new Set(terms.map((t) => String(t).trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
   for (const t of sorted) {
-    const safe = escapeHtml(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const safe = escSearch(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (!safe) continue;
     const re = new RegExp(safe, CJK.test(t) ? 'g' : 'gi');
     out = out.replace(re, (m) => `<mark>${m}</mark>`);
@@ -166,6 +166,6 @@ export function highlight(text, terms) {
   return out;
 }
 
-export function escapeHtml(s) {
+export function escSearch(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
