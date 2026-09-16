@@ -959,6 +959,46 @@ function bindInteractions() {
 }
 
 /* ============================ 启动 ============================ */
+/** 出问题时不再让页面停在「载入中」：显示可操作的提示 */
+function showFatal(err) {
+  const detail = (err && (err.message || (err.reason && err.reason.message))) || String(err || '未知错误');
+  const box = document.getElementById('loading');
+  const tip = document.createElement('div');
+  tip.className = 'empty';
+  tip.innerHTML = '<div class="big">🛠</div><b>页面没能启动</b><br>' +
+    '<span style="font-size:13px">通常是浏览器缓存里还留着旧版本的文件，清理后重新打开即可。</span><br><br>' +
+    '<span style="font-size:12px;color:var(--text-faint);word-break:break-all">' + escapeHtml(String(detail).slice(0, 220)) + '</span><br><br>' +
+    '<button class="ql-btn primary" id="fixCacheBtn" type="button">清理缓存并重新打开</button>';
+  if (box) { box.style.display = 'block'; box.innerHTML = ''; box.appendChild(tip); }
+  else if (document.body) document.body.appendChild(tip);
+
+  const btn = document.getElementById('fixCacheBtn');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+        }
+        if (window.caches) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        }
+      } catch (e) {}
+      location.replace(location.href.split('#')[0] + '?fresh=' + Date.now());
+    });
+  }
+}
+
+window.addEventListener('error', (e) => {
+  if (document.querySelector('.view.on')) return; // 已经渲染出来了就不打扰
+  showFatal(e.error || e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  if (document.querySelector('.view.on')) return;
+  showFatal(e.reason);
+});
+
 async function boot() {
   applyTheme();
   const portable = !!window.__NOTES_PORTABLE__;
@@ -1058,9 +1098,34 @@ async function boot() {
   window.addEventListener('hashchange', handleRoute);
   handleRoute();
 
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Service Worker 只用于「已经访问过之后」的离线兜底；
+  // 发现新版本时自动 reload 一次，避免旧缓存与新页面混用。
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !portable) {
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.addEventListener('message', (ev) => {
+        if (ev.data && ev.data.type === 'offline-cache') showToast('离线缓存版本 · 联网后刷新即为最新');
+      });
+    }
+    navigator.serviceWorker
+      .register('sw.js')
+      .then((reg) => {
+        if (reg.waiting) reg.waiting.postMessage({ type: 'clear-cache' });
+        reg.addEventListener('updatefound', () => {
+          const sw = reg.installing;
+          if (!sw) return;
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+              const key = 'note-sw-reloaded';
+              if (sessionStorage.getItem(key) !== '1') {
+                sessionStorage.setItem(key, '1');
+                location.reload();
+              }
+            }
+          });
+        });
+      })
+      .catch(() => {});
   }
 }
 
-boot();
+boot().catch((e) => showFatal(e));
