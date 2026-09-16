@@ -1,0 +1,23 @@
+# 依赖目录（本站在生产环境不需要任何依赖）
+node_modules/
+
+# 本地预览与调试产物
+_shots/
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ��ʱ���Խű�
+_*.cjs
+_*.mjs
+_*.txt
+
+# ���� / ������Կ��������⣩
+.env
+.env.*
+*.token
+*.pem
+!*.pem.example
