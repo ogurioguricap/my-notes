@@ -129,7 +129,7 @@ try {
 /* ---------- 3. index.html 的引用完整性 ---------- */
 console.log('\n— index.html 引用 —');
 const html = fs.readFileSync(path.join(ROOT, 'docs', 'index.html'), 'utf8');
-for (const [m, re] of [['css/style.css', /href="css\/style\.css"/], ['js/app.js', /src="js\/app\.js"/], ['manifest', /rel="manifest"/]]) {
+for (const [m, re] of [['css/style.css', /href="css\/style\.css"/], ['js/app.js', /src="js\/app\.js(\?v=\d+)?"/], ['manifest', /rel="manifest"/]]) {
   expect(`引用了 ${m}`, re.test(html));
 }
 const domIds = ['segs', 'listToggle', 'newBtn', 'newSheet', 'templateList', 'quicklook', 'qlBody', 'ctxMenu', 'noteList', 'homeBody'];
