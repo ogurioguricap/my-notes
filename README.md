@@ -1,5 +1,8 @@
 # 我的笔记 · 纯前端笔记站
 
+> 🌐 **在线地址：https://ogurioguricap.github.io/my-notes/**（已发布，手机 / 平板 / 电脑直接打开）
+> 📦 仓库：https://github.com/ogurioguricap/my-notes
+
 一个**没有后端、没有框架、没有构建依赖**的个人笔记网站。内容写成 Markdown，一条命令生成网页，推到 GitHub 就有一个手机/平板/电脑都能打开的网址。
 
 ## 它长什么样
@@ -94,8 +97,8 @@ node tools/update.mjs --print-git              # 只打印该执行的 git 命�
 
 ```bash
 cd site
-python -m http.server 8899
-# 打开 http://127.0.0.1:8899
+python -m http.server 8877 --directory docs
+# 打开 http://127.0.0.1:8877
 ```
 
 > ⚠️ 不要直接双击 `index.html`：浏览器对 `file://` 的 fetch 有限制，页面会提示读不到数据。必须走本地服务器或线上地址。
