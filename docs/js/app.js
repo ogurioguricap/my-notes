@@ -2,12 +2,27 @@
  * 笔记站主应用 v2
  * 界面语言：资料库（网格笔记本 + 横向书架）+ 笔记本（正文）+ 速览浮层 + 上下文菜单
  */
-import { buildIndex, search, escapeHtml, highlight } from './search.js';
-import { highlightAll } from './highlight.js';
+import { buildIndex, search, hlMark as highlight } from './search.js';
+import { highlightAll, escapeHtml } from './highlight.js';
 import { createGraph } from './graph.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
+
+// 离线便携版：附件与图片需要指回项目里的 docs/ 目录
+const portableAssets = (typeof window !== 'undefined' && window.__NOTES_ASSET_PREFIX__) || '';
+
+/** 便携版专用：把正文里的 assets/... 引用改写成可双击打开的相对路径 */
+function fixAssets(root) {
+  if (!portableAssets || !root) return;
+  root.querySelectorAll('img[src], a[href]').forEach((el) => {
+    const attr = el.tagName === 'IMG' ? 'src' : 'href';
+    const v = el.getAttribute(attr) || '';
+    if (/^(https?:|data:|mailto:|#|\.\.\/)/.test(v)) return;
+    el.setAttribute(attr, portableAssets + v.replace(/^\.?\//, ''));
+    if (el.tagName === 'IMG') el.setAttribute('data-zoom-src', el.getAttribute('src'));
+  });
+}
 
 const LAYOUTS = [
   { id: 'minimal', label: '极简' },
@@ -89,8 +104,13 @@ function showToast(msg) {
   el._t = setTimeout(() => { el.style.opacity = '0'; }, 1900);
 }
 async function copyText(text, btn, label) {
+  // 普通页面用 Clipboard API；file:// 下的便携版退回 execCommand
   try {
-    await navigator.clipboard.writeText(text);
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      throw new Error('fallback');
+    }
   } catch (e) {
     const ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -372,6 +392,7 @@ function openNote(slug, opts = {}) {
   renderMath(body);
   highlightAll(body);
   fixWikilinks(body);
+  fixAssets(body);
 
   setView('note');
   renderSidebar();
@@ -831,6 +852,16 @@ function bindInteractions() {
       $('#lightbox').classList.add('on');
       return;
     }
+    // 离线便携版：把正文里的附件相对路径切到 docs/ 目录
+    if (portableAssets) {
+      const attach = e.target.closest('a.md-attachment, a[href*="assets/"]');
+      if (attach) {
+        const href = attach.getAttribute('href') || '';
+        if (!/^(https?:|mailto:|#|data:)/.test(href) && !href.startsWith(portableAssets)) {
+          attach.setAttribute('href', portableAssets + href.replace(/^\.?\//, ''));
+        }
+      }
+    }
     const copyBtn = e.target.closest('[data-copy]');
     if (copyBtn && copyBtn.closest('.md-code')) {
       const code = copyBtn.closest('.md-code').querySelector('code');
@@ -930,10 +961,15 @@ function bindInteractions() {
 /* ============================ 启动 ============================ */
 async function boot() {
   applyTheme();
+  const portable = !!window.__NOTES_PORTABLE__;
   try {
-    const res = await fetch('data/index.json', { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    state.payload = await res.json();
+    if (window.__NOTES_DATA__) {
+      state.payload = window.__NOTES_DATA__;           // 离线便携版：数据已内联
+    } else {
+      const res = await fetch('data/index.json', { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.payload = await res.json();
+    }
   } catch (e) {
     $('#loading').innerHTML = `<div class="empty"><div class="big">⚠️</div>没能加载 data/index.json<br>
       <span style="font-size:13px">先在项目根目录执行 <code class="md-inline-code">node tools/build.mjs</code> 然后刷新；<br>
@@ -946,14 +982,29 @@ async function boot() {
   state.index = buildIndex(state.payload);
 
   try {
-    const s = await fetch('data/site.json', { cache: 'no-cache' });
-    if (s.ok) {
-      const cfg = await s.json();
-      if (cfg.title) { document.title = cfg.title; $('#siteTitle').textContent = cfg.title; }
-      if (cfg.subtitle) $('#siteSub').textContent = cfg.subtitle;
-      if (cfg.description) $('#heroDesc').textContent = cfg.description;
+    if (window.__NOTES_SITE__) {
+      const cfg = window.__NOTES_SITE__;
+      if (cfg) {
+        if (cfg.title) { document.title = cfg.title; $('#siteTitle').textContent = cfg.title; }
+        if (cfg.subtitle) $('#siteSub').textContent = cfg.subtitle;
+        if (cfg.description) $('#heroDesc').textContent = cfg.description;
+      }
+    } else {
+      const s = await fetch('data/site.json', { cache: 'no-cache' });
+      if (s.ok) {
+        const cfg = await s.json();
+        if (cfg.title) { document.title = cfg.title; $('#siteTitle').textContent = cfg.title; }
+        if (cfg.subtitle) $('#siteSub').textContent = cfg.subtitle;
+        if (cfg.description) $('#heroDesc').textContent = cfg.description;
+      }
     }
   } catch (e) {}
+
+  if (portable) {
+    document.title = `${document.title} · 离线版`;
+    const sub = $('#siteSub');
+    if (sub) sub.textContent = '离线便携版 · 双击即开';
+  }
 
   $('#loading').style.display = 'none';
   $$('.view').forEach((v) => v.classList.remove('on'));
