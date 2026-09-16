@@ -69,6 +69,38 @@ export function main() {
     ? bad(`JS 操作的 class 在 HTML/CSS 中都不存在：${missingCss.join(', ')}`)
     : ok(`JS 操作的 ${jsClasses.size} 个 class 均有样式或标记`);
 
+  // 动态生成标记里的 class 也必须有样式（右侧是 CSS 必须覆盖的关键结构）
+  const cssTokens = new Set([...css.matchAll(/\.([A-Za-z][A-Za-z0-9_-]*)/g)].map((m) => m[1]));
+  const KEY_CLASSES = [
+    'nb-card', 'nb-thumb', 'nb-card-top', 'nb-card-meta', 'nb-card-cat', 'nb-card-date', 'nb-card-foot',
+    'nb-dot', 'nb-star', 'nb-badge', 'grid-notes', 'strip-scroll', 'shelf-strip', 'shelf-strip-head',
+    'cats', 'cat-card', 'cat-strip', 'note-item', 'note-item-body', 'note-item-title', 'note-item-meta',
+    'nb', 'shelf', 'shelf-title', 'shelf-count', 'side-empty', 'app-mark', 'btn-new',
+    'segmented', 'lib', 'lib-head', 'lib-head-main', 'lib-sub', 'lib-stats', 'stat',
+    'ql-body', 'ql-head', 'ql-thumb', 'ql-titles', 'ql-meta', 'ql-actions', 'ql-btn', 'ql-content',
+    'ql-excerpt', 'ql-sect-title', 'ql-toc', 'ql-mask', 'sheet-body', 'sheet-mask', 'sheet-head', 'sheet-desc',
+    'template-list', 'template-card', 'template-card-head', 'template-copy',
+    'ctxmenu', 'result', 'result-title', 'result-snippet', 'chip', 'tag', 'pill', 'kbd',
+  ];
+  const missKey = KEY_CLASSES.filter((c) => !cssTokens.has(c));
+  missKey.length
+    ? bad(`关键界面 class 缺少 CSS 定义：${missKey.join(', ')}`)
+    : ok(`关键界面 class 全部有样式（${KEY_CLASSES.length} 个：封面卡片 / 书架 / 速览 / 模板 / 分段控件）`);
+
+  // 构建脚本必须为每篇笔记产出封面配色，前端必须真正用到
+  const appCode = jsFiles.map((f) => f.code).join('\n');
+  const coverUsed = /coverVars\s*\(/.test(appCode) && /coverGlyphOf\s*\(/.test(appCode);
+  coverUsed
+    ? ok('前端已接入封面配色（coverVars / coverGlyphOf 已被调用）')
+    : bad('前端没有使用封面数据 note.cover（coverVars / coverGlyphOf 未被调用）');
+
+  // 新版界面必备的结构性标记
+  const NEEDED = ['nb-card', 'nb-thumb', 'strip-scroll', 'cat-card', 'ql-body', 'ctxMenu', 'newSheet', 'listToggle'];
+  const missNeeded = NEEDED.filter((t) => !appCode.includes(t) && !html.includes(t));
+  missNeeded.length
+    ? bad(`新版界面缺少结构标记：${missNeeded.join(', ')}`)
+    : ok(`新版界面结构齐备：${NEEDED.join(' / ')}`);
+
   /* ---------------- 2. 构建产物完整性 ---------------- */
   head('2. 构建产物 data/index.json');
   const dataPath = path.join(SITE, 'data', 'index.json');
@@ -78,6 +110,14 @@ export function main() {
     const d = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
     ok(`读取成功：${d.notes.length} 篇笔记，生成于 ${d.generatedAt}`);
     d.notes.length ? ok('字段齐全：每篇含 slug/title/html/headings/search') : bad('没有任何笔记');
+
+    const noCover = d.notes.filter((n) => !n.cover || !n.cover.ink || !n.cover.glyph);
+    noCover.length
+      ? bad(`缺少封面数据（cover.ink / cover.glyph）：${noCover.map((n) => n.slug).join(', ')}`)
+      : ok(`封面数据齐备：${d.notes.length} 篇各有配色与首字标记（例：${d.notes[0].cover.glyph} / ${d.notes[0].cover.ink}）`);
+    const catColors = new Map();
+    for (const n of d.notes) if (!catColors.has(n.category)) catColors.set(n.category, n.cover.ink);
+    ok(`分类配色：${[...catColors.entries()].map(([c, k]) => `${c}=${k}`).join('，')}`);
 
     let jump = 0;
     for (const n of d.notes) {
