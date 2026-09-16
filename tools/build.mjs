@@ -95,6 +95,21 @@ export function main() {
   fs.mkdirSync(path.join(SITE, 'data'), { recursive: true });
   const assetCount = copyDir(ASSETS_SRC, ASSETS_DST);
 
+  // 共享渲染内核必须一起发布：docs/js/*.js 里 import '../../lib/markdown.mjs'，
+  // 浏览器实际请求的是站点根下的 /lib/...，所以 lib/ 要同步到 docs/lib/
+  const libSrc = path.join(ROOT, 'lib');
+  const libDst = path.join(SITE, 'lib');
+  let libCount = 0;
+  if (fs.existsSync(libSrc)) {
+    fs.mkdirSync(libDst, { recursive: true });
+    for (const rel of walk(libSrc)) {
+      const to = path.join(libDst, rel);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(path.join(libSrc, rel), to);
+      libCount++;
+    }
+  }
+
   const notes = [];
   const warnings = [];
 
