@@ -30,7 +30,7 @@ export function main() {
   const htmlClasses = new Set();
   for (const m of html.matchAll(/\bclass="([^"]+)"/g)) m[1].split(/\s+/).forEach((c) => htmlClasses.add(c));
 
-  const runtimeIds = new Set(['toast', 'articleBody']); // 运行时动态创建/赋值的元素
+  const runtimeIds = new Set(['toast', 'articleBody', 'fixCacheBtn']); // 运行时动态创建/赋值的元素（fixCacheBtn 只在页面报错时生成）
   const usedIds = new Set();
   for (const { code } of jsFiles) {
     for (const m of code.matchAll(/\$\(\s*'#([A-Za-z0-9_-]+)'/g)) usedIds.add(m[1]);
