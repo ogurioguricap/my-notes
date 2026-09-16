@@ -22,7 +22,7 @@ export function createGraph({ canvas, tipEl, legendEl, onOpen }) {
   let panning = false;
   let last = { x: 0, y: 0 };
   let alpha = 1;
-  const palette = ['#3b6ef5', '#12a594', '#e8590c', '#8b5cf6', '#e5484d', '#0ea5e9', '#d98500', '#16a34a', '#db2777', '#64748b'];
+  const palette = ['#EA5A47', '#4C7DF0', '#0E9F8C', '#E0913A', '#8B5CF6', '#D94F8A', '#3D8A5F', '#5A6B8C', '#C2410C', '#0EA5E9'];
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
