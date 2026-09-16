@@ -195,7 +195,7 @@ export function main() {
   const htmlRefs = [...html.matchAll(/(?:src|href)="([^"#:]+?)"/g)]
     .map((m) => m[1])
     .filter((u) => !u.startsWith('data:') && !u.startsWith('http'));
-  const missFiles = htmlRefs.filter((u) => !fs.existsSync(path.join(SITE, u)));
+  const missFiles = htmlRefs.filter((u) => !fs.existsSync(path.join(SITE, u.split('?')[0])));
   missFiles.length ? bad(`HTML 引用的文件不存在：${missFiles.join(', ')}`) : ok(`HTML 引用的 ${htmlRefs.length} 个本地文件都存在`);
 
   if (fs.existsSync(dataPath)) {
