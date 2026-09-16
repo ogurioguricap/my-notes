@@ -27,6 +27,42 @@ const SENT = '\u0000'; // 占位符哨兵
 const esc = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/* ---------- 笔记本"封面"：按分类取色，同分类内用 slug 微调色相 ---------- */
+const COVER_PALETTE = [
+  { ink: '#EA5A47', soft: '#FDEBE7' }, // 珊瑚红
+  { ink: '#4C7DF0', soft: '#E9EFFE' }, // 蓝
+  { ink: '#0E9F8C', soft: '#E3F6F3' }, // 青绿
+  { ink: '#E0913A', soft: '#FBF0E0' }, // 琥珀
+  { ink: '#8B5CF6', soft: '#F1EBFE' }, // 紫
+  { ink: '#D94F8A', soft: '#FCE9F1' }, // 玫红
+  { ink: '#3D8A5F', soft: '#E7F3EC' }, // 墨绿
+  { ink: '#5A6B8C', soft: '#ECF0F6' }, // 石板蓝
+];
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+function coverFor(category, slug, title, categoryIndex) {
+  const base = COVER_PALETTE[(categoryIndex >= 0 ? categoryIndex : hashStr(category)) % COVER_PALETTE.length];
+  // 同分类统一色：个性由首字标记承担，视觉上更"成套"、更像一排笔记本
+  return { ink: base.ink, soft: base.soft, glyph: coverGlyph(title) };
+}
+
+function coverGlyph(title) {
+  const t = String(title).replace(/[\s·—\-_｜|]+/g, '');
+  const latin = /[A-Za-z0-9]/.exec(t);
+  if (latin && latin.index <= 1) return t.slice(0, 2).toUpperCase();
+  return t.slice(0, 1) || '笔';
+}
+
+
+
 /** 中文友好的标题 slug：保留中英文数字，其余转连字符 */
 function slugify(text, fallback = 'sec') {
   const s = String(text)
@@ -519,6 +555,14 @@ export function main() {
   }
 
   notes.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.title.localeCompare(b.title, 'zh')));
+
+  // 封面配色：分类决定基色（按笔记数排序后固定顺序，保证稳定），slug 做微调
+  const catOrder = [...new Set(notes.map((n) => n.category))].sort(
+    (a, b) => notes.filter((n) => n.category === b).length - notes.filter((n) => n.category === a).length || a.localeCompare(b, 'zh')
+  );
+  for (const n of notes) {
+    n.cover = coverFor(n.category, n.slug, n.title, catOrder.indexOf(n.category));
+  }
 
   // 反向链接
   const byTitle = new Map();
