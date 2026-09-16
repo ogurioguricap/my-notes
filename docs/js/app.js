@@ -1,5 +1,6 @@
 /**
- * 笔记站主应用：路由 / 渲染 / 搜索 / 主题 / 排版切换 / 目录联动
+ * 笔记站主应用 v2
+ * 界面语言：资料库（网格笔记本 + 横向书架）+ 笔记本（正文）+ 速览浮层 + 上下文菜单
  */
 import { buildIndex, search, escapeHtml, highlight } from './search.js';
 import { highlightAll } from './highlight.js';
@@ -26,30 +27,33 @@ const state = {
   bySlug: new Map(),
   layout: localStorage.getItem('note-layout') || 'minimal',
   theme: localStorage.getItem('note-theme') || 'system',
+  list: localStorage.getItem('note-list') || 'grid',
   category: localStorage.getItem('note-cat') || '',
   view: 'home',
   query: '',
   currentSlug: '',
   graph: null,
-  graphReady: false,
   debounce: 0,
+  ctxSlug: '',
 };
 
 /* ============================ 工具 ============================ */
-function setView(name) {
-  state.view = name;
-  $$('.view').forEach((v) => v.classList.toggle('on', v.id === `view-${name}`));
-  $$('.viewswitch button').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
-  if (name === 'graph') ensureGraph();
-  window.scrollTo({ top: 0, behavior: 'auto' });
+function coverVars(note) {
+  const c = note.cover || { ink: 'var(--accent)' };
+  return `--nb:${c.ink}`;
 }
-
+function coverGlyphOf(note) {
+  return (note.cover && note.cover.glyph) || String(note.title || '笔').slice(0, 1);
+}
+function catInk(cat) {
+  const n = state.notes.find((x) => x.category === cat);
+  return n && n.cover ? n.cover.ink : 'var(--accent)';
+}
 function fmtDate(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
   return `${y}-${m}-${d}`;
 }
-
 function relDate(iso) {
   if (!iso) return '';
   const t = new Date(`${iso}T00:00:00`).getTime();
@@ -60,7 +64,6 @@ function relDate(iso) {
   if (days < 365) return `${Math.floor(days / 30)} 个月前`;
   return `${Math.floor(days / 365)} 年前`;
 }
-
 function slugifyClient(text) {
   const s = String(text).trim().toLowerCase()
     .replace(/<[^>]+>/g, '')
@@ -70,44 +73,53 @@ function slugifyClient(text) {
     .replace(/^-|-$/g, '');
   return s || 'sec';
 }
-
-function stripHtml(html) {
-  const d = document.createElement('div');
-  d.innerHTML = html;
-  return (d.textContent || '').replace(/\s+/g, ' ').trim();
-}
-
 function showToast(msg) {
   let el = $('#toast');
   if (!el) {
     el = document.createElement('div');
     el.id = 'toast';
-    el.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--bg-elev);border:1px solid var(--line-strong);border-radius:10px;padding:9px 16px;font-size:13px;box-shadow:var(--shadow);z-index:300;transition:opacity .2s';
+    el.style.cssText = 'position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:var(--bg-elev);' +
+      'border:1px solid var(--line-strong);border-radius:12px;padding:10px 18px;font-size:13.5px;' +
+      'box-shadow:var(--shadow-lg);z-index:300;transition:opacity .2s;max-width:86vw;text-align:center';
     document.body.appendChild(el);
   }
   el.textContent = msg;
   el.style.opacity = '1';
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.style.opacity = '0'; }, 1600);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, 1900);
+}
+async function copyText(text, btn, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (err) {}
+    ta.remove();
+  }
+  if (btn) {
+    const old = btn.textContent;
+    btn.textContent = label || '已复制 ✓';
+    setTimeout(() => { btn.textContent = old; }, 1300);
+  }
 }
 
-/* ============================ 主题 / 排版 ============================ */
+/* ============================ 主题 / 排版 / 布局 ============================ */
 function applyTheme() {
   const m = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const real = state.theme === 'system' ? (m ? 'dark' : 'light') : state.theme;
   document.documentElement.dataset.theme = real;
   document.documentElement.dataset.layout = state.layout;
+  document.documentElement.dataset.list = state.list;
   const t = THEMES.find((x) => x.id === state.theme) || THEMES[0];
   const btn = $('#themeBtn');
   if (btn) { btn.textContent = t.icon; btn.title = `主题：${t.label}（点击切换）`; }
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', real === 'dark' ? '#12151a' : '#ffffff');
-  const l = LAYOUTS.find((x) => x.id === state.layout) || LAYOUTS[0];
-  const lbl = $('#layoutLbl');
-  if (lbl) lbl.textContent = l.label;
+  if (meta) meta.setAttribute('content', real === 'dark' ? '#17150F' : '#FBFAF7');
+  $$('#listToggle button').forEach((b) => b.classList.toggle('on', b.dataset.list === state.list));
   if (state.graph && state.view === 'graph') setTimeout(() => state.graph.redraw(), 60);
 }
-
 function cycleTheme() {
   const i = THEMES.findIndex((x) => x.id === state.theme);
   state.theme = THEMES[(i + 1) % THEMES.length].id;
@@ -115,13 +127,27 @@ function cycleTheme() {
   applyTheme();
   showToast(`主题：${THEMES.find((x) => x.id === state.theme).label}`);
 }
-
 function cycleLayout() {
   const i = LAYOUTS.findIndex((x) => x.id === state.layout);
   state.layout = LAYOUTS[(i + 1) % LAYOUTS.length].id;
   localStorage.setItem('note-layout', state.layout);
   applyTheme();
   showToast(`排版：${LAYOUTS.find((x) => x.id === state.layout).label}`);
+}
+function setList(mode) {
+  state.list = mode;
+  localStorage.setItem('note-list', mode);
+  applyTheme();
+  showToast(mode === 'grid' ? '网格视图' : '列表视图');
+}
+
+/* ============================ 视图切换 ============================ */
+function setView(name) {
+  state.view = name;
+  $$('.view').forEach((v) => v.classList.toggle('on', v.id === `view-${name}`));
+  $$('#segs button').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+  if (name === 'graph') ensureGraph();
+  window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
 /* ============================ 公式 ============================ */
@@ -132,7 +158,6 @@ function renderMath(root) {
   els.forEach((el) => {
     const tex = el.getAttribute('data-tex') || '';
     if (!hasKatex) {
-      el.className = el.classList.contains('md-math-block') ? 'md-math-block' : 'md-math-inline';
       el.innerHTML = `<code class="katex-fallback">${escapeHtml(tex)}</code>`;
       return;
     }
@@ -144,137 +169,195 @@ function renderMath(root) {
   });
 }
 
-/* ============================ 侧边栏 ============================ */
-function renderSidebar() {
-  const notes = filteredNotes();
-  const list = $('#noteList');
-  const cats = ['', ...state.payload.categories];
-
-  $('#catFilters').innerHTML = cats
-    .map((c) => {
-      const label = c || '全部';
-      const cnt = c ? notes.filter((n) => n.category === c).length : state.notes.length;
-      return `<button class="chip${state.category === c ? ' on' : ''}" data-cat="${escapeHtml(c)}">${escapeHtml(label)}<span class="cnt">${cnt}</span></button>`;
-    })
-    .join('');
-
-  if (!notes.length) {
-    list.innerHTML = '<div class="side-empty">没有匹配的笔记<br>试试清空筛选</div>';
-    return;
-  }
-
-  const groups = new Map();
-  for (const n of notes) {
-    if (!groups.has(n.category)) groups.set(n.category, []);
-    groups.get(n.category).push(n);
-  }
-
-  list.innerHTML = [...groups.entries()]
-    .map(([cat, arr]) => {
-      const items = arr
-        .map(
-          (n) => `<a class="note-item${n.slug === state.currentSlug ? ' active' : ''}" href="#/note/${encodeURIComponent(n.slug)}" data-slug="${escapeHtml(n.slug)}">
-            <span class="note-item-title">${n.pinned ? '<span class="pin">📌</span>' : ''}${escapeHtml(n.title)}</span>
-            <span class="note-item-meta"><span>${fmtDate(n.date)}</span>${n.tags.length ? `<span>#${escapeHtml(n.tags[0])}</span>` : ''}</span>
-          </a>`
-        )
-        .join('');
-      return `<div class="side-group"><div class="side-group-title"><span>${escapeHtml(cat)}</span><span>${arr.length}</span></div>${items}</div>`;
-    })
-    .join('');
-
-  $('#footStats').textContent = `${notes.length} / ${state.notes.length} 篇`;
-}
-
+/* ============================ 书架（侧栏） ============================ */
 function filteredNotes() {
   return state.category ? state.notes.filter((n) => n.category === state.category) : state.notes;
 }
+function notesByCategory() {
+  const map = new Map();
+  for (const n of state.notes) {
+    if (!map.has(n.category)) map.set(n.category, []);
+    map.get(n.category).push(n);
+  }
+  return map;
+}
 
-/* ============================ 首页 ============================ */
+function renderSidebar() {
+  const list = filteredNotes();
+  const starred = state.notes.filter((n) => n.pinned);
+  const byCat = notesByCategory();
+
+  const itemHtml = (n) => `<a class="note-item${n.slug === state.currentSlug ? ' active' : ''}"
+      href="#/note/${encodeURIComponent(n.slug)}" data-slug="${escapeHtml(n.slug)}" style="${coverVars(n)}">
+      <span class="nb"></span>
+      <span class="note-item-body">
+        <span class="note-item-title">${escapeHtml(n.title)}</span>
+        <span class="note-item-meta"><span>${fmtDate(n.date)}</span>${n.tags.length ? `<span>#${escapeHtml(n.tags[0])}</span>` : ''}</span>
+      </span>
+      ${n.pinned ? '<span class="star">⭐</span>' : ''}
+    </a>`;
+
+  let html = `<div class="shelf">
+    <div class="shelf-title"><span>📚 全部笔记本</span><span class="shelf-count">${state.notes.length}</span></div>
+    <a class="note-item${state.category === '' ? ' active' : ''}" href="#/" data-cat="">
+      <span class="nb" style="--nb:var(--accent)"></span>
+      <span class="note-item-body"><span class="note-item-title">全部笔记</span>
+      <span class="note-item-meta"><span>${state.notes.length} 本</span></span></span>
+    </a>
+  </div>`;
+
+  if (starred.length) {
+    html += `<div class="shelf">
+      <div class="shelf-title"><span>⭐ 收藏</span><span class="shelf-count">${starred.length}</span></div>
+      ${starred.map(itemHtml).join('')}
+    </div>`;
+  }
+
+  html += `<div class="shelf">
+    <div class="shelf-title"><span>📂 我的笔记本</span><span class="shelf-count">${byCat.size}</span></div>
+    ${[...byCat.entries()]
+      .map(
+        ([cat, arr]) => `<a class="note-item${state.category === cat ? ' active' : ''}" href="#/" data-cat="${escapeHtml(cat)}" style="--nb:${catInk(cat)}">
+          <span class="nb"></span>
+          <span class="note-item-body"><span class="note-item-title">${escapeHtml(cat)}</span>
+          <span class="note-item-meta"><span>${arr.length} 本</span><span>${relDate(arr.reduce((a, b) => (a.date > b.date ? a : b)).date)}</span></span></span>
+        </a>`
+      )
+      .join('')}
+  </div>`;
+
+  html += `<div class="shelf">
+    <div class="shelf-title"><span>🕘 最近打开</span><span class="shelf-count">${Math.min(6, list.length)}</span></div>
+    ${list.slice(0, 6).map(itemHtml).join('')}
+  </div>`;
+
+  $('#noteList').innerHTML = html;
+  $('#footStats').textContent = `${list.length} / ${state.notes.length} 本`;
+}
+
+/* ============================ 资料库首页 ============================ */
+function cardHtml(n) {
+  return `<a class="nb-card" href="#/note/${encodeURIComponent(n.slug)}" data-slug="${escapeHtml(n.slug)}" style="${coverVars(n)}">
+    ${n.pinned ? '<span class="nb-star">⭐</span>' : ''}
+    <span class="nb-card-top">
+      <span class="nb-thumb">${escapeHtml(coverGlyphOf(n))}</span>
+      <span class="nb-card-meta">
+        <span class="nb-card-cat"><span class="nb-dot"></span>${escapeHtml(n.category)}</span>
+        <span class="nb-card-date">${fmtDate(n.date)} · ${relDate(n.date)}</span>
+      </span>
+    </span>
+    <h3>${escapeHtml(n.title)}</h3>
+    <p>${escapeHtml(n.excerpt)}</p>
+    <span class="nb-card-foot">
+      ${n.tags.slice(0, 3).map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
+      <span class="nb-badge">${n.headings.length ? `📑 ${n.headings.length}` : ''}${n.attachments.length ? ' 📎' : ''}</span>
+    </span>
+  </a>`;
+}
+
+function stripSection(title, notes, hint) {
+  if (!notes.length) return '';
+  return `<section class="shelf-strip">
+    <div class="shelf-strip-head"><h2>${title}</h2><span class="hint">${hint || `横向滑动 · ${notes.length} 本`}</span></div>
+    <div class="strip-scroll">${notes.map(cardHtml).join('')}</div>
+  </section>`;
+}
+
 function renderHome() {
+  const all = state.notes;
   const list = filteredNotes();
   const s = state.payload.stats;
   $('#stats').innerHTML = [
-    `<span class="stat"><b>${s.notes}</b>篇笔记</span>`,
+    `<span class="stat"><b>${s.notes}</b>本笔记</span>`,
     `<span class="stat"><b>${s.categories}</b>个分类</span>`,
     `<span class="stat"><b>${s.tags}</b>个标签</span>`,
-    s.extracted ? `<span class="stat"><b>${s.extracted}</b> 个附件已提取文字</span>` : '',
-    `<span class="stat">更新于 <b>${fmtDate(state.payload.generatedAt.slice(0, 10))}</b></span>`,
+    s.extracted ? `<span class="stat"><b>${s.extracted}</b>个附件已提取文字</span>` : '',
   ].join('');
 
-  const pinned = list.filter((n) => n.pinned);
-  const pinnedHtml = pinned.length
-    ? `<div class="section-head"><h2>📌 置顶</h2><span class="hint">frontmatter 里写 pinned: true</span></div>${cardGrid(pinned)}`
-    : '';
+  const byCat = notesByCategory();
+  const withAttach = all.filter((n) => n.attachments.length);
 
-  const recent = list.slice(0, 24);
-  $('#homeBody').innerHTML =
-    pinnedHtml +
-    `<div class="section-head"><h2>${state.category ? '分类：' + escapeHtml(state.category) : '全部笔记'}</h2><span class="hint">${list.length} 篇 · 点击卡片打开</span></div>` +
-    (recent.length ? cardGrid(recent) : '<div class="empty"><div class="big">🍃</div>还没有笔记</div>');
+  let html = '';
+  html += stripSection('⭐ 收藏', all.filter((n) => n.pinned), '在笔记头部写 pinned: true 即可置顶');
+  html += stripSection('🕘 最近更新', all.slice(0, 8), '按更新时间倒序');
 
-  $('#heroTitle').textContent = $('#siteTitle').textContent || '我的笔记';
+  html += `<section class="shelf-strip">
+    <div class="shelf-strip-head"><h2>📂 分类</h2><span class="hint">点一张卡片只看这一类</span></div>
+    <div class="cats">
+      ${[...byCat.entries()]
+        .map(
+          ([cat, arr]) => `<a class="cat-card" href="#/" data-cat="${escapeHtml(cat)}">
+            <span class="cat-strip">${arr
+              .slice(0, 4)
+              .map((n) => `<i style="background:${(n.cover && n.cover.ink) || 'var(--accent)'}"></i>`)
+              .join('')}</span>
+            <b>${escapeHtml(cat)}</b>
+            <span>${arr.length} 本 · 最近 ${relDate(arr.reduce((a, b) => (a.date > b.date ? a : b)).date)}</span>
+          </a>`
+        )
+        .join('')}
+    </div>
+  </section>`;
 
-  const tagCloud = Object.entries(state.payload.tags)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 16);
+  html += stripSection('📎 含图表文字（图片里的字也能搜到）', withAttach);
+
+  html += `<section class="shelf-strip">
+    <div class="shelf-strip-head">
+      <h2>${state.category ? `📁 ${escapeHtml(state.category)}` : '🗂 全部笔记'}</h2>
+      <span class="hint">${list.length} 本 · 右键笔记本可查看更多操作</span>
+    </div>
+    ${list.length ? `<div class="grid-notes">${list.map(cardHtml).join('')}</div>`
+      : `<div class="empty"><div class="big">🍃</div>这个分类下还没有笔记</div>`}
+  </section>`;
+
+  const tagCloud = Object.entries(state.payload.tags).sort((a, b) => b[1] - a[1]).slice(0, 18);
   if (tagCloud.length) {
-    $('#homeBody').insertAdjacentHTML(
-      'beforeend',
-      `<div class="section-head"><h2>🏷 标签</h2><span class="hint">点击筛选</span></div>
-       <div class="stats" style="margin-bottom:0">${tagCloud
-         .map(([t, c]) => `<button class="chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)}<span class="cnt">${c}</span></button>`)
-         .join('')}</div>`
-    );
+    html += `<section class="shelf-strip">
+      <div class="shelf-strip-head"><h2>🏷 标签</h2><span class="hint">点击即搜索</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${tagCloud
+          .map(([t, c]) => `<button class="chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)} <span style="color:var(--text-faint)">${c}</span></button>`)
+          .join('')}
+      </div>
+    </section>`;
   }
+
+  $('#homeBody').innerHTML = html;
+  $('#heroTitle').textContent = state.category ? state.category : '资料库';
 }
 
-function cardGrid(notes) {
-  return `<div class="cards" id="cardGrid">${notes
-    .map(
-      (n) => `<a class="card" href="#/note/${encodeURIComponent(n.slug)}" data-slug="${escapeHtml(n.slug)}">
-      <span class="card-top"><span class="cat-dot"></span>${escapeHtml(n.category)}<span>·</span><span>${fmtDate(n.date)}</span>${n.pinned ? '<span>· 📌</span>' : ''}</span>
-      <h3>${escapeHtml(n.title)}</h3>
-      <p>${escapeHtml(n.excerpt)}</p>
-      <span class="card-foot">${n.tags.slice(0, 4).map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}</span>
-    </a>`
-    )
-    .join('')}</div>`;
-}
-
-/* ============================ 文章 ============================ */
+/* ============================ 笔记本（正文） ============================ */
 function openNote(slug, opts = {}) {
   const note = state.bySlug.get(slug);
   if (!note) {
-    $('#article').innerHTML = `<div class="empty"><div class="big">🔍</div>找不到这篇笔记：${escapeHtml(slug)}<br><br><a href="#/">回到首页</a></div>`;
+    $('#article').innerHTML = `<div class="empty"><div class="big">🔍</div>找不到这本笔记：${escapeHtml(slug)}<br><br><a href="#/">回到资料库</a></div>`;
     setView('note');
     return;
   }
   state.currentSlug = slug;
 
-  const tocHtml = note.headings.length
+  const subs = note.headings.filter((h) => h.level >= 2);
+  const tocHtml = subs.length
     ? `<div class="toc-title">本页目录</div>` +
-      note.headings
-        .filter((h) => h.level >= 2)
-        .map((h) => `<a class="lv${h.level}" href="#${encodeURIComponent(h.id)}" data-anchor="${escapeHtml(h.id)}">${escapeHtml(h.text)}</a>`)
-        .join('')
+      subs.map((h) => `<a class="lv${h.level}" href="#${encodeURIComponent(h.id)}" data-anchor="${escapeHtml(h.id)}">${escapeHtml(h.text)}</a>`).join('')
     : '<div class="toc-title">本页目录</div><div style="color:var(--text-faint);font-size:12.5px">（没有小标题）</div>';
 
   const backlinks = (note.backlinks || [])
     .map((s) => state.bySlug.get(s))
     .filter(Boolean)
-    .map((n) => `<a class="chip" href="#/note/${encodeURIComponent(n.slug)}">${escapeHtml(n.title)}</a>`)
+    .map((n) => `<a class="chip" href="#/note/${encodeURIComponent(n.slug)}" style="${coverVars(n)}">${escapeHtml(n.title)}</a>`)
     .join('');
 
   $('#article').innerHTML = `
-    <header class="article-head">
+    <header class="article-head" style="${coverVars(note)}">
       <h1>${escapeHtml(note.title)}</h1>
       <div class="article-meta">
-        <span>${escapeHtml(note.category)}</span>
+        <span class="nb-card-cat"><span class="nb-dot"></span>${escapeHtml(note.category)}</span>
         <span class="dot"></span><span>${fmtDate(note.date)}</span>
         <span class="dot"></span><span>${relDate(note.date)}</span>
+        <span class="dot"></span><span>${note.headings.length} 个小标题</span>
+        ${note.attachments.length ? `<span class="pill">📎 ${note.attachments.length} 个附件文字已进检索</span>` : ''}
         ${note.tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
-        ${note.attachments && note.attachments.length ? `<span class="pill">📎 ${note.attachments.length} 个附件文字已进检索</span>` : ''}
       </div>
     </header>
     <div class="article-body" id="articleBody">${note.html}</div>
@@ -286,14 +369,13 @@ function openNote(slug, opts = {}) {
   body.querySelectorAll('h1,h2,h3,h4').forEach((h) => {
     if (!h.id) h.id = slugifyClient(h.textContent.replace('#', ''));
   });
-
   renderMath(body);
   highlightAll(body);
   fixWikilinks(body);
 
   setView('note');
   renderSidebar();
-  $('#breadcrumb').innerHTML = `<a href="#/">首页</a> / ${escapeHtml(note.category)} / <b>${escapeHtml(note.title)}</b>`;
+  $('#breadcrumb').innerHTML = `<a href="#/">资料库</a> / <span style="color:var(--text-soft)">${escapeHtml(note.category)}</span> / <b>${escapeHtml(note.title)}</b>`;
 
   if (opts.anchor) {
     requestAnimationFrame(() => {
@@ -317,15 +399,13 @@ function fixWikilinks(root) {
       a.setAttribute('href', `#/note/${encodeURIComponent(hit.slug)}`);
       a.title = hit.excerpt || hit.title;
     } else {
-      a.classList.add('missing');
       a.style.borderBottomStyle = 'dotted';
       a.style.opacity = '.7';
-      a.title = '还没有这篇笔记';
+      a.title = '还没有这本笔记';
     }
   });
 }
 
-/* 滚动联动：目录高亮 + 进度条 */
 let spyObserver = null;
 function setupScrollSpy() {
   if (spyObserver) spyObserver.disconnect();
@@ -333,8 +413,7 @@ function setupScrollSpy() {
   if (!links.length) return;
   const map = new Map();
   links.forEach((a) => {
-    const id = a.dataset.anchor;
-    const el = document.getElementById(id);
+    const el = document.getElementById(a.dataset.anchor);
     if (el) map.set(el, a);
   });
   spyObserver = new IntersectionObserver(
@@ -351,33 +430,126 @@ function setupScrollSpy() {
   map.forEach((_, el) => spyObserver.observe(el));
 }
 
-/* ============================ 搜索视图 ============================ */
+/* ============================ 速览浮层 ============================ */
+function openQuickLook(slug) {
+  const note = state.bySlug.get(slug);
+  if (!note) return;
+  const subs = note.headings.filter((h) => h.level >= 2).slice(0, 8);
+  $('#qlBody').innerHTML = `
+    <div class="ql-head" style="${coverVars(note)}">
+      <span class="ql-thumb">${escapeHtml(coverGlyphOf(note))}</span>
+      <span class="ql-titles">
+        <h2>${escapeHtml(note.title)}</h2>
+        <span class="ql-meta">
+          <span class="nb-card-cat"><span class="nb-dot"></span>${escapeHtml(note.category)}</span>
+          <span>·</span><span>${fmtDate(note.date)}</span>
+          <span>·</span><span>${relDate(note.date)}</span>
+          ${note.tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
+        </span>
+      </span>
+      <span class="ql-actions">
+        <a class="ql-btn primary" href="#/note/${encodeURIComponent(note.slug)}" data-open="${escapeHtml(note.slug)}">打开阅读</a>
+        <button class="ql-btn" data-close="1">关闭</button>
+      </span>
+    </div>
+    <div class="ql-content" style="${coverVars(note)}">
+      <p class="ql-excerpt">${escapeHtml(note.excerpt)}</p>
+      ${subs.length ? `<div class="ql-sect-title">目录（共 ${note.headings.length} 个小标题）</div>
+        <div class="ql-toc">${subs
+          .map((h) => `<a href="#/note/${encodeURIComponent(note.slug)}?a=${encodeURIComponent(h.id)}" data-anchor-jump="${escapeHtml(note.slug)}|${escapeHtml(h.id)}">
+            <span class="lv">H${h.level}</span>${escapeHtml(h.text)}</a>`)
+          .join('')}</div>` : ''}
+      <div class="ql-sect-title">数据</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span class="stat"><b>${note.search ? note.search.length : 0}</b>字符索引</span>
+        <span class="stat"><b>${note.attachments.length}</b>个附件文字</span>
+        <span class="stat"><b>${(note.resolvedLinks || []).length}</b>条出链</span>
+        <span class="stat"><b>${(note.backlinks || []).length}</b>条入链</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+        <button class="ql-btn" data-copy-link="${escapeHtml(note.slug)}">复制链接</button>
+        <button class="ql-btn" data-cat-jump="${escapeHtml(note.category)}">只看「${escapeHtml(note.category)}」</button>
+      </div>
+    </div>`;
+  $('#quicklook').classList.add('on');
+}
+function closeQuickLook() { $('#quicklook').classList.remove('on'); }
+
+/* ============================ 上下文菜单 ============================ */
+function openCtx(slug, x, y) {
+  const note = state.bySlug.get(slug);
+  if (!note) return;
+  state.ctxSlug = slug;
+  const menu = $('#ctxMenu');
+  menu.innerHTML = `
+    <button data-act="open">📖 打开阅读</button>
+    <button data-act="quick">👁 速览</button>
+    <button data-act="copy">🔗 复制链接</button>
+    <div class="sep"></div>
+    <button data-act="cat">📂 只看「${escapeHtml(note.category)}」</button>
+    <button data-act="tag">🏷 按标签搜索</button>
+    <button data-act="md">📄 复制 Markdown 文件名</button>`;
+  menu.classList.add('on');
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - r.width - 10))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - r.height - 10))}px`;
+}
+function closeCtx() { $('#ctxMenu').classList.remove('on'); }
+
+function handleCtxAction(act) {
+  const note = state.bySlug.get(state.ctxSlug);
+  closeCtx();
+  if (!note) return;
+  const url = `${location.origin}${location.pathname}#/note/${encodeURIComponent(note.slug)}`;
+  switch (act) {
+    case 'open': location.hash = `#/note/${encodeURIComponent(note.slug)}`; break;
+    case 'quick': openQuickLook(note.slug); break;
+    case 'copy': copyText(url, null, null); showToast('链接已复制'); break;
+    case 'cat':
+      state.category = note.category;
+      localStorage.setItem('note-cat', state.category);
+      renderSidebar(); renderHome(); setView('home');
+      if (location.hash !== '#/') location.hash = '#/';
+      showToast(`只看：${note.category}`);
+      break;
+    case 'tag': {
+      const t = note.tags[0];
+      if (!t) { showToast('这本笔记没有标签'); return; }
+      $('#searchInput').value = `#${t}`;
+      runSearch(`#${t}`);
+      break;
+    }
+    case 'md':
+      copyText(note.source || `${note.slug}.md`, null, null);
+      showToast(`已复制：${note.source || note.slug + '.md'}`);
+      break;
+  }
+}
+
+/* ============================ 检索 ============================ */
 function runSearch(q) {
   state.query = q;
-  const clear = $('#searchClear');
-  clear.classList.toggle('on', !!q);
+  $('#searchClear').classList.toggle('on', !!q);
   if (!q.trim()) {
     if (state.view === 'search') setView('home');
     renderSidebar();
     return;
   }
   const hits = search(state.index, q, { category: state.category, limit: 60 });
-  const head = $('#searchHead');
-  const sub = $('#searchSub');
-  head.textContent = `搜索「${q}」`;
-  sub.textContent = `${hits.length} 条结果${state.category ? ` · 限分类「${state.category}」` : ''} · 范围：标题 / 正文 / 标签 / 图表文字`;
-
+  $('#searchHead').textContent = `搜索「${q}」`;
+  $('#searchSub').textContent =
+    `${hits.length} 本笔记命中${state.category ? ` · 限分类「${state.category}」` : ''} · 范围：标题 / 正文 / 代码 / 标签 / 图表文字`;
   $('#searchResults').innerHTML = hits.length
     ? hits
-        .map(
-          (h) => `<a class="result" href="#/note/${encodeURIComponent(h.slug)}" data-slug="${escapeHtml(h.slug)}">
+        .map((h) => {
+          const note = state.bySlug.get(h.slug);
+          return `<a class="result" href="#/note/${encodeURIComponent(h.slug)}" data-slug="${escapeHtml(h.slug)}" style="${note ? coverVars(note) : ''}">
             <span class="result-title">${highlight(h.title, [q])}<span class="where">${escapeHtml(h.category)} · ${fmtDate(h.date)}</span></span>
             <span class="result-snippet">${h.snippet}</span>
-          </a>`
-        )
+          </a>`;
+        })
         .join('')
     : `<div class="empty"><div class="big">🫥</div>没有匹配「${escapeHtml(q)}」的内容<br><span style="font-size:13px">试试更短的关键词，或换个说法</span></div>`;
-
   setView('search');
   renderSidebar();
 }
@@ -391,14 +563,16 @@ function renderTimeline() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(n);
   }
-  const html = [...groups.entries()]
-    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-    .map(
-      ([month, arr]) => `<div class="tl-group">
-        <div class="tl-group-title">${month} · ${arr.length} 篇</div>
+  $('#timelineBody').innerHTML =
+    [...groups.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(
+        ([month, arr]) => `<div class="tl-group">
+        <div class="tl-group-title">${month} · ${arr.length} 本</div>
         ${arr
           .map(
-            (n) => `<a class="tl-item" href="#/note/${encodeURIComponent(n.slug)}">
+            (n) => `<a class="tl-item" href="#/note/${encodeURIComponent(n.slug)}" style="${coverVars(n)}">
+              <span class="nb" style="width:6px;height:18px;border-radius:2px;background:var(--nb);flex:none"></span>
               <span class="tl-date">${fmtDate(n.date).slice(5)}</span>
               <span class="tl-title">${escapeHtml(n.title)}</span>
               <span class="tl-tags">${n.tags.slice(0, 3).map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}</span>
@@ -406,9 +580,8 @@ function renderTimeline() {
           )
           .join('')}
       </div>`
-    )
-    .join('');
-  $('#timelineBody').innerHTML = html || '<div class="empty"><div class="big">🕒</div>还没有内容</div>';
+      )
+      .join('') || '<div class="empty"><div class="big">🕒</div>还没有内容</div>';
 }
 
 /* ============================ 知识图谱 ============================ */
@@ -427,65 +600,154 @@ function ensureGraph() {
   }, 30);
 }
 
-/* ============================ 图片放大 / 复制 ============================ */
-function bindContentInteractions() {
-  document.addEventListener('click', (e) => {
-    const img = e.target.closest('.md-figure img');
-    if (img) {
-      $('#lightboxImg').src = img.dataset.zoomSrc || img.src;
-      $('#lightbox').classList.add('on');
-      return;
-    }
-    const copyBtn = e.target.closest('[data-copy]');
-    if (copyBtn) {
-      const code = copyBtn.closest('.md-code')?.querySelector('code');
-      if (code) copyText(code.textContent, copyBtn);
-      return;
-    }
-    const chip = e.target.closest('.chip[data-cat]');
-    if (chip) {
-      state.category = chip.dataset.cat || '';
-      localStorage.setItem('note-cat', state.category);
-      renderSidebar();
-      renderHome();
-      if (state.view === 'graph') ensureGraph();
-      if (state.view === 'timeline') renderTimeline();
-      return;
-    }
-    const tagChip = e.target.closest('.chip[data-tag]');
-    if (tagChip) {
-      $('#searchInput').value = `#${tagChip.dataset.tag}`;
-      runSearch(`#${tagChip.dataset.tag}`);
-      closeDrawer();
-      return;
-    }
-  });
+/* ============================ 新建笔记面板 ============================ */
+const TEMPLATES = [
+  {
+    name: '标准笔记',
+    hint: '日常记录',
+    body: `---
+title: 标题写这里
+category: 未分类
+tags: [标签一, 标签二]
+date: DATE_TODAY
+---
 
-  $('#lightboxClose').addEventListener('click', () => $('#lightbox').classList.remove('on'));
-  $('#lightbox').addEventListener('click', (e) => {
-    if (e.target.id === 'lightbox') $('#lightbox').classList.remove('on');
-  });
-}
+# 标题写这里
 
-async function copyText(text, btn) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (e) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch (err) {}
-    ta.remove();
-  }
-  if (btn) {
-    const old = btn.textContent;
-    btn.textContent = '已复制 ✓';
-    setTimeout(() => { btn.textContent = old === '已复制 ✓' ? '复制' : old; }, 1200);
-  }
+一句话结论先写在最前面。
+
+## 要点
+
+- 第一点
+- 第二点
+
+## 详细记录
+
+正文……
+`,
+  },
+  {
+    name: '模型 / 推导笔记',
+    hint: '公式与推导',
+    body: `---
+title: 模型名 · 推导笔记
+category: 数学建模
+tags: [建模, 公式]
+date: DATE_TODAY
+---
+
+# 模型名 · 推导笔记
+
+## 问题与假设
+
+- 假设 1（强假设）
+- 假设 2（弱假设）
+
+## 符号
+
+| 符号 | 含义 | 单位 |
+| --- | --- | --- |
+| x | 决策变量 | — |
+
+## 推导
+
+目标函数：
+
+$$
+\\min_{x} f(x) = \\sum_{i=1}^{n} c_i x_i
+$$
+
+约束：
+
+$$
+Ax \\leq b,\\quad x \\geq 0
+$$
+
+## 求解与结果
+
+\`\`\`python
+import numpy as np
+print("结果")
+\`\`\`
+
+## 灵敏度
+
+参数 ±10% 扫描后结论是否稳定。
+
+> [!WARNING] 局限
+> 写清楚模型不适用的情形。
+`,
+  },
+  {
+    name: '会议 / 复盘笔记',
+    hint: '结论 + 待办',
+    body: `---
+title: 会议记录 · 主题
+category: 工作
+tags: [会议, 复盘]
+date: DATE_TODAY
+---
+
+# 会议记录 · 主题
+
+## 结论
+
+- 结论一
+- 结论二
+
+## 待办
+
+- [ ] 事项一（负责人 · 截止日）
+- [ ] 事项二
+
+## 讨论要点
+
+> [!NOTE] 背景
+> 为什么开这个会。
+`,
+  },
+  {
+    name: '读书 / 文章笔记',
+    hint: '摘录 + 想法',
+    body: `---
+title: 《书名》读书笔记
+category: 阅读
+tags: [读书]
+date: DATE_TODAY
+---
+
+# 《书名》读书笔记
+
+## 一句话总结
+
+## 让我记下的句子
+
+> 摘录原文。
+
+## 我的想法
+
+## 可以怎么用
+
+- [ ] 落地一件事
+`,
+  },
+];
+
+function openNewSheet() {
+  const today = new Date().toISOString().slice(0, 10);
+  $('#templateList').innerHTML = TEMPLATES.map(
+    (t, i) => `<div class="template-card">
+      <div class="template-card-head">
+        <b>${escapeHtml(t.name)}</b>
+        <span class="chip" style="cursor:default">${escapeHtml(t.hint)}</span>
+        <button class="template-copy" data-copy-tpl="${i}">复制模板</button>
+      </div>
+      <pre><code>${escapeHtml(t.body.replace(/DATE_TODAY/g, today))}</code></pre>
+    </div>`
+  ).join('');
+  $('#newSheet').classList.add('on');
 }
+function closeNewSheet() { $('#newSheet').classList.remove('on'); }
 
 /* ============================ 路由 ============================ */
 function parseHash() {
@@ -498,10 +760,8 @@ function parseHash() {
   if (/^#\/(home)?$/.test(h)) return { route: 'home' };
   if (/^#\/timeline$/.test(h)) return { route: 'timeline' };
   if (/^#\/graph$/.test(h)) return { route: 'graph' };
-  if (/^#\/search/.test(h)) return { route: 'search' };
   if (/^#\/tag\/(.+)$/.test(h)) return { route: 'tag', tag: /^#\/tag\/(.+)$/.exec(h)[1] };
   if (/^#\/[^/]+$/.test(h)) return { route: 'note', slug: h.slice(2) };
-  // 纯锚点（标题跳转）
   if (h.startsWith('#') && h.length > 1) return { route: 'anchor', id: h.slice(1) };
   return { route: 'home' };
 }
@@ -509,26 +769,24 @@ function parseHash() {
 function handleRoute() {
   const r = parseHash();
   closeDrawer();
+  closeCtx();
   switch (r.route) {
-    case 'note':
-      openNote(r.slug, { anchor: r.anchor });
-      break;
+    case 'note': openNote(r.slug, { anchor: r.anchor }); break;
     case 'timeline':
       renderTimeline();
       setView('timeline');
-      $('#breadcrumb').innerHTML = '<a href="#/">首页</a> / <b>时间线</b>';
+      $('#breadcrumb').innerHTML = '<a href="#/">资料库</a> / <b>时间线</b>';
       break;
     case 'graph':
       setView('graph');
       ensureGraph();
-      $('#breadcrumb').innerHTML = '<a href="#/">首页</a> / <b>知识图谱</b>';
+      $('#breadcrumb').innerHTML = '<a href="#/">资料库</a> / <b>知识图谱</b>';
       break;
     case 'tag':
       $('#searchInput').value = `#${r.tag}`;
-      runSearch(r.tag);
+      runSearch(`#${r.tag}`);
       break;
     case 'anchor': {
-      // 页内跳转：不重建文章，只滚动
       const el = document.getElementById(r.id);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       break;
@@ -536,23 +794,16 @@ function handleRoute() {
     default:
       renderHome();
       setView('home');
-      $('#breadcrumb').innerHTML = '<b>首页</b>';
+      $('#breadcrumb').innerHTML = '<b>资料库</b>';
       state.currentSlug = '';
       renderSidebar();
   }
 }
 
-/* ============================ 移动端抽屉 ============================ */
-function openDrawer() {
-  $('#sidebar').classList.add('open');
-  $('#scrim').classList.add('on');
-}
-function closeDrawer() {
-  $('#sidebar').classList.remove('open');
-  $('#scrim').classList.remove('on');
-}
+/* ============================ 抽屉 / 滚动 ============================ */
+function openDrawer() { $('#sidebar').classList.add('open'); $('#scrim').classList.add('on'); }
+function closeDrawer() { $('#sidebar').classList.remove('open'); $('#scrim').classList.remove('on'); }
 
-/* ============================ 进度条 / 回到顶部 ============================ */
 function bindScroll() {
   const bar = $('#progress');
   const top = $('#toTop');
@@ -571,6 +822,111 @@ function bindScroll() {
   top.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 }
 
+/* ============================ 交互绑定 ============================ */
+function bindInteractions() {
+  document.addEventListener('click', (e) => {
+    const img = e.target.closest('.md-figure img');
+    if (img) {
+      $('#lightboxImg').src = img.dataset.zoomSrc || img.src;
+      $('#lightbox').classList.add('on');
+      return;
+    }
+    const copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn && copyBtn.closest('.md-code')) {
+      const code = copyBtn.closest('.md-code').querySelector('code');
+      if (code) copyText(code.textContent, copyBtn);
+      return;
+    }
+    const tplBtn = e.target.closest('[data-copy-tpl]');
+    if (tplBtn) {
+      const t = TEMPLATES[Number(tplBtn.dataset.copyTpl)];
+      if (t) copyText(t.body.replace(/DATE_TODAY/g, new Date().toISOString().slice(0, 10)), tplBtn, '已复制 ✓');
+      return;
+    }
+    if (e.target.closest('[data-close]')) {
+      closeQuickLook();
+      closeNewSheet();
+      return;
+    }
+    const copyLink = e.target.closest('[data-copy-link]');
+    if (copyLink) {
+      const slug = copyLink.dataset.copyLink;
+      copyText(`${location.origin}${location.pathname}#/note/${encodeURIComponent(slug)}`, copyLink, '已复制 ✓');
+      return;
+    }
+    const catJump = e.target.closest('[data-cat-jump]');
+    if (catJump) {
+      state.category = catJump.dataset.catJump;
+      localStorage.setItem('note-cat', state.category);
+      closeQuickLook();
+      renderSidebar();
+      renderHome();
+      setView('home');
+      if (location.hash !== '#/') location.hash = '#/';
+      showToast(`只看：${state.category}`);
+      return;
+    }
+    const anchorJump = e.target.closest('[data-anchor-jump]');
+    if (anchorJump) {
+      const [slug, id] = anchorJump.dataset.anchorJump.split('|');
+      closeQuickLook();
+      location.hash = `#/note/${encodeURIComponent(slug)}?a=${encodeURIComponent(id)}`;
+      return;
+    }
+    const ctxBtn = e.target.closest('#ctxMenu button');
+    if (ctxBtn) { handleCtxAction(ctxBtn.dataset.act); return; }
+    if (!e.target.closest('#ctxMenu')) closeCtx();
+
+    const catEl = e.target.closest('[data-cat]');
+    if (catEl) {
+      e.preventDefault();
+      state.category = catEl.dataset.cat || '';
+      localStorage.setItem('note-cat', state.category);
+      renderSidebar();
+      if (state.view === 'timeline') renderTimeline();
+      if (state.view === 'graph') ensureGraph();
+      if (state.view === 'search' && state.query) runSearch(state.query);
+      if (state.view === 'home') renderHome();
+      showToast(state.category ? `只看：${state.category}` : '显示全部笔记');
+      return;
+    }
+    const tagChip = e.target.closest('.chip[data-tag]');
+    if (tagChip) {
+      const q = `#${tagChip.dataset.tag}`;
+      $('#searchInput').value = q;
+      runSearch(q);
+      closeDrawer();
+      return;
+    }
+    if (e.target.closest('[data-open]')) closeQuickLook();
+  });
+
+  document.addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.nb-card[data-slug]');
+    if (!card) return;
+    e.preventDefault();
+    openCtx(card.dataset.slug, e.clientX, e.clientY);
+  });
+  let pressTimer = 0;
+  document.addEventListener('touchstart', (e) => {
+    const card = e.target.closest('.nb-card[data-slug]');
+    if (!card) return;
+    const t = e.touches[0];
+    pressTimer = setTimeout(() => openCtx(card.dataset.slug, t.clientX, t.clientY), 480);
+  }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach((ev) =>
+    document.addEventListener(ev, () => clearTimeout(pressTimer), { passive: true })
+  );
+
+  $('#lightboxClose').addEventListener('click', () => $('#lightbox').classList.remove('on'));
+  $('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') $('#lightbox').classList.remove('on'); });
+  $('#newBtn').addEventListener('click', openNewSheet);
+  $$('#newSheet [data-close]').forEach((el) => el.addEventListener('click', closeNewSheet));
+  $$('#quicklook [data-close]').forEach((el) => el.addEventListener('click', closeQuickLook));
+  $('#quicklook').addEventListener('click', (e) => { if (e.target.classList.contains('ql-mask')) closeQuickLook(); });
+  $('#newSheet').addEventListener('click', (e) => { if (e.target.classList.contains('sheet-mask')) closeNewSheet(); });
+}
+
 /* ============================ 启动 ============================ */
 async function boot() {
   applyTheme();
@@ -580,7 +936,8 @@ async function boot() {
     state.payload = await res.json();
   } catch (e) {
     $('#loading').innerHTML = `<div class="empty"><div class="big">⚠️</div>没能加载 data/index.json<br>
-      <span style="font-size:13px">先在项目根目录执行一次构建：<code class="md-inline-code">node tools/build.mjs</code>，然后刷新页面。<br>（本地直接双击打开 index.html 也会因为浏览器限制读不到数据，请用本地服务器或线上地址）</span></div>`;
+      <span style="font-size:13px">先在项目根目录执行 <code class="md-inline-code">node tools/build.mjs</code> 然后刷新；<br>
+      直接双击打开 index.html 会因浏览器限制读不到数据，请用本地服务器或线上地址。</span></div>`;
     return;
   }
 
@@ -588,7 +945,6 @@ async function boot() {
   state.bySlug = new Map(state.notes.map((n) => [n.slug, n]));
   state.index = buildIndex(state.payload);
 
-  // 站点名（可选：content/_site.json 覆盖）
   try {
     const s = await fetch('data/site.json', { cache: 'no-cache' });
     if (s.ok) {
@@ -596,8 +952,6 @@ async function boot() {
       if (cfg.title) { document.title = cfg.title; $('#siteTitle').textContent = cfg.title; }
       if (cfg.subtitle) $('#siteSub').textContent = cfg.subtitle;
       if (cfg.description) $('#heroDesc').textContent = cfg.description;
-    } else {
-      document.title = '我的笔记';
     }
   } catch (e) {}
 
@@ -605,22 +959,20 @@ async function boot() {
   $$('.view').forEach((v) => v.classList.remove('on'));
 
   renderSidebar();
-  bindContentInteractions();
+  bindInteractions();
   bindScroll();
 
-  // 事件绑定
   $('#themeBtn').addEventListener('click', cycleTheme);
   $('#layoutBtn').addEventListener('click', cycleLayout);
   $('#menuBtn').addEventListener('click', openDrawer);
   $('#scrim').addEventListener('click', closeDrawer);
   $('#graphCenter').addEventListener('click', () => state.graph && state.graph.fit());
-  $$('.viewswitch button').forEach((b) =>
+  $$('#segs button').forEach((b) =>
     b.addEventListener('click', () => {
-      const v = b.dataset.view;
-      if (v === 'home') location.hash = '#/';
-      else location.hash = `#/${v}`;
+      location.hash = b.dataset.view === 'home' ? '#/' : `#/${b.dataset.view}`;
     })
   );
+  $$('#listToggle button').forEach((b) => b.addEventListener('click', () => setList(b.dataset.list)));
 
   const input = $('#searchInput');
   input.addEventListener('input', () => {
@@ -639,10 +991,15 @@ async function boot() {
       input.focus();
       input.select();
     }
-    if (e.key === 'Escape') { $('#lightbox').classList.remove('on'); closeDrawer(); }
+    if (e.key === 'Escape') {
+      $('#lightbox').classList.remove('on');
+      closeQuickLook();
+      closeNewSheet();
+      closeCtx();
+      closeDrawer();
+    }
   });
 
-  // 系统主题变化
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (state.theme === 'system') applyTheme();
   });
@@ -650,7 +1007,6 @@ async function boot() {
   window.addEventListener('hashchange', handleRoute);
   handleRoute();
 
-  // PWA 离线缓存
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
