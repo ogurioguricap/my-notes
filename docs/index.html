@@ -1,39 +1,28 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light" data-layout="minimal">
+<html lang="zh-CN" data-theme="light" data-layout="minimal" data-list="grid">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>我的笔记</title>
-<meta name="description" content="纯前端个人笔记站：搜索、目录、知识图谱、时间线，手机/平板/电脑都能看。">
-<meta name="theme-color" content="#ffffff">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%233b6ef5'/><path d='M9 23V9h2.6l4.4 7 4.4-7H23v14h-2.6v-9.2L16 20.6l-4.4-6.8V23z' fill='white'/></svg>">
+<meta name="description" content="纯前端个人笔记站：笔记本库、全文检索、封面卡片、知识图谱，手机/平板/电脑都能看。">
+<meta name="theme-color" content="#FBFAF7">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23EA5A47'/><path d='M9 23V9h2.6l4.4 7 4.4-7H23v14h-2.6v-9.2L16 20.6l-4.4-6.8V23z' fill='white'/></svg>">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%233b6ef5'/></svg>">
-
-<!-- 公式渲染（KaTeX）：数模笔记必备；离线时自动降级为可读文本 -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23EA5A47'/></svg>">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
-<script>
-  // 首屏不为公式样式阻塞：异步加载 KaTeX 样式表
-  (function () {
-    var l = document.createElement('link');
-    l.rel = 'stylesheet';
-    l.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';
-    l.crossOrigin = 'anonymous';
-    l.onerror = function () { document.documentElement.dataset.katex = 'failed'; };
-    document.head.appendChild(l);
-  })();
-</script>
 <link rel="stylesheet" href="css/style.css">
 <script>
-  // 提前应用主题，避免白屏闪烁
+  // 提前应用主题 / 排版 / 列表布局，避免闪烁
   (function () {
     try {
       var t = localStorage.getItem('note-theme') || 'system';
       var l = localStorage.getItem('note-layout') || 'minimal';
+      var d = localStorage.getItem('note-list') || 'grid';
       var m = window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.dataset.theme = t === 'system' ? (m ? 'dark' : 'light') : t;
       document.documentElement.dataset.layout = l;
+      document.documentElement.dataset.list = d;
     } catch (e) {}
   })();
 </script>
@@ -42,32 +31,35 @@
 <div class="progress-bar" id="progress"></div>
 
 <div class="app">
-  <!-- ===================== 侧边栏 ===================== -->
+  <!-- ===================== 侧栏（资料库书架） ===================== -->
   <aside class="sidebar" id="sidebar" aria-label="笔记导航">
     <div class="sidebar-head">
-      <a class="brand" href="#/" aria-label="回到首页">
-        <span class="brand-logo">M</span>
-        <span class="brand-text">
-          <span class="brand-title" id="siteTitle">我的笔记</span>
-          <span class="brand-sub" id="siteSub">本地优先 · 纯前端</span>
+      <a class="app-mark" href="#/" aria-label="回到资料库">
+        <span class="app-mark-icon">📚</span>
+        <span class="app-mark-text">
+          <span class="app-mark-title" id="siteTitle">我的笔记</span>
+          <span class="app-mark-sub" id="siteSub">资料库 · 本地优先</span>
         </span>
       </a>
     </div>
 
-    <div class="search">
-      <span class="search-icon" aria-hidden="true">⌕</span>
-      <input class="search-input" id="searchInput" type="search" placeholder="搜索标题 / 正文 / 图表文字…"
-             autocomplete="off" spellcheck="false" aria-label="搜索笔记">
-      <button class="search-clear" id="searchClear" type="button" aria-label="清空搜索">✕</button>
+    <div class="side-actions">
+      <button class="btn-new" id="newBtn" type="button" title="新建笔记（复制模板）">
+        <span class="btn-new-plus">＋</span><span>新建笔记</span>
+      </button>
+      <div class="search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input class="search-input" id="searchInput" type="search" placeholder="搜索标题、正文、图表文字"
+               autocomplete="off" spellcheck="false" aria-label="搜索笔记">
+        <button class="search-clear" id="searchClear" type="button" aria-label="清空搜索">✕</button>
+      </div>
     </div>
 
-    <div class="side-filters" id="catFilters"></div>
-
-    <nav class="side-scroll" id="noteList" aria-label="笔记列表"></nav>
+    <nav class="side-scroll" id="noteList" aria-label="书架"></nav>
 
     <div class="side-foot">
       <span id="footStats">加载中…</span>
-      <span title="搜索快捷键">⌘/Ctrl + <span class="kbd">K</span></span>
+      <span class="side-foot-hint" title="搜索快捷键">⌘/Ctrl <span class="kbd">K</span></span>
     </div>
   </aside>
 
@@ -75,36 +67,42 @@
   <main class="main">
     <header class="topbar">
       <div class="topbar-left">
-        <button class="icon-btn" id="menuBtn" type="button" aria-label="打开目录">☰</button>
-        <span class="breadcrumb" id="breadcrumb">首页</span>
+        <button class="icon-btn round" id="menuBtn" type="button" aria-label="打开书架">☰</button>
+        <span class="breadcrumb" id="breadcrumb">资料库</span>
       </div>
       <div class="topbar-right">
-        <div class="viewswitch" role="tablist" aria-label="视图切换">
-          <button type="button" data-view="home" class="on" role="tab">🏠 <span class="lbl">首页</span></button>
-          <button type="button" data-view="timeline" role="tab">🕒 <span class="lbl">时间线</span></button>
-          <button type="button" data-view="graph" role="tab">🕸 <span class="lbl">知识图谱</span></button>
+        <div class="segmented" id="segs" role="tablist" aria-label="视图切换">
+          <button type="button" data-view="home" class="on" role="tab">资料库</button>
+          <button type="button" data-view="timeline" role="tab">时间线</button>
+          <button type="button" data-view="graph" role="tab">图谱</button>
         </div>
-        <button class="icon-btn wide" id="layoutBtn" type="button" title="切换排版风格（极简 / 技术 / 杂志）">🎨 <span class="lbl" id="layoutLbl">极简</span></button>
-        <button class="icon-btn" id="themeBtn" type="button" title="切换深浅色（浅 / 深 / 跟随系统）" aria-label="切换主题">🌗</button>
+        <div class="segmented tiny" id="listToggle" aria-label="网格或列表视图">
+          <button type="button" data-list="grid" class="on" title="网格视图" aria-label="网格视图">▦</button>
+          <button type="button" data-list="list" title="列表视图" aria-label="列表视图">☰</button>
+        </div>
+        <button class="icon-btn" id="layoutBtn" type="button" title="切换排版风格（极简 / 技术 / 杂志）" aria-label="切换排版">🎨</button>
+        <button class="icon-btn" id="themeBtn" type="button" title="切换深浅色" aria-label="切换主题">🌗</button>
       </div>
     </header>
 
     <div class="content" id="content">
-      <div class="loading" id="loading"><div class="spinner"></div>正在载入笔记…</div>
+      <div class="loading" id="loading"><div class="spinner"></div>正在载入资料库…</div>
 
-      <!-- 首页 -->
-      <section class="view" id="view-home" aria-label="首页">
-        <div class="reader" style="display:block">
-          <div class="hero">
-            <h1 id="heroTitle">我的笔记</h1>
-            <p id="heroDesc">把整理好的内容丢进 <code class="md-inline-code">content/</code>，构建一次，这里就是你的知识库。</p>
-            <div class="stats" id="stats"></div>
+      <!-- 资料库 -->
+      <section class="view" id="view-home" aria-label="资料库">
+        <div class="lib">
+          <div class="lib-head">
+            <div class="lib-head-main">
+              <h1 id="heroTitle">资料库</h1>
+              <p class="lib-sub" id="heroDesc">把 Markdown 丢进 content/，构建一次，这里就是你的笔记本架。</p>
+            </div>
+            <div class="lib-stats" id="stats"></div>
           </div>
           <div id="homeBody"></div>
         </div>
       </section>
 
-      <!-- 文章 -->
+      <!-- 笔记本（正文） -->
       <section class="view" id="view-note" aria-label="笔记正文">
         <div class="reader">
           <article class="article" id="article"></article>
@@ -114,10 +112,12 @@
 
       <!-- 时间线 -->
       <section class="view" id="view-timeline" aria-label="时间线">
-        <div class="reader" style="display:block">
-          <div class="hero" style="padding-bottom:0">
-            <h1>时间线</h1>
-            <p>按更新时间倒序排列，一眼看到最近在想什么。</p>
+        <div class="lib">
+          <div class="lib-head">
+            <div class="lib-head-main">
+              <h1>时间线</h1>
+              <p class="lib-sub">按更新时间倒序排列，一眼看到最近在想什么。</p>
+            </div>
           </div>
           <div id="timelineBody"></div>
         </div>
@@ -125,10 +125,12 @@
 
       <!-- 知识图谱 -->
       <section class="view" id="view-graph" aria-label="知识图谱">
-        <div class="reader" style="display:block">
-          <div class="hero" style="padding-bottom:12px">
-            <h1>知识图谱</h1>
-            <p>节点＝笔记，颜色＝分类，连线＝互链（<code class="md-inline-code">[[双链]]</code> 或同标签）。拖动可整理，滚轮缩放。</p>
+        <div class="lib">
+          <div class="lib-head">
+            <div class="lib-head-main">
+              <h1>知识图谱</h1>
+              <p class="lib-sub">节点＝笔记，颜色＝分类，连线＝互链（<code class="md-inline-code">[[双链]]</code>）或同标签。可拖动整理、滚轮缩放。</p>
+            </div>
           </div>
           <div class="graph-wrap">
             <canvas id="graph"></canvas>
@@ -143,10 +145,12 @@
 
       <!-- 搜索结果 -->
       <section class="view" id="view-search" aria-label="搜索结果">
-        <div class="reader" style="display:block">
-          <div class="hero" style="padding-bottom:10px">
-            <h1 id="searchHead">搜索结果</h1>
-            <p id="searchSub"></p>
+        <div class="lib">
+          <div class="lib-head">
+            <div class="lib-head-main">
+              <h1 id="searchHead">搜索结果</h1>
+              <p class="lib-sub" id="searchSub"></p>
+            </div>
           </div>
           <div class="search-results" id="searchResults"></div>
         </div>
@@ -154,6 +158,28 @@
     </div>
   </main>
 </div>
+
+<!-- 新建笔记：模板面板 -->
+<div class="sheet" id="newSheet" role="dialog" aria-modal="true" aria-label="新建笔记">
+  <div class="sheet-mask" data-close="1"></div>
+  <div class="sheet-body">
+    <div class="sheet-head">
+      <h3>新建笔记</h3>
+      <button class="icon-btn round" data-close="1" aria-label="关闭">✕</button>
+    </div>
+    <p class="sheet-desc">复制模板 → 存成 <code class="md-inline-code">content/你的文件名.md</code> → 运行 <code class="md-inline-code">node tools/update.mjs</code>，它就会作为一本新笔记出现在资料库里。</p>
+    <div class="template-list" id="templateList"></div>
+  </div>
+</div>
+
+<!-- 速览浮层 -->
+<div class="quicklook" id="quicklook" role="dialog" aria-modal="true" aria-label="笔记速览">
+  <div class="ql-mask" data-close="1"></div>
+  <div class="ql-body" id="qlBody"></div>
+</div>
+
+<!-- 右键 / 长按菜单 -->
+<div class="ctxmenu" id="ctxMenu" role="menu"></div>
 
 <div class="scrim" id="scrim"></div>
 <button class="to-top" id="toTop" type="button" aria-label="回到顶部">↑</button>
