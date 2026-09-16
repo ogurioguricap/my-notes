@@ -1,5 +1,5 @@
 /* 极简 Service Worker：让笔记站在手机上可离线翻阅 */
-const CACHE = 'notes-v1';
+const CACHE = 'notes-v2';
 const CORE = ['./', './index.html', './css/style.css', './js/app.js', './js/search.js', './js/highlight.js', './js/graph.js', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
