@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>打开我的笔记</title>
+<style>
+  :root { --ink:#2B2723; --soft:#6B635A; --faint:#9A9188; --line:#E9E5DE; --accent:#EA5A47; --accent-soft:#FDEDEA; --bg:#FBFAF7; --card:#fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:grid; place-items:center; padding:32px 18px; }
+  .wrap { width:min(680px,100%); }
+  h1 { font-size:24px; margin:0 0 6px; }
+  .sub { color:var(--soft); font-size:14px; margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin-bottom:14px;
+    box-shadow:0 1px 2px rgba(43,39,35,.05), 0 6px 18px rgba(43,39,35,.05); }
+  .card h2 { font-size:15px; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+  .card p { color:var(--soft); font-size:13px; line-height:1.7; margin:0 0 12px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  a.btn, button.btn { display:inline-flex; align-items:center; gap:7px; text-decoration:none;
+    border:1px solid var(--line); background:#fff; color:var(--ink); border-radius:10px;
+    padding:9px 15px; font-size:13.5px; font-weight:600; cursor:pointer; }
+  a.btn:hover, button.btn:hover { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
+  a.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  a.btn.primary:hover { filter:brightness(1.06); color:#fff; }
+  code { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; background:#F5F4F0;
+    border:1px solid var(--line); border-radius:6px; padding:2px 6px; }
+  .hint { font-size:12px; color:var(--faint); margin-top:10px; }
+  ol { margin:0 0 0 18px; padding:0; color:var(--soft); font-size:13px; line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📚 打开我的笔记</h1>
+  <p class="sub">三种打开方式，按需选一个。</p>
+
+  <div class="card">
+    <h2>🌐 线上版（推荐 · 手机电脑都能看）</h2>
+    <p>内容是最新的，手机、平板、别人的电脑都能打开同一个网址。</p>
+    <div class="row">
+      <a class="btn primary" href="https://ogurioguricap.github.io/my-notes/" target="_blank" rel="noopener">打开线上笔记</a>
+      <a class="btn" href="https://github.com/ogurioguricap/my-notes" target="_blank" rel="noopener">代码仓库</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📂 离线便携版（不联网、不起服务，双击即开）</h2>
+    <p>所有内容和样式都打包在这一个 HTML 文件里，断网也能看；发给别人／发到手机也能直接打开（图片需保持与 <code>docs</code> 文件夹的相对位置）。</p>
+    <div class="row">
+      <a class="btn primary" href="dist/我的笔记-离线版.html" rel="noreferrer">打开离线版</a>
+    </div>
+    <p class="hint">文件位置：项目目录下的 <code>dist\我的笔记-离线版.html</code></p>
+  </div>
+
+  <div class="card">
+    <h2>🖥 本地预览（改完内容先自查）</h2>
+    <p>先启动本地服务，再打开预览地址：</p>
+    <div class="row">
+      <button class="btn" id="copyCmd">复制启动命令</button>
+      <a class="btn" href="http://127.0.0.1:8877/" rel="noreferrer" target="_blank">打开本地预览</a>
+    </div>
+    <p class="hint">命令：<code>cd D:\harness2\notes-site ; python -m http.server 8877 --directory docs</code>（在这个文件夹里执行后，浏览器访问 127.0.0.1:8877）</p>
+  </div>
+
+  <div class="card">
+    <h2>📱 装成手机 App（加到主屏幕）</h2>
+    <ol>
+      <li>手机浏览器打开线上地址</li>
+      <li>iPhone：点「分享」→「添加到主屏幕」；安卓 Chrome：菜单 →「添加到主屏幕」</li>
+      <li>桌面 Chrome/Edge 打开后，地址栏右侧会出现「安装」图标，点它即可装成独立窗口应用</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+  document.getElementById('copyCmd').addEventListener('click', function () {
+    var cmd = 'cd D:\\harness2\\notes-site ; python -m http.server 8877 --directory docs';
+    var self = this;
+    function done() { var t = self.textContent; self.textContent = '已复制 ✓'; setTimeout(function () { self.textContent = t; }, 1400); }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(cmd).then(done, function () { fallback(); });
+    } else { fallback(); }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = cmd; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta); done();
+    }
+  });
+</script>
+</body>
+</html>
