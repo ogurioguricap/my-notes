@@ -8,7 +8,7 @@
  *
  * 令牌只存在本机浏览器的 localStorage，只发往 api.github.com，不经过任何第三方服务器。
  */
-import { renderDocument, serializeFrontmatter, parseFrontmatter } from '../../lib/markdown.mjs';
+import { renderDocument, serializeFrontmatter, parseFrontmatter } from '../lib/markdown.mjs';
 
 const API = 'https://api.github.com';
 const LS_TOKEN = 'note-gh-token';
