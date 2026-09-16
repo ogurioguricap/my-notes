@@ -70,9 +70,13 @@ head(4, '检索功能实测');
 const { main: testSearch } = await import('./test-search.mjs');
 const searchOk = await testSearch();
 
-if (!selfOk || !searchOk) {
+head(5, '资料库界面数据契约（封面卡片 / 书架 / 速览）');
+const { main: testUiLib } = await import('./test-ui-lib.mjs');
+const uiOk = await testUiLib();
+
+if (!selfOk || !searchOk || !uiOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
-  console.log(`  自检：${selfOk ? '通过' : '失败'}   检索测试：${searchOk ? '通过' : '失败'}`);
+  console.log(`  自检：${selfOk ? '通过' : '失败'}   检索：${searchOk ? '通过' : '失败'}   界面契约：${uiOk ? '通过' : '失败'}`);
   process.exit(1);
 }
 
