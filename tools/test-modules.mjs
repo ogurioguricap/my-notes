@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JS = path.join(ROOT, 'docs', 'js');
 const MODULES = ['search.js', 'highlight.js', 'graph.js', 'app.js'];
+const LIB_MODULES = ['lib/markdown.mjs', 'lib/site-build.mjs'];
 
 export async function main() {
 let pass = 0, fail = 0;
@@ -25,9 +26,8 @@ const expect = (name, cond, extra = '') => {
 
 console.log('=== 前端模块链接测试 ===');
 
-/* ---------- 1. 静态对账 ---------- */
+/* ---------- 1. 静态对账（自动跟随 import 目标，含 lib/ 共享模块） ---------- */
 console.log('\n— 导入 / 导出对账 —');
-const src = Object.fromEntries(MODULES.map((m) => [m, fs.readFileSync(path.join(JS, m), 'utf8')]));
 
 function exportsOf(code) {
   const out = new Set();
@@ -41,20 +41,51 @@ function exportsOf(code) {
   return out;
 }
 
+/** 读取一个文件；相对路径按「以 docs/ 为 Web 根」解析（浏览器里 href 就是这么找文件的） */
+const cache = new Map();
+function readModule(relPath) {
+  if (cache.has(relPath)) return cache.get(relPath);
+  const abs = path.resolve(ROOT, 'docs', relPath);
+  const code = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null;
+  cache.set(relPath, code);
+  return code;
+}
+
+/** 把 import 里的相对说明符解析成「相对 docs/」的路径 */
+function resolveSpecifier(fromRel, spec) {
+  if (!spec.startsWith('.')) return null;
+  const fromDir = path.posix.dirname(fromRel);
+  return path.posix.normalize(path.posix.join(fromDir, spec));
+}
+
+const queue = MODULES.map((m) => `js/${m}`);
+const visited = new Set();
 let importCount = 0;
-for (const [file, code] of Object.entries(src)) {
-  const re = /import\s*\{([^}]+)\}\s*from\s*'\.\/([\w.-]+)'/g;
+
+while (queue.length) {
+  const from = queue.shift();
+  if (visited.has(from)) continue;
+  visited.add(from);
+  const code = readModule(from);
+  if (code == null) { expect(`${from} 存在`, false, '文件不存在'); continue; }
+
+  const re = /import\s*\{([^}]+)\}\s*from\s*'([^']+)'/g;
   let m;
   while ((m = re.exec(code))) {
-    const target = m[2];
     const names = m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean);
     importCount += names.length;
-    const targetCode = src[target];
-    if (!targetCode) { expect(`${file} → ${target} 存在`, false, '目标模块不存在'); continue; }
+    const target = resolveSpecifier(from, m[2]);
+    if (!target || !/\.(m?js)$/.test(target)) continue; // 非 JS 或无扩展名，跳过
+    const targetCode = readModule(target);
+    if (targetCode == null) {
+      expect(`${from} → ${target}`, false, '目标模块在 docs/ 下不存在（线上会 404，整站脚本不执行）');
+      continue;
+    }
+    queue.push(target);
     const exp = exportsOf(targetCode);
     const missing = names.filter((n) => !exp.has(n));
     expect(
-      `${file} ← ${target} 导入 ${names.length} 个（${names.join(', ')}）`,
+      `${from} ← ${target} 导入 ${names.length} 个（${names.join(', ')}）`,
       missing.length === 0,
       missing.length ? `缺失导出：${missing.join(', ')}` : ''
     );
@@ -132,7 +163,7 @@ const html = fs.readFileSync(path.join(ROOT, 'docs', 'index.html'), 'utf8');
 for (const [m, re] of [['css/style.css', /href="css\/style\.css"/], ['js/app.js', /src="js\/app\.js(\?v=\d+)?"/], ['manifest', /rel="manifest"/]]) {
   expect(`引用了 ${m}`, re.test(html));
 }
-const domIds = ['segs', 'listToggle', 'newBtn', 'newSheet', 'templateList', 'quicklook', 'qlBody', 'ctxMenu', 'noteList', 'homeBody'];
+const domIds = ['segs', 'listToggle', 'newBtn', 'newSheet', 'templateList', 'quicklook', 'qlBody', 'ctxMenu', 'noteList', 'homeBody', 'editor'];
 const missIds = domIds.filter((id) => !html.includes(`id="${id}"`));
 expect(`关键容器齐备（${domIds.length} 个）`, missIds.length === 0, missIds.join(','));
 
