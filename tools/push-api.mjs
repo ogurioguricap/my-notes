@@ -71,7 +71,7 @@ function collectFiles() {
       if (SKIP_DIRS.has(e.name)) continue;
       if (SKIP_FILES.has(e.name)) continue;
       const rel = base ? `${base}/${e.name}` : e.name;
-      if (rel === '.gitignore' || rel.endsWith('.swp')) continue;
+      if (rel.endsWith('.swp')) continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) { walk(full, rel); continue; }
       const ext = path.extname(e.name).toLowerCase();
