@@ -5,12 +5,12 @@
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#3b6ef5",
+  "background_color": "#FBFAF7",
+  "theme_color": "#EA5A47",
   "lang": "zh-CN",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%233b6ef5'/%3E%3Ctext x='96' y='132' font-size='112' font-family='monospace' font-weight='bold' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%23EA5A47'/%3E%3Ctext x='96' y='132' font-size='112' font-family='monospace' font-weight='bold' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E",
       "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any"
