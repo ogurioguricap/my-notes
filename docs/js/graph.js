@@ -95,7 +95,7 @@ export function createGraph({ canvas, tipEl, legendEl, onOpen }) {
     if (legendEl) {
       legendEl.innerHTML =
         `<div><b>${list.length}</b> 篇 · <b>${edges.length}</b> 条关系</div>` +
-        cats.slice(0, 8).map((c) => `<div class="legend-row"><span class="legend-dot" style="background:${catColor.get(c)}"></span>${escapeHtml(c)}</div>`).join('');
+        cats.slice(0, 8).map((c) => `<div class="legend-row"><span class="legend-dot" style="background:${catColor.get(c)}"></span>${escGraph(c)}</div>`).join('');
     }
     fit();
   }
@@ -297,7 +297,7 @@ export function createGraph({ canvas, tipEl, legendEl, onOpen }) {
         canvas.style.cursor = nd ? 'pointer' : 'grab';
         if (tipEl) {
           if (nd) {
-            tipEl.innerHTML = `<b>${escapeHtml(nd.title)}</b><br><span style="color:var(--text-faint)">${escapeHtml(nd.category)}${nd.tags.length ? ' · ' + escapeHtml(nd.tags.slice(0, 3).join(' ')) : ''}</span>`;
+            tipEl.innerHTML = `<b>${escGraph(nd.title)}</b><br><span style="color:var(--text-faint)">${escGraph(nd.category)}${nd.tags.length ? ' · ' + escGraph(nd.tags.slice(0, 3).join(' ')) : ''}</span>`;
             tipEl.classList.add('on');
           } else tipEl.classList.remove('on');
         }
@@ -365,6 +365,6 @@ export function createGraph({ canvas, tipEl, legendEl, onOpen }) {
   };
 }
 
-function escapeHtml(s) {
+function escGraph(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
