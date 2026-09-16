@@ -66,17 +66,27 @@ head(3, '静态自检（DOM 契约 / 产物完整性 / 路径安全）');
 const { main: selfcheck } = await import('./selfcheck.mjs');
 const selfOk = selfcheck();
 
-head(4, '检索功能实测');
+head(4, '模块链接测试（import/export 对账 + 真实加载启动）');
+const { main: testModules } = await import('./test-modules.mjs');
+const modOk = await testModules();
+
+head(5, '检索功能实测');
 const { main: testSearch } = await import('./test-search.mjs');
 const searchOk = await testSearch();
 
-head(5, '资料库界面数据契约（封面卡片 / 书架 / 速览）');
+head(6, '资料库界面数据契约（封面卡片 / 书架 / 速览）');
 const { main: testUiLib } = await import('./test-ui-lib.mjs');
 const uiOk = await testUiLib();
 
-if (!selfOk || !searchOk || !uiOk) {
+head(7, '离线便携版单文件');
+const { main: buildPortable } = await import('./build-portable.mjs');
+const portableOk = buildPortable();
+
+if (!selfOk || !modOk || !searchOk || !uiOk || !portableOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
-  console.log(`  自检：${selfOk ? '通过' : '失败'}   检索：${searchOk ? '通过' : '失败'}   界面契约：${uiOk ? '通过' : '失败'}`);
+  console.log(
+    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面契约：${uiOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
+  );
   process.exit(1);
 }
 
