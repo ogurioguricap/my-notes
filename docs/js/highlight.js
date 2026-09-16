@@ -49,7 +49,7 @@ const ALIAS = {
   yml: 'yaml', tex: 'latex', gnuplot: 'bash', text: null, txt: null, plain: null, '': null,
 };
 
-function escapeHtml(s) {
+export function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
