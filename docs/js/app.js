@@ -6,7 +6,7 @@ import { buildIndex, search, hlMark as highlight } from './search.js';
 import { highlightAll, escapeHtml } from './highlight.js';
 import { createGraph } from './graph.js';
 import { Editor } from './editor.mjs';
-import { applyEdit } from '../../lib/site-build.mjs';
+import { applyEdit } from '../lib/site-build.mjs';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
