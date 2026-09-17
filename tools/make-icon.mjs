@@ -248,9 +248,30 @@ for ($i = 0; $i -lt $b64.Length; $i += 200) {
 $ms.Dispose(); $bmp.Dispose(); $img.Dispose()
 Write-Output "$side"
 `;
-  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' });
-  if (r.status !== 0 || !fs.existsSync(tmp)) {
-    throw new Error('Windows 解码失败：' + (r.stderr || r.stdout || '').slice(0, 200));
+  let r = null;
+  try {
+    r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' });
+  } catch (e) {
+    r = { status: -1, error: e };
+  }
+  if (!r || r.status !== 0 || !fs.existsSync(tmp)) {
+    if (fs.existsSync(tmp)) {
+      // 兜底：如果已经有人（用 PowerShell / 别的工具）把解码结果放到这里，就直接用
+      console.log('  ℹ 本环境无法启动 Windows 解码进程，改用已存在的 _icon_pixels.txt');
+      return { b64: fs.readFileSync(tmp, 'utf8').replace(/\s+/g, ''), side: 0, tmp: null };
+    }
+    console.error('✗ 无法解码源图。请在**普通 PowerShell 窗口**里执行下面这段，然后重跑本脚本：');
+    console.error('');
+    console.error('  Add-Type -AssemblyName System.Drawing');
+    console.error(`  $img = [System.Drawing.Image]::FromFile("${srcPath}")`);
+    console.error('  $side = [Math]::Min($img.Width, $img.Height)');
+    console.error(`  $x = [int](($img.Width - $side)/2); $y = [int](($img.Height - $side)*${crop})`);
+    console.error('  $bmp = New-Object System.Drawing.Bitmap($side,$side,[System.Drawing.Imaging.PixelFormat]::Format32bppArgb)');
+    console.error('  $g = [System.Drawing.Graphics]::FromImage($bmp); $g.DrawImage($img,(New-Object System.Drawing.Rectangle(0,0,$side,$side)),(New-Object System.Drawing.Rectangle($x,$y,$side,$side)),[System.Drawing.GraphicsUnit]::Pixel); $g.Dispose()');
+    console.error(`  $bmp.Save("${tmp.replace(/\\/g, '\\\\')}", [System.Drawing.Imaging.ImageFormat]::Png)`);
+    console.error(`  node tools/make-icon.mjs "${path.basename(tmp)}"`);
+    console.error('');
+    throw new Error('需要先在普通 PowerShell 里把源图解码成 PNG（见上方命令）');
   }
   const side = parseInt(String(r.stdout).trim().split(/\s+/).pop(), 10) || 0;
   return { b64: fs.readFileSync(tmp, 'utf8').replace(/\s+/g, ''), side, tmp };
