@@ -105,6 +105,23 @@ expect('站点路径全为相对路径（GitHub Pages 子路径可安装）', !/
 expect('.nojekyll 存在（避免静态资源被 Jekyll 处理）', fs.existsSync(path.join(DOCS, '.nojekyll')));
 expect('离线便携版与 PWA 不冲突（便携版为单文件，无需 SW）', true);
 
+/* ---------- 5. 更新传播：改了笔记 App 必须能看到新的 ---------- */
+console.log('\n— 更新传播策略（改笔记后能否立刻看到）—');
+const swSrc = fs.readFileSync(swPath, 'utf8');
+const rules = (/const ALWAYS_FRESH = \[([^\]]+)\]/.exec(swSrc) || [])[1] || '';
+const freshPatterns = rules.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+  const m = /^\/(.*)\/$/.exec(s);
+  return m ? new RegExp(m[1]) : null;
+}).filter(Boolean);
+const isFresh = (p) => freshPatterns.some((re) => re.test(p));
+expect('笔记数据 data/index.json 为网络优先（改笔记后刷新即最新）', isFresh('/my-notes/data/index.json'));
+expect('手写标注 ink/*.json 为网络优先（改标注后能看到新的）', isFresh('/my-notes/ink/abc.json'));
+expect('页面与脚本为网络优先（旧 JS 不会驻留）', isFresh('/my-notes/js/app.js') && isFresh('/my-notes/index.html'));
+expect('图片/附件走缓存优先（省流量）', !isFresh('/my-notes/assets/demo.png'));
+expect('附件 URL 会加版本参数（同名图片更新后不吃旧缓存）', /versionAssets/.test(appJs));
+expect('标注请求带时间戳（刚保存的标注立刻可见）', /\?t=\$\{Date\.now\(\)\}/.test(appJs) || /ink\/[^`]*\?t=/.test(appJs));
+expect('刚发布后若线上还是旧数据会给用户提示', /note-just-published/.test(appJs));
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 if (fail) {
   console.log('\n以上任一项失败，浏览器的「安装」按钮就不会出现。');
