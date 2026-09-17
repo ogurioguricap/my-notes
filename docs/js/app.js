@@ -399,6 +399,7 @@ function openNote(slug, opts = {}) {
   body.querySelectorAll('h1,h2,h3,h4').forEach((h) => {
     if (!h.id) h.id = slugifyClient(h.textContent.replace('#', ''));
   });
+  versionAssets(body, note.date ? Date.parse(note.date) : Date.now());
   renderMath(body);
   highlightAll(body);
   fixWikilinks(body);
@@ -419,6 +420,19 @@ function openNote(slug, opts = {}) {
   setupScrollSpy();
 }
 
+/** 给附件加版本参数：图片/PDF 同名更新后，浏览器不会再用旧缓存 */
+function versionAssets(root, stamp) {
+  const v = String(Math.floor((stamp || Date.now()) / 1000));
+  root.querySelectorAll('img[src], a[href]').forEach((el) => {
+    const attr = el.tagName === 'IMG' ? 'src' : 'href';
+    const raw = el.getAttribute(attr) || '';
+    if (!raw || /^(https?:|data:|mailto:|#)/.test(raw)) return;
+    if (!/\.(png|jpe?g|gif|webp|svg|pdf|zip|docx?|xlsx?|csv)$/i.test(raw)) return;
+    if (raw.includes('?v=')) return;
+    el.setAttribute(attr, `${raw}?v=${v}`);
+    if (el.tagName === 'IMG') el.setAttribute('data-zoom-src', el.getAttribute('src'));
+  });
+}
 function fixWikilinks(root) {
   root.querySelectorAll('[data-wikilink]').forEach((a) => {
     const raw = a.getAttribute('data-wikilink') || '';
@@ -1013,6 +1027,13 @@ function afterSaved(slug, info) {
   } catch (e) {
     console.warn('本地刷新失败（线上已保存）', e);
   }
+  // 记住「刚发布过」：下次加载时若线上数据还是旧的，就提示用户稍等
+  try {
+    localStorage.setItem('note-just-published', JSON.stringify({ slug, at: Date.now() }));
+  } catch (e) {}
+  setTimeout(() => {
+    showToast('已发布。GitHub Pages 约 1 分钟后更新，刷新若还是旧内容属正常现象');
+  }, 1600);
 }
 
 function initEditor() {
@@ -1100,7 +1121,8 @@ async function openInk(slug) {
   // 载入已有标注（先试线上静态文件，再试仓库 API）
   let strokes = [];
   try {
-    const r = await fetch(`ink/${encodeURIComponent(slug)}.json`, { cache: 'no-cache' });
+    // 加时间戳绕开缓存：刚保存过的标注要能立刻看到新的
+    const r = await fetch(`ink/${encodeURIComponent(slug)}.json?t=${Date.now()}`, { cache: 'no-cache' });
     if (r.ok) {
       const j = await r.json();
       if (Array.isArray(j.strokes)) strokes = j.strokes;
@@ -1187,6 +1209,18 @@ async function boot() {
       const res = await fetch('data/index.json', { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       state.payload = await res.json();
+      // 如果上次刚发布过，而线上数据看起来还是旧的，给一句明确提示（避免以为「更新没生效」）
+      try {
+        const mark = JSON.parse(localStorage.getItem('note-just-published') || 'null');
+        if (mark && Date.now() - mark.at < 8 * 60 * 1000) {
+          const hasNote = (state.payload.notes || []).some((n) => n.slug === mark.slug);
+          if (!hasNote) {
+            setTimeout(() => showToast('刚发布的笔记还在等 GitHub 部署（约 1 分钟），稍后刷新即可'), 900);
+          } else {
+            localStorage.removeItem('note-just-published');
+          }
+        }
+      } catch (e) {}
     }
   } catch (e) {
     $('#loading').innerHTML = `<div class="empty"><div class="big">⚠️</div>没能加载 data/index.json<br>
