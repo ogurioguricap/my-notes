@@ -1,0 +1,355 @@
+#!/usr/bin/env node
+/**
+ * 真跑一遍：用最小 DOM 仿真加载 docs/js/app.js，执行「资料库渲染 → 打开笔记 → 标注 → 编辑器」，
+ * 捕获运行期异常。静态检查查不出这类问题，而它正是「网页打不开 / 点了没反应」的常见原因。
+ *
+ * 用法： node tools/test-runtime.mjs
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DOCS = path.join(ROOT, 'docs');
+
+let pass = 0, fail = 0;
+const expect = (name, cond, extra = '') => {
+  if (cond) { pass++; console.log(`  ✅ ${name}`); }
+  else { fail++; console.log(`  ❌ ${name} ${extra}`); }
+};
+
+/* ============================ 最小 DOM ============================ */
+const VOID = new Set(['br', 'img', 'hr', 'input', 'link', 'meta']);
+
+function parseHtml(html) {
+  const root = mkEl('#root');
+  const stack = [root];
+  const re = /<!--[\s\S]*?-->|<\/?([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>|([^<]+)/g;
+  let m;
+  while ((m = re.exec(String(html)))) {
+    const full = m[0];
+    if (full.startsWith('<!')) continue;
+    if (m[3] !== undefined) {
+      if (m[3].trim()) push(stack[stack.length - 1], { nodeType: 3, nodeValue: m[3] });
+      continue;
+    }
+    const name = String(m[1]).toLowerCase();
+    if (full.startsWith('</')) {
+      for (let i = stack.length - 1; i > 0; i--) if (stack[i].tagName === name) { stack.length = i; break; }
+      continue;
+    }
+    const el = mkEl(name);
+    parseAttrs(m[2] || '', el);
+    push(stack[stack.length - 1], el);
+    if (!VOID.has(name) && !full.endsWith('/>')) stack.push(el);
+  }
+  return root;
+}
+
+function push(p, c) { c.parentNode = p; p.childNodes.push(c); }
+
+function mkEl(tag) {
+  const classes = new Set();
+  const el = {
+    nodeType: 1,
+    tagName: String(tag).toLowerCase(),
+    childNodes: [],
+    attrs: {},
+    style: {},
+    dataset: {},
+    value: '',
+    checked: false,
+    _html: '',
+    get children() { return el.childNodes.filter((c) => c.nodeType === 1); },
+    classList: {
+      contains: (c) => classes.has(c),
+      add: (...cs) => cs.forEach((c) => c && classes.add(c)),
+      remove: (...cs) => cs.forEach((c) => classes.delete(c)),
+      toggle: (c, on) => { if (on === undefined) on = !classes.has(c); on ? classes.add(c) : classes.delete(c); return on; },
+      [Symbol.iterator]: () => classes[Symbol.iterator](),
+    },
+    get className() { return [...classes].join(' '); },
+    set className(v) { classes.clear(); String(v).split(/\s+/).forEach((c) => c && classes.add(c)); },
+    get innerHTML() { return el._html || el.childNodes.map((c) => (c.nodeType === 3 ? c.nodeValue : c.outerHTML)).join(''); },
+    set innerHTML(v) {
+      el._html = String(v);
+      el.childNodes = [];
+      const parsed = parseHtml(el._html);
+      parsed.childNodes.forEach((c) => push(el, c));
+    },
+    get textContent() { return el.childNodes.map((c) => (c.nodeType === 3 ? c.nodeValue : c.textContent)).join(''); },
+    set textContent(v) { el.childNodes = []; el._html = ''; if (v) push(el, { nodeType: 3, nodeValue: String(v) }); },
+    get outerHTML() {
+      const attrs = Object.entries(el.attrs).map(([k, v]) => ` ${k}="${v}"`).join('');
+      return `<${el.tagName}${attrs}>${el.innerHTML}</${el.tagName}>`;
+    },
+    getAttribute(k) { return el.attrs[k] === undefined ? null : el.attrs[k]; },
+    setAttribute(k, v) { el.attrs[k] = String(v); },
+    removeAttribute(k) { delete el.attrs[k]; },
+    appendChild(c) { push(el, c); el._html = ''; return c; },
+    append(...cs) { cs.forEach((c) => push(el, c)); el._html = ''; },
+    insertBefore(c) { push(el, c); return c; },
+    remove() { const p = el.parentNode; if (p) p.childNodes = p.childNodes.filter((x) => x !== el); },
+    replaceWith(...nodes) {
+      const p = el.parentNode; if (!p) return;
+      const i = p.childNodes.indexOf(el);
+      p.childNodes.splice(i, 1, ...nodes);
+      nodes.forEach((n) => { n.parentNode = p; });
+    },
+    addEventListener(t, fn) { (el._ev ||= {}); el._ev[t] = (el._ev[t] || []).concat(fn); },
+    removeEventListener() {},
+    dispatchEvent(ev) {
+      // 模拟真实 DOM 的冒泡：沿父链依次触发
+      ev.target = ev.target || el;
+      let node = el;
+      while (node) {
+        if (node._ev && node._ev[ev.type]) node._ev[ev.type].forEach((fn) => fn(ev));
+        node = node.parentNode;
+      }
+      return true;
+    },
+    querySelectorAll(sel) { return queryAll(el, sel, false); },
+    querySelector(sel) { return queryAll(el, sel, true)[0] || null; },
+    closest(sel) {
+      let n = el;
+      while (n) { if (n.nodeType === 1 && matches(n, sel)) return n; n = n.parentNode; }
+      return null;
+    },
+    contains(n) { let x = n; while (x) { if (x === el) return true; x = x.parentNode; } return false; },
+    getBoundingClientRect() { return { width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600 }; },
+    focus() {}, blur() {}, select() {}, click() {}, scrollIntoView() {},
+    getContext() {
+      const noop = () => {};
+      return new Proxy({}, { get: () => noop, set: () => true });
+    },
+    toDataURL: () => 'data:image/png;base64,',
+  };
+  return el;
+}
+
+function parseAttrs(str, el) {
+  const re = /([\w:.-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+  let m;
+  while ((m = re.exec(str))) {
+    const k = m[1].toLowerCase();
+    const v = m[2] ?? m[3] ?? m[4] ?? '';
+    el.attrs[k] = v;
+    if (k === 'class') v.split(/\s+/).forEach((c) => c && el.classList.add(c));
+    if (k === 'value') el.value = v;
+    if (k === 'checked') el.checked = true;
+    if (k.startsWith('data-')) {
+      const key = k.slice(5).replace(/-([a-z])/g, (x, y) => y.toUpperCase());
+      el.dataset[key] = v;
+    }
+  }
+}
+
+function matches(el, sel) {
+  const parts = String(sel).split(',').map((s) => s.trim()).filter(Boolean);
+  return parts.some((one) => {
+    const s = one.replace(/^:scope\s*>\s*/, '');
+    const idPart = /#([\w-]+)/.exec(s);
+    const tag = (/^[a-zA-Z][\w-]*/.exec(s) || [])[0];
+    const cls = [...s.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+    const attr = /\[([\w-]+)(?:="([^"]*)")?\]/.exec(s);
+    if (idPart && el.attrs.id !== idPart[1]) return false;   // 之前漏了 #id，导致 #xxx 匹配所有元素
+    if (tag && el.tagName !== tag.toLowerCase()) return false;
+    if (cls.some((c) => !el.classList.contains(c))) return false;
+    if (attr && el.attrs[attr[1]] === undefined) return false;
+    if (attr && attr[2] !== undefined && el.attrs[attr[1]] !== attr[2]) return false;
+    return true;
+  });
+}
+
+function queryAll(root, sel, first) {
+  const out = [];
+  const walk = (n) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType !== 1) continue;
+      if (matches(c, sel)) {
+        out.push(c);
+        if (first) return;
+      }
+      walk(c);
+      if (first && out.length) return;
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/* ============================ 安装全局环境 ============================ */
+const docRoot = parseHtml(fs.readFileSync(path.join(DOCS, 'index.html'), 'utf8'));
+// 让 innerHTML 解析出的树的根，拥有与 document 相同的监听器（等价于真实 DOM 里冒泡到 document）
+docRoot._ev = {};
+const __docEv = {};
+const __addDocListener = (t, fn) => { (__docEv[t] = __docEv[t] || []).push(fn); docRoot._ev[t] = __docEv[t]; };
+const documentStub = {
+  documentElement: mkEl('html'),
+  body: mkEl('body'),
+  head: mkEl('head'),
+  createElement: (t) => mkEl(t),
+  createDocumentFragment: () => mkEl('fragment'),
+  createTextNode: (v) => ({ nodeType: 3, nodeValue: v }),
+  querySelector: (s) => queryAll(docRoot, s, true)[0] || null,
+  querySelectorAll: (s) => queryAll(docRoot, s, false),
+  getElementById: (id) => queryAll(docRoot, '#' + id, true)[0] || null,
+  addEventListener: (t, fn) => __addDocListener(t, fn),
+  removeEventListener: () => {},
+  dispatchEvent: (ev) => { ((documentStub._ev || {})[ev.type] || []).forEach((fn) => fn(ev)); return true; },
+  execCommand: () => true,
+};
+const define = (name, value) => {
+  try { Object.defineProperty(globalThis, name, { value, writable: true, configurable: true }); }
+  catch (e) { try { globalThis[name] = value; } catch (e2) {} }
+};
+define('document', documentStub);
+const windowStub = {
+  _ev: {},
+  matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+  addEventListener(t, fn) { (this._ev[t] = this._ev[t] || []).push(fn); },
+  removeEventListener() {},
+  dispatchEvent(ev) { (this._ev[ev.type] || []).forEach((fn) => fn(ev)); return true; },
+  innerWidth: 1200,
+  scrollTo: () => {},
+  getSelection: () => ({ rangeCount: 0, isCollapsed: true, getRangeAt: () => ({}) }),
+  devicePixelRatio: 1,
+};
+define('window', windowStub);
+define('location', { hash: '', origin: 'http://localhost', pathname: '/', protocol: 'http:', host: 'localhost', href: 'http://localhost/', replace: () => {}, reload: () => {} });
+define('localStorage', {
+  _d: {},
+  getItem(k) { return this._d[k] ?? null; },
+  setItem(k, v) { this._d[k] = String(v); },
+  removeItem(k) { delete this._d[k]; },
+  key(i) { return Object.keys(this._d)[i] ?? null; },
+  get length() { return Object.keys(this._d).length; },
+});
+define('navigator', {});
+define('matchMedia', () => ({ matches: false, addEventListener: () => {} }));
+define('requestAnimationFrame', (f) => setTimeout(() => f(Date.now()), 0));
+define('cancelAnimationFrame', () => {});
+define('IntersectionObserver', class { observe() {} disconnect() {} unobserve() {} });
+define('ResizeObserver', class { observe() {} disconnect() {} });
+define('getComputedStyle', () => ({ getPropertyValue: () => '#000' }));
+define('CustomEvent', class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } });
+define('alert', () => {});
+define('confirm', () => true);
+define('prompt', () => 'https://example.com');
+define('fetch', async (url) => {
+  const p = path.join(DOCS, String(url).replace(/^https?:\/\/[^/]+\//, ''));
+  if (fs.existsSync(p)) {
+    const t = fs.readFileSync(p, 'utf8');
+    return { ok: true, status: 200, text: async () => t, json: async () => JSON.parse(t) };
+  }
+  return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+});
+
+/* ============================ 运行 ============================ */
+console.log('=== 运行时冒烟测试（最小 DOM 仿真）===');
+const errors = [];
+process.on('unhandledRejection', (e) => errors.push('unhandledRejection: ' + (e && (e.message || e))));
+process.on('uncaughtException', (e) => errors.push('uncaughtException: ' + e.message));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+try {
+  await import(`file://${path.join(DOCS, 'js', 'app.js').replace(/\\/g, '/')}`);
+  await sleep(500);
+  if (process.env.RUNTIME_DEBUG) {
+    const ids = ['homeBody', 'noteList', 'footStats', 'heroTitle', 'stats', 'loading'];
+    for (const id of ids) {
+      const el = documentStub.getElementById(id);
+      console.log(`  [debug] #${id.padEnd(10)} ${el ? '找到 tag=' + el.tagName + ' html长度=' + el.innerHTML.length + ' 内容=' + JSON.stringify(el.innerHTML.slice(0, 60)) : '未找到'}`);
+    }
+    console.log('  [debug] 唯一性检查：homeBody === noteList ?', documentStub.getElementById('homeBody') === documentStub.getElementById('noteList'));
+    const anyHtml = documentStub.getElementById('view-home');
+    console.log('  [debug] #view-home html 长度:', anyHtml ? anyHtml.innerHTML.length : 0, '| 含 nb-card:', anyHtml ? anyHtml.innerHTML.includes('nb-card') : false);
+  }
+  expect('app.js 加载并启动无异常', errors.length === 0, errors.join(' | '));
+
+  const notes = JSON.parse(fs.readFileSync(path.join(DOCS, 'data', 'index.json'), 'utf8')).notes;
+  const cards = queryAll(docRoot, '.nb-card', false);
+  expect(`资料库卡片渲染（${cards.length} 张卡片，覆盖全部 ${notes.length} 篇）`, cards.length >= notes.length);
+
+  const strips = queryAll(docRoot, '.strip-scroll', false);
+  expect(`横向书架渲染（${strips.length} 条）`, strips.length >= 1);
+  const cats = queryAll(docRoot, '.cat-card', false);
+  expect(`分类卡片渲染（${cats.length} 张）`, cats.length >= 1);
+
+  // 打开第一篇笔记
+  const slug = notes[0].slug;
+  location.hash = `#/note/${encodeURIComponent(slug)}`;
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(300);
+  if (process.env.RUNTIME_DEBUG && globalThis.window.__notes) {
+    const d = globalThis.window.__notes.debug();
+    console.log('  [debug] __notes.debug() =', JSON.stringify(d));
+    console.log('  [debug] 手动直接调用 openNote 试试：');
+    try {
+      globalThis.window.__notes.openNote(slug);
+      const d2 = globalThis.window.__notes.debug();
+      console.log('  [debug] 直接 openNote 后 =', JSON.stringify(d2));
+    } catch (e) { console.log('  [debug] 直接 openNote 抛错:', e.message); }
+  }
+  if (process.env.RUNTIME_DEBUG) {
+    const art = documentStub.getElementById('article');
+    const vn = documentStub.getElementById('view-note');
+    console.log('  [debug] hash =', location.hash);
+    console.log('  [debug] #view-note class =', vn ? vn.className : '未找到', '| on:', vn ? vn.classList.contains('on') : 'n/a');
+    console.log('  [debug] #article 长度 =', art ? art.innerHTML.length : '未找到 #article');
+    console.log('  [debug] 全文档 [data-edit] 数 =', documentStub.querySelectorAll('[data-edit]').length);
+    console.log('  [debug] #article 前 200 =', art ? JSON.stringify(art.innerHTML.slice(0, 200)) : 'n/a');
+  }
+  const view = documentStub.getElementById('view-note');
+  expect(`打开笔记「${slug}」无异常`, errors.length === 0, errors.slice(-1).join(''));
+  const dbg0 = globalThis.window.__notes ? globalThis.window.__notes.debug() : null;
+  expect('笔记视图已激活', !!(dbg0 && dbg0.view === 'note' && dbg0.slug === slug), JSON.stringify(dbg0));
+  const body = documentStub.getElementById('articleBody');
+  expect('正文已渲染 HTML', body && body.innerHTML.length > 200, body ? `长度 ${body.innerHTML.length}` : '未找到 #articleBody');
+  const editBtn = body ? queryAll(docRoot, '[data-edit]', false) : [];
+  expect('笔记页有「编辑」入口', editBtn.length >= 1);
+  expect('笔记页有「标注」入口', queryAll(docRoot, '[data-ink]', false).length >= 1);
+
+  // 打开编辑器
+  if (editBtn[0]) {
+    editBtn[0].dispatchEvent({ type: 'click', target: editBtn[0] });
+    await sleep(300);
+    const ed = documentStub.getElementById('editor');
+    expect('编辑器面板已打开', ed && ed.classList.contains('on'));
+    const rich = documentStub.getElementById('edRich');
+    expect('可视化编辑面已生成内容', rich && rich.innerHTML.length > 100, rich ? `长度 ${rich.innerHTML.length}` : '未找到 #edRich');
+    expect('字号工具栏存在', queryAll(docRoot, '[data-size]', false).length >= 5);
+    const preview = documentStub.getElementById('edPreview');
+    expect('实时预览已渲染', preview && preview.innerHTML.length > 100);
+  }
+
+  // 时间线 / 图谱
+  location.hash = '#/timeline';
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(200);
+  expect('时间线视图有内容', (documentStub.getElementById('timelineBody') || {}).innerHTML?.length > 50);
+  location.hash = '#/graph';
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(200);
+  expect('图谱视图无异常', errors.length === 0, errors.slice(-1).join(''));
+
+  // 搜索
+  const input = documentStub.getElementById('searchInput');
+  if (input) {
+    input.value = '马尔可夫';
+    input.dispatchEvent({ type: 'input', target: input });
+    await sleep(250);
+    const results = queryAll(docRoot, '.result', false);
+    expect(`搜索「马尔可夫」有结果（${results.length} 条）`, results.length >= 1);
+  }
+
+  expect('全流程累计无运行期异常', errors.length === 0, errors.join(' | '));
+} catch (e) {
+  fail++;
+  console.log(`  ❌ 运行期抛出异常：${e.stack ? e.stack.split('\n').slice(0, 3).join(' ' ) : e.message}`);
+}
+
+console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
+// 图谱动画等会一直占用事件循环，这里显式退出
+process.exit(fail ? 1 : 0);
