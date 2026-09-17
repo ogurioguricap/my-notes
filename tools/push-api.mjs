@@ -80,16 +80,50 @@ function collectFiles() {
     }
   };
   walk(ROOT);
-  return out.sort();
+  return out.filter((f) => !isIgnored(f)).sort();
 }
 
-const IGNORE_SEGMENTS = ['node_modules/', '_shots/'];
+/* ============================ .gitignore 解析 ============================ */
+/**
+ * 真正读取 .gitignore，而不是硬编码几条规则。
+ * 教训：之前硬编码的忽略列表漏了「本地令牌文件」，导致推送工具试图把密钥上传到 GitHub
+ * （被 GitHub 的密钥扫描拦下，返回 409 Repository rule violations）。
+ * 支持：注释、空行、目录规则、! 取反、* 通配、** 、/ 前缀与 / 后缀。
+ */
+function loadGitignore(root) {
+  const file = path.join(root, '.gitignore');
+  if (!fs.existsSync(file)) return [];
+  const rules = [];
+  for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const neg = line.startsWith('!');
+    let pat = neg ? line.slice(1) : line;
+    const dirOnly = pat.endsWith('/');
+    if (dirOnly) pat = pat.slice(0, -1);
+    const anchored = pat.startsWith('/');
+    if (anchored) pat = pat.slice(1);
+    // 含 / 的模式按整条路径匹配，否则匹配任意层级的文件名
+    const re = new RegExp(
+      (anchored || pat.includes('/') ? '^' : '(^|/)') +
+        pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0001').replace(/\*/g, '[^/]*').replace(/\u0001/g, '.*') +
+        (dirOnly ? '(/.*)?$' : '$')
+    );
+    rules.push({ neg, re });
+  }
+  return rules;
+}
+
+const GITIGNORE = loadGitignore(ROOT);
 
 function isIgnored(rel) {
-  if (rel.startsWith('.git/')) return true;
-  if (IGNORE_SEGMENTS.some((s) => rel.includes(s))) return true;
-  if (/(^|\/)_[^/]*\.(cjs|mjs|txt)$/.test(rel)) return true;
-  return false;
+  const p = rel.replace(/\\/g, '/');
+  if (p.startsWith('.git/')) return true;
+  let ignored = false;
+  for (const r of GITIGNORE) {
+    if (r.re.test(p)) ignored = !r.neg;
+  }
+  return ignored;
 }
 
 async function main() {
@@ -112,7 +146,7 @@ async function main() {
   say(`  ✅ 仓库：${repoInfo.full_name}（默认分支 ${branch}，${repoInfo.private ? '私有' : '公开'}）`);
 
   head(2, '对比本地与远端文件');
-  const local = collectFiles().filter((f) => !isIgnored(f));
+  const local = collectFiles();
   let remote = new Map();
   try {
     const ref = await api(`/repos/${owner}/${REPO}/git/ref/heads/${branch}`);
