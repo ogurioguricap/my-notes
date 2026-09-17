@@ -21,3 +21,8 @@ _*.txt
 *.token
 *.pem
 !*.pem.example
+
+# 本地密钥（绝不入库）
+我的GitHub令牌.txt
+*令牌*.txt
+secrets*
