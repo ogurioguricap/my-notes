@@ -70,22 +70,27 @@ head(4, '模块链接测试（import/export 对账 + 真实加载启动）');
 const { main: testModules } = await import('./test-modules.mjs');
 const modOk = await testModules();
 
-head(5, '检索功能实测');
+head(5, '所见即所得往返测试（改排版后保存不毁笔记）');
+// 必须独立进程运行：模块测试会安装 DOM 桩，同进程内会让序列化走错分支
+const wys = spawnSync(process.execPath, ['tools/test-wysiwyg.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
+const wysiwygOk = wys.status === 0;
+
+head(6, '检索功能实测');
 const { main: testSearch } = await import('./test-search.mjs');
 const searchOk = await testSearch();
 
-head(6, '资料库界面数据契约（封面卡片 / 书架 / 速览）');
+head(7, '资料库界面数据契约（封面卡片 / 书架 / 速览）');
 const { main: testUiLib } = await import('./test-ui-lib.mjs');
 const uiOk = await testUiLib();
 
-head(7, '离线便携版单文件');
+head(8, '离线便携版单文件');
 const { main: buildPortable } = await import('./build-portable.mjs');
 const portableOk = buildPortable();
 
-if (!selfOk || !modOk || !searchOk || !uiOk || !portableOk) {
+if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !portableOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
   console.log(
-    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面契约：${uiOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
+    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
   );
   process.exit(1);
 }
