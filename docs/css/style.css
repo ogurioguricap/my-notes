@@ -994,3 +994,23 @@ body.inking .article-body { user-select: none; }
   .inst-banner-text { flex-basis: 100%; order: 3; }
   .inst-body { width: 100vw; height: 100vh; max-height: none; border-radius: 0; left: 0; top: 0; transform: none; padding: 18px 16px; }
 }
+/* ============================ 卡片上的直接编辑入口 ============================ */
+.nb-card-edit {
+  position: absolute; right: 13px; top: 13px; z-index: 2;
+  width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--bg-elev); border: 1px solid var(--line-strong);
+  color: var(--text-soft); font-size: 14px; line-height: 1;
+  opacity: 0; transform: scale(.92);
+  transition: opacity .15s, transform .15s, background .15s, border-color .15s, color .15s;
+  cursor: pointer;
+}
+.nb-card:hover .nb-card-edit,
+.nb-card-edit:focus-visible { opacity: 1; transform: none; }
+.nb-card-edit:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 触屏没有 hover：常显，但做小一点不挡内容 */
+@media (hover: none) {
+  .nb-card-edit { opacity: .85; transform: none; width: 26px; height: 26px; }
+}
+/* 卡片右上角已有 ⭐ 时，铅笔往左让位 */
+.nb-card .nb-star ~ .nb-card-edit { right: 34px; }
