@@ -129,5 +129,48 @@ for (const f of batFiles) {
   expect(`${name}：声明了代码页（chcp）或纯 ASCII（避免中文乱码）`, /chcp/i.test(text) || enc === 'ascii', `编码=${enc}`);
 }
 
+/* ---------- 密钥不入库（真实踩过：令牌文件差点被推上 GitHub，被密钥扫描拦下） ---------- */
+console.log('\n— 本地密钥保护 —');
+const giPath = path.join(ROOT, '.gitignore');
+expect('.gitignore 存在', fs.existsSync(giPath));
+if (fs.existsSync(giPath)) {
+  const gi = fs.readFileSync(giPath, 'utf8');
+  const mustIgnore = ['*.token', '*.pem', '.env', 'secrets*'];
+  for (const m of mustIgnore) {
+    expect(`.gitignore 含规则「${m}」`, gi.includes(m));
+  }
+  // .gitignore 必须是可读的 UTF-8（曾经被 GBK 写坏导致中文规则失效）
+  const raw = fs.readFileSync(giPath);
+  expect('.gitignore 是无 BOM 的 UTF-8（防止中文规则被写坏）', raw[0] !== 0xff && raw[0] !== 0xef);
+  const commonSecret = [/github-token/, /\*token/i, /secret/i];
+  expect('.gitignore 覆盖了常见密钥文件名', commonSecret.some((re) => re.test(gi)));
+}
+
+// 项目里存在的敏感文件必须被忽略规则命中
+const targets = fs.readdirSync(ROOT).filter((n) => /token|secret|\.env$/i.test(n));
+if (targets.length) {
+  const gi = fs.readFileSync(giPath, 'utf8');
+  for (const t of targets) {
+    const hit = /token|secret|\.env/i.test(gi);
+    expect(`疑似密钥文件「${t}」被忽略规则覆盖`, hit);
+  }
+} else {
+  console.log('  ℹ 当前目录没有发现疑似密钥文件（本地令牌文件已改名并纳入忽略）');
+}
+
+// 推送工具必须真的读 .gitignore，而不是硬编码规则
+const pushSrc = fs.readFileSync(path.join(ROOT, 'tools', 'push-api.mjs'), 'utf8');
+expect('推送工具真的解析 .gitignore（不是硬编码）', /loadGitignore/.test(pushSrc));
+expect('推送工具的上传列表会过滤被忽略的文件', /collectFiles\(\)[\s\S]{0,400}isIgnored/.test(pushSrc) || /filter\(\(f\) => !isIgnored/.test(pushSrc));
+
+// 全仓库扫描：源码里不应出现明文令牌
+const leak = [];
+for (const f of listFiles(ROOT, ['.md', '.js', '.mjs', '.json', '.html', '.txt', '.bat', '.ps1', '.vbs', '.yml'])) {
+  if (/github-token\.txt$/i.test(f)) continue;
+  const t = fs.readFileSync(f, 'utf8');
+  if (/ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}/.test(t)) leak.push(path.relative(ROOT, f));
+}
+expect(`仓库文件里没有明文 GitHub 令牌（扫描 ${listFiles(ROOT, ['.md', '.js', '.mjs', '.json', '.html']).length} 个文件）`, leak.length === 0, leak.join(', '));
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 if (fail) process.exitCode = 1;
