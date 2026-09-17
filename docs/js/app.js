@@ -264,6 +264,7 @@ function renderSidebar() {
 function cardHtml(n) {
   return `<a class="nb-card" href="#/note/${encodeURIComponent(n.slug)}" data-slug="${escapeHtml(n.slug)}" style="${coverVars(n)}">
     ${n.pinned ? '<span class="nb-star">⭐</span>' : ''}
+    <span class="nb-card-edit" data-edit="${escapeHtml(n.slug)}" role="button" tabindex="0" title="直接编辑这篇笔记">✎</span>
     <span class="nb-card-top">
       <span class="nb-thumb">${escapeHtml(coverGlyphOf(n))}</span>
       <span class="nb-card-meta">
@@ -494,6 +495,7 @@ function openQuickLook(slug) {
       </span>
       <span class="ql-actions">
         <a class="ql-btn primary" href="#/note/${encodeURIComponent(note.slug)}" data-open="${escapeHtml(note.slug)}">打开阅读</a>
+        <button class="ql-btn" data-edit="${escapeHtml(note.slug)}" type="button">✎ 编辑</button>
         <button class="ql-btn" data-close="1">关闭</button>
       </span>
     </div>
@@ -934,9 +936,15 @@ function bindInteractions() {
     if (ctxBtn) { handleCtxAction(ctxBtn.dataset.act); return; }
     if (!e.target.closest('#ctxMenu')) closeCtx();
 
-    // 在线编辑
+    // 在线编辑（资料库卡片上的铅笔按钮 / 文章页按钮 / 速览 / 右键菜单都走这里）
     const editBtn = e.target.closest('[data-edit]');
-    if (editBtn) { openEditor(editBtn.dataset.edit); return; }
+    if (editBtn) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();       // 别让卡片的链接跳转
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      closeQuickLook();
+      openEditor(editBtn.dataset.edit);
+      return;
+    }
     const inkBtn = e.target.closest('[data-ink]');
     if (inkBtn) {
       const slug = inkBtn.dataset.ink;
