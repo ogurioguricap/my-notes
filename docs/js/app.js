@@ -7,6 +7,7 @@ import { highlightAll, escapeHtml } from './highlight.js';
 import { createGraph } from './graph.js';
 import { Editor, gh, ink as inkApi } from './editor.mjs';
 import { InkLayer } from './ink.mjs';
+import { InstallGuide, isStandalone } from './install.mjs';
 import { renderDocument as renderDoc } from '../lib/markdown.mjs';
 import { applyEdit } from '../lib/site-build.mjs';
 
@@ -1034,6 +1035,36 @@ function initEditor() {
   });
 }
 
+/* ============================ PWA 安装引导 ============================ */
+let installGuide = null;
+
+function initInstall() {
+  installGuide = new InstallGuide({
+    onStateChange: (canInstall, installed) => {
+      const btn = document.getElementById('installBtn');
+      if (!btn) return;
+      btn.style.display = installed || isStandalone() ? 'none' : '';
+      btn.classList.toggle('ready', !!canInstall);
+      btn.title = canInstall
+        ? '一键安装到桌面 / 主屏，像 App 一样用'
+        : '查看安装到桌面 / 主屏的方法';
+    },
+  });
+  installGuide.watch();
+  const btn = document.getElementById('installBtn');
+  if (btn) {
+    if (isStandalone()) btn.style.display = 'none';
+    btn.addEventListener('click', () => installGuide.install());
+  }
+}
+
+/** 首页横幅：可安装时提示一次（可关闭，不再打扰） */
+function maybeInstallBanner() {
+  if (!installGuide || isStandalone()) return;
+  const host = document.querySelector('#homeBody');
+  if (!host) return;
+  installGuide.banner(host);
+}
 /* ============================ 手写标注（画笔 / 荧光笔） ============================ */
 let inkLayer = null;
 
@@ -1198,6 +1229,7 @@ async function boot() {
 
   renderSidebar();
   initEditor();
+  initInstall();
   bindInteractions();
   bindScroll();
 
