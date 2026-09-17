@@ -87,14 +87,18 @@ head(8, '运行时冒烟测试（真跑一遍：资料库 → 打开笔记 → �
 const rt = spawnSync(process.execPath, ['tools/test-runtime.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const runtimeOk = rt.status === 0;
 
-head(9, '离线便携版单文件');
+head(9, 'PWA 可安装性自检（manifest / 图标 / Service Worker）');
+const pwa = spawnSync(process.execPath, ['tools/test-pwa.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
+const pwaOk = pwa.status === 0;
+
+head(10, '离线便携版单文件');
 const { main: buildPortable } = await import('./build-portable.mjs');
 const portableOk = buildPortable();
 
-if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !portableOk) {
+if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !pwaOk || !portableOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
   console.log(
-    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
+    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  PWA：${pwaOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
   );
   process.exit(1);
 }
