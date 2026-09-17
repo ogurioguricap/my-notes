@@ -1246,6 +1246,25 @@ async function boot() {
   window.addEventListener('hashchange', handleRoute);
   handleRoute();
 
+  // 调试接口：自动化测试与线上排查都用它（不影响正常使用）
+  window.__notes = {
+    state,
+    openNote,
+    handleRoute,
+    debug: () => {
+      const q = (s) => document.querySelector(s);
+      return {
+        slug: state.currentSlug,
+        view: state.view,
+        notes: state.notes.length,
+        viewNoteOn: !!(q('#view-note') && q('#view-note').classList.contains('on')),
+        articleLen: q('#article') ? q('#article').innerHTML.length : -1,
+        listLen: q('#noteList') ? q('#noteList').innerHTML.length : -1,
+        homeLen: q('#homeBody') ? q('#homeBody').innerHTML.length : -1,
+      };
+    },
+  };
+
   // Service Worker 只用于「已经访问过之后」的离线兜底；
   // 发现新版本时自动 reload 一次，避免旧缓存与新页面混用。
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !portable) {
