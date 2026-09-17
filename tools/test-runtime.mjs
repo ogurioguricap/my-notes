@@ -277,6 +277,20 @@ try {
   const cats = queryAll(docRoot, '.cat-card', false);
   expect(`分类卡片渲染（${cats.length} 张）`, cats.length >= 1);
 
+  // 直接编辑：资料库卡片上的铅笔按钮
+  const pencil = queryAll(docRoot, '.nb-card-edit', false);
+  expect(`资料库卡片有直接编辑按钮（${pencil.length} 个）`, pencil.length >= notes.length);
+  if (pencil[0]) {
+    pencil[0].dispatchEvent({ type: 'click', target: pencil[0] });
+    await sleep(250);
+    const ed2 = documentStub.getElementById('editor');
+    const dbg1 = globalThis.window.__notes.debug();
+    expect('点卡片铅笔能直接打开编辑器（无需先进笔记）', ed2 && ed2.classList.contains('on'), JSON.stringify(dbg1));
+    const closeBtn = documentStub.getElementById('edClose');
+    if (closeBtn) closeBtn.dispatchEvent({ type: 'click', target: closeBtn });
+    await sleep(120);
+  }
+
   // 打开第一篇笔记
   const slug = notes[0].slug;
   location.hash = `#/note/${encodeURIComponent(slug)}`;
