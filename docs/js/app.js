@@ -5,7 +5,9 @@
 import { buildIndex, search, hlMark as highlight } from './search.js';
 import { highlightAll, escapeHtml } from './highlight.js';
 import { createGraph } from './graph.js';
-import { Editor } from './editor.mjs';
+import { Editor, gh, ink as inkApi } from './editor.mjs';
+import { InkLayer } from './ink.mjs';
+import { renderDocument as renderDoc } from '../lib/markdown.mjs';
 import { applyEdit } from '../lib/site-build.mjs';
 
 const $ = (sel) => document.querySelector(sel);
@@ -382,7 +384,8 @@ function openNote(slug, opts = {}) {
         ${note.tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
       </div>
       <div class="article-tools">
-        <button class="ql-btn primary" data-edit="${escapeHtml(note.slug)}" type="button">✎ 编辑这篇</button>
+        <button class="ql-btn primary" data-edit="${escapeHtml(note.slug)}" type="button">✎ 编辑</button>
+        <button class="ql-btn" data-ink="${escapeHtml(note.slug)}" type="button">✍ 标注</button>
         <button class="ql-btn" data-quick="${escapeHtml(note.slug)}" type="button">👁 速览</button>
       </div>
     </header>
@@ -919,6 +922,13 @@ function bindInteractions() {
     // 在线编辑
     const editBtn = e.target.closest('[data-edit]');
     if (editBtn) { openEditor(editBtn.dataset.edit); return; }
+    const inkBtn = e.target.closest('[data-ink]');
+    if (inkBtn) {
+      const slug = inkBtn.dataset.ink;
+      if (inkLayer) { inkLayer.setActive(false); inkLayer = null; inkBtn.textContent = '✍ 标注'; }
+      else openInk(slug);
+      return;
+    }
     const quickBtn = e.target.closest('[data-quick]');
     if (quickBtn) { openQuickLook(quickBtn.dataset.quick); return; }
 
@@ -1010,6 +1020,7 @@ function initEditor() {
   editor = new Editor({
     host,
     site: { payload: state.payload, notes: state.notes, bySlug: state.bySlug },
+    renderMarkdown: (markdown) => renderDoc(markdown, (href) => href),
     rebuildIndex: rebuildIndexJs,
     onToast: (msg, kind) => {
       showToast(msg);
@@ -1018,10 +1029,73 @@ function initEditor() {
     onSaved: afterSaved,
   });
 
-  // 编辑器预览里的公式交给 KaTeX 渲染
   document.addEventListener('note-editor-preview', (ev) => {
     if (ev.detail && ev.detail.root) renderMath(ev.detail.root);
   });
+}
+
+/* ============================ 手写标注（画笔 / 荧光笔） ============================ */
+let inkLayer = null;
+
+async function openInk(slug) {
+  const note = state.bySlug.get(slug);
+  if (!note) return;
+  const host = document.getElementById('articleBody');
+  if (!host) return;
+
+  if (!inkLayer) {
+    inkLayer = new InkLayer({
+      host: host.parentElement || host,
+      canSave: () => gh.configured(),
+      onRequestSave: () => {
+        if (!inkLayer) return;
+        saveInk(slug, inkLayer.getStrokes());
+      },
+      onChange: () => {
+        // 脏标记：有未保存笔画时提示
+        const bar = document.querySelector('.ink-save');
+        if (bar) bar.classList.add('dirty');
+      },
+      onClose: () => {
+        inkLayer = null;
+        document.body.classList.remove('inking');
+        const btn = document.querySelector('[data-ink]');
+        if (btn) btn.textContent = '✍ 标注';
+      },
+      onToolChange: (tool) => showToast(tool === 'highlighter' ? '荧光笔：半透明勾画' : tool === 'eraser' ? '橡皮：点中笔画即擦除' : '画笔：自由手写'),
+    });
+  }
+
+  // 载入已有标注（先试线上静态文件，再试仓库 API）
+  let strokes = [];
+  try {
+    const r = await fetch(`ink/${encodeURIComponent(slug)}.json`, { cache: 'no-cache' });
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j.strokes)) strokes = j.strokes;
+    }
+  } catch (e) {}
+  if (!strokes.length && gh.configured()) {
+    try { strokes = (await inkApi.load(slug)).strokes; } catch (e) {}
+  }
+  inkLayer.setStrokes(strokes);
+  inkLayer.setActive(true);
+  const btn = document.querySelector('[data-ink]');
+  if (btn) btn.textContent = '✓ 完成标注';
+  if (!gh.configured()) showToast('可以画，但要保存标注需要先在「✎ 编辑」里填 GitHub 令牌', 'warn');
+  else showToast('画完点「保存标注」写回仓库', 'ok');
+}
+
+async function saveInk(slug, strokes) {
+  try {
+    showToast('保存标注中…');
+    await inkApi.save(slug, strokes);
+    const bar = document.querySelector('.ink-save');
+    if (bar) bar.classList.remove('dirty');
+    showToast(`已保存 ${strokes.length} 条笔画，约 1 分钟后线上可见`, 'ok');
+  } catch (e) {
+    showToast(`标注保存失败：${e.message}`, 'error');
+  }
 }
 
 function openEditor(slug) {
