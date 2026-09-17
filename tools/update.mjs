@@ -87,22 +87,26 @@ head(8, '运行时冒烟测试（真跑一遍：资料库 → 打开笔记 → �
 const rt = spawnSync(process.execPath, ['tools/test-runtime.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const runtimeOk = rt.status === 0;
 
-head(9, 'PWA 可安装性自检（manifest / 图标 / Service Worker）');
+head(9, '手写标注编辑实测（撤销 / 套索 / 两种橡皮 / 形状识别 / 文本 / 复制粘贴）');
+const inked = spawnSync(process.execPath, ['tools/test-ink-editing.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
+const inkOk = inked.status === 0;
+
+head(10, 'PWA 可安装性自检（manifest / 图标 / Service Worker）');
 const pwa = spawnSync(process.execPath, ['tools/test-pwa.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const pwaOk = pwa.status === 0;
 
-head(10, '桌面脚本自检（VBS / BAT 语法与编码）');
+head(11, '桌面脚本自检（VBS / BAT 语法与编码）');
 const desk = spawnSync(process.execPath, ['tools/test-desktop-scripts.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const deskOk = desk.status === 0;
 
-head(11, '离线便携版单文件');
+head(12, '离线便携版单文件');
 const { main: buildPortable } = await import('./build-portable.mjs');
 const portableOk = buildPortable();
 
-if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !pwaOk || !deskOk || !portableOk) {
+if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !inkOk || !pwaOk || !deskOk || !portableOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
   console.log(
-    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  PWA：${pwaOk ? 'OK' : 'FAIL'}  桌面脚本：${deskOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
+    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  标注编辑：${inkOk ? 'OK' : 'FAIL'}  PWA：${pwaOk ? 'OK' : 'FAIL'}  桌面脚本：${deskOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
   );
   process.exit(1);
 }

@@ -323,7 +323,29 @@ try {
   expect('正文已渲染 HTML', body && body.innerHTML.length > 200, body ? `长度 ${body.innerHTML.length}` : '未找到 #articleBody');
   const editBtn = body ? queryAll(docRoot, '[data-edit]', false) : [];
   expect('笔记页有「编辑」入口', editBtn.length >= 1);
-  expect('笔记页有「标注」入口', queryAll(docRoot, '[data-ink]', false).length >= 1);
+  const inkBtns = queryAll(docRoot, '[data-ink]', false);
+  expect('笔记页有「标注」入口', inkBtns.length >= 1);
+
+  // 标注层：点开工具栏，确认编辑工具齐备（撤销 / 套索 / 形状 / 文本 / 橡皮两模式）
+  if (inkBtns[0]) {
+    inkBtns[0].dispatchEvent({ type: 'click', target: inkBtns[0] });
+    await sleep(200);
+    const bar = queryAll(docRoot, '.ink-bar', false)[0];
+    expect('点「标注」能打开编辑工具栏', !!bar);
+    if (bar) {
+      expect('工具栏工具齐备（画笔 / 荧光笔 / 橡皮 / 套索 / 形状 / 文本 / 图片）',
+        ['pen', 'highlighter', 'eraser', 'lasso', 'shape', 'text'].every((t) => bar.querySelector(`[data-tool="${t}"]`)) && !!bar.querySelector('[data-act="image"]'));
+      expect('撤销 / 重做按钮都在（都是手账 App 式的编辑入口）',
+        !!bar.querySelector('[data-act="undo"]') && !!bar.querySelector('[data-act="redo"]'));
+      expect('有套索之外的编辑动作：复制 / 删除 / 清空 / 帮助',
+        ['duplicate', 'delete', 'clear', 'help'].every((a) => bar.querySelector(`[data-act="${a}"]`)));
+      expect('橡皮提供整笔 / 像素两种模式', !!bar.querySelector('[data-erase="stroke"]') && !!bar.querySelector('[data-erase="pixel"]'));
+      expect('形状可自动识别也可手动指定', !!bar.querySelector('[data-shape="auto"]') && !!bar.querySelector('[data-shape="arrow"]'));
+      expect('状态条会显示对象数量', !!bar.querySelector('.ink-status'));
+      expect('画布已就绪（覆盖在正文上）', queryAll(docRoot, '.ink-canvas', false).length >= 1);
+    }
+    expect('打开标注层无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+  }
 
   // 打开编辑器
   if (editBtn[0]) {

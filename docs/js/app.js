@@ -1094,69 +1094,98 @@ function maybeInstallBanner() {
   if (!host) return;
   installGuide.banner(host);
 }
-/* ============================ 手写标注（画笔 / 荧光笔） ============================ */
+/* ============================ 手写标注与编辑（画笔 / 荧光笔 / 橡皮 / 套索 / 形状 / 文本） ============================ */
 let inkLayer = null;
+
+const INK_TOOL_TIPS = {
+  pen: '画笔：自由手写',
+  highlighter: '荧光笔：半透明勾画，够直会自动拉直',
+  eraser: '橡皮：整笔擦 / 像素擦；像素擦会把长线切成两段',
+  lasso: '套索：圈选或点选后拖动移动、拖角点缩放、拖圆点旋转',
+  shape: '形状：松手自动规整成直线 / 矩形 / 椭圆 / 三角（可在下拉里指定）',
+  text: '文本框：点一下写文字，点别处完成；双击已有文字可再编辑',
+};
 
 async function openInk(slug) {
   const note = state.bySlug.get(slug);
   if (!note) return;
   const host = document.getElementById('articleBody');
   if (!host) return;
+  const layerHost = host.parentElement || host;
+
+  // 换了一篇文章（或页面重绘过）就重建一层，避免画到已经不在页面上的旧画布
+  if (inkLayer && (inkLayer.host !== layerHost || inkLayer.slug !== slug)) {
+    inkLayer.destroy();
+    inkLayer = null;
+  }
 
   if (!inkLayer) {
     inkLayer = new InkLayer({
-      host: host.parentElement || host,
+      host: layerHost,
       canSave: () => gh.configured(),
+      toast: (msg) => showToast(msg),
       onRequestSave: () => {
         if (!inkLayer) return;
-        saveInk(slug, inkLayer.getStrokes());
+        saveInk(inkLayer.slug || slug, inkLayer.getItems());
       },
       onChange: () => {
-        // 脏标记：有未保存笔画时提示
+        // 脏标记：有未保存改动时提示
         const bar = document.querySelector('.ink-save');
         if (bar) bar.classList.add('dirty');
       },
       onClose: () => {
-        inkLayer = null;
+        if (inkLayer) { inkLayer.destroy(); inkLayer = null; }
         document.body.classList.remove('inking');
         const btn = document.querySelector('[data-ink]');
         if (btn) btn.textContent = '✍ 标注';
       },
-      onToolChange: (tool) => showToast(tool === 'highlighter' ? '荧光笔：半透明勾画' : tool === 'eraser' ? '橡皮：点中笔画即擦除' : '画笔：自由手写'),
+      onToolChange: (tool) => showToast(INK_TOOL_TIPS[tool] || ''),
     });
+    inkLayer.slug = slug;
   }
 
   // 载入已有标注（先试线上静态文件，再试仓库 API）
-  let strokes = [];
+  let items = [];
   try {
     // 加时间戳绕开缓存：刚保存过的标注要能立刻看到新的
     const r = await fetch(`ink/${encodeURIComponent(slug)}.json?t=${Date.now()}`, { cache: 'no-cache' });
     if (r.ok) {
       const j = await r.json();
-      if (Array.isArray(j.strokes)) strokes = j.strokes;
+      if (Array.isArray(j.items)) items = j.items;
+      else if (Array.isArray(j.strokes)) items = j.strokes; // v1 老文件
     }
   } catch (e) {}
-  if (!strokes.length && gh.configured()) {
-    try { strokes = (await inkApi.load(slug)).strokes; } catch (e) {}
+  if (!items.length && gh.configured()) {
+    try { items = (await inkApi.load(slug)).items; } catch (e) {}
   }
-  inkLayer.setStrokes(strokes);
+  inkLayer.setItems(items);
   inkLayer.setActive(true);
   const btn = document.querySelector('[data-ink]');
   if (btn) btn.textContent = '✓ 完成标注';
-  if (!gh.configured()) showToast('可以画，但要保存标注需要先在「✎ 编辑」里填 GitHub 令牌', 'warn');
-  else showToast('画完点「保存标注」写回仓库', 'ok');
+  if (!gh.configured()) showToast('可以画，但要保存标注需要先在「✎ 编辑」里填 GitHub 令牌');
+  else showToast('Ctrl/Cmd+Z 撤销 · 双指轻点撤销 / 三指轻点重做 · 点「?」看全部编辑用法');
 }
 
-async function saveInk(slug, strokes) {
+async function saveInk(slug, items) {
   try {
     showToast('保存标注中…');
-    await inkApi.save(slug, strokes);
+    const c = countInkItems(items);
+    await inkApi.save(slug, items);
     const bar = document.querySelector('.ink-save');
     if (bar) bar.classList.remove('dirty');
-    showToast(`已保存 ${strokes.length} 条笔画，约 1 分钟后线上可见`, 'ok');
+    const parts = [`${c.stroke} 笔笔迹`];
+    if (c.text) parts.push(`${c.text} 个文本`);
+    if (c.image) parts.push(`${c.image} 张图片`);
+    showToast(`已保存 ${parts.join(' · ')}，约 1 分钟后线上可见`);
   } catch (e) {
-    showToast(`标注保存失败：${e.message}`, 'error');
+    showToast(`标注保存失败：${e.message}`);
   }
+}
+
+function countInkItems(items) {
+  const c = { stroke: 0, text: 0, image: 0 };
+  for (const it of items || []) if (it && c[it.kind] != null) c[it.kind]++;
+  return c;
 }
 
 function openEditor(slug) {

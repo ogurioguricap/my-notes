@@ -1,0 +1,17 @@
+{
+  "assets/demo-convergence.png": {
+    "source": "ocr-manual",
+    "text": "模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。",
+    "note": "演示用：这段文字模拟 OCR 结果。真实使用时替换为你的图片 OCR 文本，或改由 tools/extract-attachments.mjs 抽取。"
+  },
+  "assets/brand-oguri.jpg": {
+    "source": "pending-ocr",
+    "text": "",
+    "note": "图片未提取文字：请补 OCR 文本（写进 content/_extracted.json 的 text 字段），补完即可被搜索命中"
+  },
+  "assets/brand-icon.jpg": {
+    "source": "pending-ocr",
+    "text": "",
+    "note": "图片未提取文字：请补 OCR 文本（写进 content/_extracted.json 的 text 字段），补完即可被搜索命中"
+  }
+}

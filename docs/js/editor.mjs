@@ -731,25 +731,33 @@ export class Editor {
   }
 }
 
-/* ============================ 标注（手写）保存 ============================ */
+/* ============================ 标注（手写 / 文本 / 图片）保存 ============================ */
 export const ink = {
   pathFor(slug) { return `content/ink/${slug}.json`; },
 
   async load(slug) {
     const f = await gh.getFile(ink.pathFor(slug));
-    if (!f) return { strokes: [], sha: null };
+    if (!f) return { items: [], strokes: [], sha: null };
+    let items = [];
     try {
       const j = JSON.parse(f.text);
-      return { strokes: Array.isArray(j.strokes) ? j.strokes : [], sha: f.sha };
-    } catch (e) {
-      return { strokes: [], sha: f.sha };
-    }
+      items = Array.isArray(j.items) ? j.items : Array.isArray(j.strokes) ? j.strokes : []; // 兼容 v1 的 strokes
+    } catch (e) {}
+    return { items, strokes: items.filter((i) => i && i.kind !== 'text' && i.kind !== 'image'), sha: f.sha };
   },
 
-  async save(slug, strokes) {
-    const payload = JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), strokes }, null, 1);
+  async save(slug, items) {
+    const list = Array.isArray(items) ? items : [];
+    const payload = JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), items: list }, null, 1);
+    const counts = list.reduce((acc, it) => {
+      const k = it && (it.kind || 'stroke');
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    const summary = [`${counts.stroke || 0} 笔笔迹`, counts.text ? `${counts.text} 个文本` : '', counts.image ? `${counts.image} 张图片` : '']
+      .filter(Boolean).join(' · ');
     const exist = await gh.getFile(ink.pathFor(slug));
-    await gh.putFile(ink.pathFor(slug), payload, `ink: 更新「${slug}」的手写标注（${strokes.length} 笔）`, exist ? exist.sha : null);
+    await gh.putFile(ink.pathFor(slug), payload, `ink: 更新「${slug}」的标注（${summary}）`, exist ? exist.sha : null);
     // 同时写一份到 docs/ink/，让线上立刻可用
     const docExist = await gh.getFile(`docs/ink/${slug}.json`);
     await gh.putFile(`docs/ink/${slug}.json`, payload, `ink: 同步「${slug}」标注`, docExist ? docExist.sha : null);
