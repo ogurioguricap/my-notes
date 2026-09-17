@@ -25,6 +25,10 @@ const CROP = (() => {
   const i = process.argv.indexOf('--crop');
   return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : 0.32;
 })();
+const SHAPE = (() => {
+  const i = process.argv.indexOf('--shape');
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'round';   // round | circle | square
+})();
 const SRC = (() => {
   const i = process.argv.indexOf('--src');
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : DEFAULT_SRC;
@@ -171,7 +175,7 @@ function encodePng(rgba, w, h) {
   ]);
 }
 
-/* ============================ 圆角（图标更好看） ============================ */
+/* ============================ 遮罩：圆角 / 正圆 ============================ */
 function roundCorners(rgba, size, radiusRatio = 0.22) {
   const r = size * radiusRatio;
   const out = Buffer.from(rgba);
@@ -192,6 +196,82 @@ function roundCorners(rgba, size, radiusRatio = 0.22) {
     }
   }
   return out;
+}
+
+/**
+ * 正圆遮罩（带超采样抗锯齿）
+ * 边缘用 SS×SS 子采样算覆盖率，避免小尺寸下出现锯齿。
+ */
+function circleMask(rgba, size, opts = {}) {
+  const { inset = 0.012, ss = 6 } = opts;          // inset：留一点边，避免边缘被切进画面
+  const out = Buffer.from(rgba);
+  const c = (size - 1) / 2;
+  const R = size / 2 - Math.max(1, size * inset);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let hits = 0;
+      for (let sy = 0; sy < ss; sy++) {
+        for (let sx = 0; sx < ss; sx++) {
+          const px = x + (sx + 0.5) / ss - 0.5;
+          const py = y + (sy + 0.5) / ss - 0.5;
+          if (Math.hypot(px - c, py - c) <= R) hits++;
+        }
+      }
+      const p = (y * size + x) * 4;
+      if (hits === 0) {
+        out[p + 3] = 0;
+      } else if (hits < ss * ss) {
+        out[p + 3] = Math.round(out[p + 3] * (hits / (ss * ss)));
+      }
+    }
+  }
+  return out;
+}
+
+/** 按形状套遮罩 */
+function applyShape(rgba, size, shape) {
+  if (shape === 'circle') return circleMask(rgba, size);
+  if (shape === 'square') return rgba;
+  return roundCorners(rgba, size, size <= 32 ? 0.16 : 0.22);   // 默认：圆角
+}
+
+/* ============================ ICO 帧数据 ============================ */
+/**
+ * 经典 DIB（BMP）格式的 ICO 帧 —— 兼容性最好
+ * 结构：BITMAPINFOHEADER(40B) + BGRA 像素（自下而上）+ AND 掩码
+ * 为什么不用 PNG 压缩帧：体积虽小，但个别 Windows 组件（含 .NET 的 Icon 类）读取会出错，
+ * 资源管理器在某些版本上也显示异常。DIB 是所有版本通吃的稳妥选择。
+ */
+function toDibFrame(rgba, size) {
+  const header = Buffer.alloc(40);
+  header.writeUInt32LE(40, 0);
+  header.writeInt32LE(size, 4);
+  header.writeInt32LE(size * 2, 8);          // ICO 约定：高度写两倍（图像 + 掩码）
+  header.writeUInt16LE(1, 12);
+  header.writeUInt16LE(32, 14);
+  header.writeUInt32LE(0, 16);               // BI_RGB
+  header.writeUInt32LE(size * size * 4, 20);
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const srcRow = size - 1 - y;             // 自下而上
+    for (let x = 0; x < size; x++) {
+      const s = (srcRow * size + x) * 4;
+      const d = (y * size + x) * 4;
+      pixels[d] = rgba[s + 2];
+      pixels[d + 1] = rgba[s + 1];
+      pixels[d + 2] = rgba[s];
+      pixels[d + 3] = rgba[s + 3];
+    }
+  }
+  const maskStride = Math.ceil(size / 32) * 4;
+  const mask = Buffer.alloc(maskStride * size, 0);
+  for (let y = 0; y < size; y++) {
+    const srcRow = size - 1 - y;
+    for (let x = 0; x < size; x++) {
+      if (rgba[(srcRow * size + x) * 4 + 3] < 128) mask[y * maskStride + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return Buffer.concat([header, pixels, mask]);
 }
 
 /* ============================ ICO 封装 ============================ */
@@ -301,9 +381,10 @@ export function main() {
 
   const DOCS = path.join(ROOT, 'docs');
   const sizes = [256, 128, 64, 48, 32, 24, 16];
+  // ICO 帧统一用 DIB（BMP）格式，兼容性最好；网页用的 PNG 另存
   const icoEntries = sizes.map((s) => {
-    const px = roundCorners(resize(image, s), s, s <= 32 ? 0.16 : 0.22);
-    return { size: s, data: encodePng(px, s, s) };
+    const px = applyShape(resize(image, s), s, SHAPE);
+    return { size: s, data: toDibFrame(px, s) };
   });
   const ico = buildIco(icoEntries);
 
@@ -312,11 +393,11 @@ export function main() {
   fs.writeFileSync(path.join(DOCS, 'favicon.ico'), ico);
 
   // 网页用的大图
-  const big = roundCorners(resize(image, 512), 512, 0.22);
+  const big = applyShape(resize(image, 512), 512, SHAPE);
   fs.writeFileSync(path.join(DOCS, 'icon-512.png'), encodePng(big, 512, 512));
-  const mid = roundCorners(resize(image, 192), 192, 0.22);
+  const mid = applyShape(resize(image, 192), 192, SHAPE);
   fs.writeFileSync(path.join(DOCS, 'icon-192.png'), encodePng(mid, 192, 192));
-  const touch = roundCorners(resize(image, 180), 180, 0.2);
+  const touch = applyShape(resize(image, 180), 180, SHAPE);
   fs.writeFileSync(path.join(DOCS, 'apple-touch-icon.png'), encodePng(touch, 180, 180));
   fs.writeFileSync(path.join(DOCS, 'icon.png'), encodePng(big, 512, 512));
 
@@ -326,7 +407,7 @@ export function main() {
   if (fs.existsSync(SRC)) fs.copyFileSync(SRC, path.join(assets, 'brand-icon.jpg'));
   if (cleanup && fs.existsSync(cleanup)) fs.unlinkSync(cleanup);
 
-  console.log(`✓ ICO：我的笔记.ico（${sizes.join('/')} 共 ${(ico.length / 1024).toFixed(1)} KB）`);
+  console.log(`✓ ICO：我的笔记.ico（形状=${SHAPE}，${sizes.join('/')} 共 ${(ico.length / 1024).toFixed(1)} KB）`);
   console.log('✓ 网页图标：docs/favicon.ico · icon-192.png · icon-512.png · apple-touch-icon.png');
   console.log('✓ 原图已存 content/assets/brand-icon.jpg');
   return true;
