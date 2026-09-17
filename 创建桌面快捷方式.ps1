@@ -26,11 +26,13 @@ $ws = New-Object -ComObject WScript.Shell
 $made = New-Object System.Collections.ArrayList
 
 function New-UrlShortcut {
-  param([string]$Name, [string]$Target)
+  param([string]$Name, [string]$Target, [string]$IconPath = $null, [string]$Arguments = $null)
   $path = Join-Path $desktop $Name
   try {
     $s = $ws.CreateShortcut($path)
     $s.TargetPath = $Target
+    if ($Arguments) { $s.Arguments = $Arguments }
+    if ($IconPath) { $s.IconLocation = $IconPath }
     $s.Save()
     [void]$made.Add($Name)
     Write-Host "  [完成] $Name" -ForegroundColor Green
@@ -39,19 +41,33 @@ function New-UrlShortcut {
   }
 }
 
-# 1) 线上版（最新内容，手机电脑通用）
-New-UrlShortcut -Name '我的笔记（线上）.url' -Target $onlineUrl
+# 图标：多尺寸 ICO（由 tools/make-icon.mjs 生成）
+$iconFile = Join-Path $src '我的笔记.ico'
+$icon = if (Test-Path $iconFile) { "$iconFile,0" } else { $null }
+if ($icon) { Write-Host '  使用自定义图标：我的笔记.ico' -ForegroundColor DarkGray }
+else { Write-Host '  [提示] 未找到 我的笔记.ico，将使用默认图标' -ForegroundColor Yellow }
 
-# 2) 离线便携版（不联网双击即开）
+# 启动器脚本（wscript 静默打开网站，.lnk 才能带自定义图标）
+$vbs = Join-Path $src '打开笔记.vbs'
+
+# 1) 线上版（带图标，双击直接开网站）
+if (Test-Path $vbs) {
+  New-UrlShortcut -Name '我的笔记.lnk' -Target "$env:SystemRoot\System32\wscript.exe" -IconPath $icon -Arguments "`"$vbs`""
+  # 参数交给下面的辅助函数处理
+} else {
+  New-UrlShortcut -Name '我的笔记（线上）.url' -Target $onlineUrl
+}
+
+# 2) 离线便携版（不联网双击即开，也带图标）
 if (Test-Path $portable) {
-  New-UrlShortcut -Name '我的笔记（离线便携版）.url' -Target $portable
+  New-UrlShortcut -Name '我的笔记（离线便携版）.lnk' -Target $portable -IconPath $icon
 } else {
   Write-Host '  [跳过] 离线便携版还没生成，稍后运行 node tools/build-portable.mjs 即可' -ForegroundColor Yellow
 }
 
-# 3) 启动器面板（三种打开方式 + 使用说明）
+# 3) 启动器面板（可视化编辑器 / 手写标注入口说明）
 if (Test-Path $launcher) {
-  New-UrlShortcut -Name '打开我的笔记（启动器）.url' -Target $launcher
+  New-UrlShortcut -Name '我的笔记（使用说明）.lnk' -Target $launcher -IconPath $icon
 }
 
 Write-Host ''
