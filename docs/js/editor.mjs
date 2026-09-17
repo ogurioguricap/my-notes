@@ -175,7 +175,17 @@ export class Editor {
 
     this.render();
     this.host.classList.add('on');
-    if (!gh.configured()) this.toast('首次发布需要填一个 GitHub 令牌（只存在你本机浏览器）', 'warn');
+    // 有令牌就后台静默验证一次：失效/填错时立刻提示，避免改完才发现发不出去
+    if (gh.configured()) {
+      gh.verify()
+        .then((login) => { this.user = login; })
+        .catch((e) => {
+          if (e.status === 401) this.toast('保存的 GitHub 令牌已失效，请在 ⚙ 里换一个', 'error');
+          else if (e.status === 403) this.toast('令牌权限不足（需要勾选 repo），请在 ⚙ 里检查', 'error');
+        });
+    } else {
+      this.toast('首次发布需要填一个 GitHub 令牌（只存在你本机浏览器；点右上角 ⚙ 填写）', 'warn');
+    }
     if (saved) this.toast('已恢复上次未发布的草稿', 'warn');
   }
 
@@ -559,6 +569,7 @@ export class Editor {
         <span id="stMsg" class="ed-stat"></span>
       </div>`;
     this.host.querySelector('.ed-body').appendChild(box);
+    setTimeout(() => { const t = box.querySelector('#stToken'); if (t && !t.value) t.focus(); }, 60);
     box.querySelector('#stSave').addEventListener('click', () => {
       gh.save({
         token: box.querySelector('#stToken').value,
