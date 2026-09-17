@@ -10,19 +10,19 @@ _shots/
 Thumbs.db
 desktop.ini
 
-# ÁÙÊ±µ÷ÊÔ½Å±¾
+# ä¸´æ—¶è°ƒè¯•è„šæœ¬
 _*.cjs
 _*.mjs
 _*.txt
 
-# ÁîÅÆ / ±¾µØÃÜÔ¿£¨¾ø²»Èë¿â£©
+# ä»¤ç‰Œ / æœ¬åœ°å¯†é’¥ï¼ˆç»ä¸å…¥åº“ï¼‰â€”â€” è§„åˆ™ç»Ÿä¸€ç”¨ ASCII é€šé…ï¼Œé¿å…ä¸­æ–‡ç¼–ç é—®é¢˜
 .env
 .env.*
 *.token
 *.pem
 !*.pem.example
-
-# ±¾µØÃÜÔ¿£¨¾ø²»Èë¿â£©
-ÎÒµÄGitHubÁîÅÆ.txt
-*ÁîÅÆ*.txt
 secrets*
+github-token*
+*-token.txt
+my-github-token*
+/æˆ‘çš„GitHubä»¤ç‰Œ.txt
