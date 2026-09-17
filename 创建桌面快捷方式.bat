@@ -1,15 +1,21 @@
 @echo off
-chcp 65001 >nul
-title 创建「我的笔记」桌面快捷方式
+rem ============================================================
+rem  Create "My Notes" desktop shortcuts (with custom icon)
+rem  Adds: My Notes (online) / offline single file / help page
+rem  Writes only to your Desktop. Nothing else on the system.
+rem ============================================================
+title Create desktop shortcut - My Notes
 echo.
-echo   正在为「我的笔记」创建桌面快捷方式...
+echo   Creating desktop shortcuts for "My Notes" ...
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0创建桌面快捷方式.ps1"
+cscript //nologo "%~dp0create-shortcut.vbs"
 if errorlevel 1 (
   echo.
-  echo   如果上面有报错，可以手动操作：
-  echo   1^) 打开本文件夹
-  echo   2^) 右键「我的笔记.url」-^> 发送到 -^> 桌面快捷方式
+  echo   If it failed, do it manually:
+  echo   1^) Copy  my-notes.ico  to your Desktop
+  echo   2^) Right-click Desktop ^> New ^> Shortcut
+  echo   3^) Paste:  https://ogurioguricap.github.io/my-notes/
+  echo   4^) Then right-click the shortcut ^> Properties ^> Change Icon
   echo.
   pause
 )
