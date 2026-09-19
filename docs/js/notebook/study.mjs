@@ -134,20 +134,28 @@ export function pdfFromImages(images, o = {}) {
   }
 
   if (hasOutlines) {
-    const last = outlineFirstNum + outlineList.length - 1;
-    push(outlineRootNum, `<< /Type /Outlines /First ${outlineFirstNum} 0 R /Last ${last} 0 R /Count ${outlineList.length} >>`);
-    outlineList.forEach((it, i) => {
-      const num = outlineFirstNum + i;
-      const pageNum = 3 + Math.min(n - 1, Math.max(0, Math.round(Number(it.pageIndex)))) * 3;
+    // 层级大纲：先摊平成对象号，再按 Parent / First / Last / Next / Prev 串起来
+    const tree = outlineTree(outlineList);
+    const flat = outlineFlat(tree, outlineFirstNum, outlineRootNum);
+    const rootCount = flat.length;
+    push(outlineRootNum, `<< /Type /Outlines${flat.length ? ` /First ${flat[0].num} 0 R /Last ${flat.filter((x) => x.parent === outlineRootNum).slice(-1)[0].num} 0 R` : ''} /Count ${rootCount} >>`);
+    for (const node of flat) {
+      const pageNum = 3 + Math.min(n - 1, Math.max(0, node.pageIndex)) * 3;
       const parts = [
-        `/Title ${pdfTitleHex(it.title)}`,
-        `/Parent ${outlineRootNum} 0 R`,
+        `/Title ${pdfTitleHex(node.title)}`,
+        `/Parent ${node.parent || outlineRootNum} 0 R`,
         `/Dest [${pageNum} 0 R /Fit]`,
       ];
-      if (i > 0) parts.push(`/Prev ${num - 1} 0 R`);
-      if (i < outlineList.length - 1) parts.push(`/Next ${num + 1} 0 R`);
-      push(num, `<< ${parts.join(' ')} >>`);
-    });
+      if (node.children.length) {
+        const kids = flat.filter((x) => x.parent === node.num);
+        parts.push(`/First ${kids[0].num} 0 R`, `/Last ${kids[kids.length - 1].num} 0 R`, `/Count ${kids.length}`);
+      }
+      const sibs = flat.filter((x) => x.parent === node.parent);
+      const pos = sibs.findIndex((x) => x.num === node.num);
+      if (pos > 0) parts.push(`/Prev ${sibs[pos - 1].num} 0 R`);
+      if (pos >= 0 && pos < sibs.length - 1) parts.push(`/Next ${sibs[pos + 1].num} 0 R`);
+      push(node.num, `<< ${parts.join(' ')} >>`);
+    }
   }
 
   if (linksFlat.length) {
@@ -649,19 +657,59 @@ export function pdfTitleHex(title) {
   return `<FEFF${utf16beHex(t)}>`;
 }
 
-/** 笔记本 → PDF 书签项（书签页 + 有标题的页；一个都没有就不写目录，保持阅读器左侧干净） */
+/** 笔记本 → PDF 书签项（有标题的页为一级、只设了书签的页挂在它下面当二级） */
 export function outlinesFromNotebook(nb, { everyPageIfEmpty = false } = {}) {
   const pages = (nb && nb.pages) || [];
   const items = [];
+  let lastTop = -1;
   pages.forEach((p, i) => {
-    const marked = p.bookmarked || (p.title && String(p.title).trim());
-    if (!marked) return;
-    items.push({ title: String(p.title || '').trim() || `第 ${i + 1} 页（书签）`, pageIndex: i });
+    const title = String((p && p.title) || '').trim();
+    if (title) {
+      items.push({ title, pageIndex: i, level: 0 });
+      lastTop = items.length - 1;
+      return;
+    }
+    if (p && p.bookmarked) {
+      items.push({ title: `第 ${i + 1} 页（书签）`, pageIndex: i, level: lastTop >= 0 ? 1 : 0 });
+      if (lastTop < 0) lastTop = items.length - 1;
+    }
   });
   if (!items.length && everyPageIfEmpty) {
-    pages.forEach((p, i) => items.push({ title: `第 ${i + 1} 页`, pageIndex: i }));
+    pages.forEach((p, i) => items.push({ title: `第 ${i + 1} 页`, pageIndex: i, level: 0 }));
   }
   return items;
+}
+
+/** 扁平条目 → 树（level 0 为根，往后每级挂到上一个更浅的条目下） */
+export function outlineTree(items) {
+  const roots = [];
+  const stack = [];
+  for (const it of items || []) {
+    const level = Math.max(0, Math.min(4, Math.round(Number(it && it.level) || 0)));
+    const node = { title: String((it && it.title) || ''), pageIndex: Math.max(0, Math.round(Number(it && it.pageIndex) || 0)), level, children: [] };
+    if (!node.title) continue;
+    while (stack.length > level) stack.pop();
+    if (level === 0 || !stack.length) roots.push(node);
+    else stack[stack.length - 1].children.push(node);
+    stack[level] = node;
+    stack.length = level + 1;
+  }
+  return roots;
+}
+
+/** 把树按先序摊平，并给每个节点编号（编号 = 对象号，用于 Parent/First/Last/Next/Prev） */
+export function outlineFlat(tree, firstNum = 1, parentNum = 0) {
+  const out = [];
+  const walk = (nodes, parent) => {
+    nodes.forEach((n, i) => {
+      const num = firstNum + out.length;
+      const firstChild = () => firstNum + out.length + 1;
+      out.push({ ...n, num, parent, index: i, isFirst: i === 0, isLast: i === nodes.length - 1, childCount: n.children.length });
+      if (n.children.length) walk(n.children, num);
+    });
+  };
+  walk(tree, parentNum);
+  return out;
 }
 
 /* ============================ PDF 页内链接（「见 P12」点得动） ============================ */

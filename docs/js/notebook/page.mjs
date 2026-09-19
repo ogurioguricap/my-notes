@@ -306,6 +306,65 @@ export function isPenDoubleTap(prev, next, { windowMs = 340, maxDistPx = 12 } = 
   return d <= maxDistPx;
 }
 
+/**
+ * 在页面里找出关键词的命中位置（归一化矩形），跳转后用来「框一下命中处」
+ *   · 文本框：按字符前缀宽度算（与文字层同一套估算）
+ *   · 手写识别行：按行框内字符比例切一段
+ */
+export function findHitRects(page, query, { pageW = 794, pageH = 1123 } = {}) {
+  const q = String(query == null ? '' : query).trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const it of ((page && page.items) || [])) {
+    if (!it || it.kind !== 'text' || !it.text) continue;
+    const size = Number(it.size) || 0.026;
+    const blockW = estimateTextSize(it.text, size).w;
+    const align = it.align || 'left';
+    const lines = String(it.text).split('\n');
+    lines.forEach((line, i) => {
+      const low = line.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = low.indexOf(q, from);
+        if (at < 0) break;
+        const lineW = estimateTextSize(line, size).w;
+        const preW = estimateTextSize(line.slice(0, at), size).w;
+        const midW = Math.max(0.004, estimateTextSize(line.slice(at, at + q.length), size).w);
+        const baseX = (Number(it.x) || 0) + (align === 'center' ? (blockW - lineW) / 2 : align === 'right' ? blockW - lineW : 0);
+        const yTop = (Number(it.y) || 0) + i * size * 1.36;
+        out.push({
+          x0: baseX + preW, y0: yTop - size * 0.18,
+          x1: baseX + preW + midW, y1: yTop + size * 1.12,
+          source: 'text',
+        });
+        from = at + q.length;
+        if (out.length > 60) return out;
+      }
+    });
+  }
+  for (const l of ((page && page.ocr && page.ocr.lines) || [])) {
+    if (!l || !l.text || !Array.isArray(l.box)) continue;
+    const low = String(l.text).toLowerCase();
+    let from = 0;
+    const total = Math.max(1e-6, estimateTextSize(l.text, 1).w);
+    for (;;) {
+      const at = low.indexOf(q, from);
+      if (at < 0) break;
+      const [bx0, by0, bx1, by1] = l.box;
+      const preFrac = estimateTextSize(String(l.text).slice(0, at), 1).w / total;
+      const midFrac = Math.max(0.02, estimateTextSize(String(l.text).slice(at, at + q.length), 1).w / total);
+      out.push({
+        x0: bx0 + preFrac * (bx1 - bx0), y0: by0,
+        x1: bx0 + (preFrac + midFrac) * (bx1 - bx0), y1: by1,
+        source: 'ocr',
+      });
+      from = at + q.length;
+      if (out.length > 60) return out;
+    }
+  }
+  return out;
+}
+
 /** 选区裁剪的几何换算（纯函数：给「选区 OCR」用） */
 export function selectionCropGeometry(box, { pageW = 800, pageH = 1000, scale = 2, pad = 0.01 } = {}) {
   if (!box) return null;
@@ -1684,6 +1743,34 @@ export class PageEditor {
   /** 选中内容的包围盒（选区 OCR / 移动都用得上） */
   selectionBounds() { return boxOfItems(this.selectedItems()); }
 
+  /** 临时把命中处框一下（跳转到命中页后给用户的定位反馈） */
+  flashRects(rects, { ms = 1800 } = {}) {
+    const list = (Array.isArray(rects) ? rects : []).filter((r) => r && Number.isFinite(Number(r.x0)));
+    this.flash = list.length ? list : null;
+    if (this._flashTimer) clearTimeout(this._flashTimer);
+    this.redraw();
+    if (this.flash) {
+      this._flashTimer = setTimeout(() => { this._flashTimer = 0; this.flash = null; this.redraw(); }, Math.max(120, Number(ms) || 1800));
+    }
+    return list.length;
+  }
+
+  drawFlash(ctx, W, H) {
+    if (!this.flash || !this.flash.length) return;
+    ctx.save();
+    ctx.setLineDash([]);
+    this.flash.forEach((r) => {
+      const x0 = Number(r.x0) * W, y0 = Number(r.y0) * H;
+      const x1 = Number(r.x1) * W, y1 = Number(r.y1) * H;
+      ctx.fillStyle = 'rgba(255,214,64,.35)';
+      ctx.fillRect(x0, y0, Math.max(2, x1 - x0), Math.max(2, y1 - y0));
+      ctx.strokeStyle = 'rgba(232,163,61,.9)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0, y0, Math.max(2, x1 - x0), Math.max(2, y1 - y0));
+    });
+    ctx.restore();
+  }
+
   /** 把选区渲染成一张图（白底 + 只画选中的对象），交给 OCR 用 */
   selectionDataUrl({ scale = 2, background = '#ffffff', pad = 0.01 } = {}) {
     const sel = this.selectedItems();
@@ -1994,6 +2081,7 @@ export class PageEditor {
     if (this.drawing) drawItem(ctx, this.drawing, W, H, state);
     if (this.ruler.on) this.drawRuler(ctx, W, H);
     if (this.selection.size) this.drawSelection(ctx, W, H);
+    if (this.flash && this.flash.length) this.drawFlash(ctx, W, H);
     if (this.crop) this.drawCrop(ctx, W, H);
     if (this.lassoPoly && this.lassoPoly.length > 1) this.drawPoly(ctx, W, H, this.lassoPoly);
     if (this.lassoRect) this.drawRectSelect(ctx, W, H, this.lassoRect);

@@ -18,7 +18,16 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **339 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **373 项断言，当前全绿** |
+
+### 第十批交付（大纲层级 / 长录音分片 / 命中高亮 / 页面朗读）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **PDF 大纲层级** | `study.mjs` 的 `outlineTree / outlineFlat` + `pdfFromImages` 的 `/Outlines` 写入 | 有标题的页做一级、只设书签的页挂到它下面当二级（同级用 Next/Prev 串、父级写 First/Last/Count）；中文标题仍走 UTF-16BE。测试校验父子对象号、同级链、根 Count 与对象偏移 |
+| **长录音分片转写** | `asr.mjs` 的 `planChunks / encodeWavBytes / encodeWavBlob / decodeWithAudioContext / sliceAudio / transcribeChunked` + viewer 的自动分片 | 超过 150 秒自动走分片：浏览器解码成 PCM → 按 2 分钟切 → **自己写 WAV 头**编码成可上传文件 → 逐片转写；每片的时间区间**偏移回原录音**，所以拿到的是逐片精确时间（片内再切句按时长等分）；分片失败自动退回整段转写 |
+| **页面朗读（TTS）** | 新模块 `tts.mjs`（`splitSpeakSentences / pageSpeakText / makeSpeaker`）+ 录音面板「🔊 朗读本页」 | 用浏览器自带 `speechSynthesis` 把这一页的文字 + 手写识别逐句读出来，当前句高亮、点某句从那句接着读；不支持时给提示而不是报错；完全离线可用 |
+| **命中定位高亮** | `page.mjs` 的 `findHitRects / flashRects / drawFlash` | 内搜跳页后把命中处**黄框标出**（文本框按字符前缀宽度算、手写行按行框比例切），一两秒后自动消失；空查询与无命中都安静返回 |
 
 ### 第九批交付（阅读版 PDF / 自动目录页 / 搜索键盘流 / 转写分段锚定）
 

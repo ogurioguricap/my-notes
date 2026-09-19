@@ -20,7 +20,7 @@
 import { NotebookStore } from './store.mjs';
 import {
   PageEditor, renderPage, PEN_TYPES, TOOLS, ERASER_MODES, HIGHLIGHTER_COLORS,
-  TAPE_COLORS, ELEMENTS, FONTS, TEXT_SIZE_STEPS,
+  TAPE_COLORS, ELEMENTS, FONTS, TEXT_SIZE_STEPS, findHitRects,
 } from './page.mjs';
 import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
@@ -28,8 +28,9 @@ import {
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
 import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount } from './study.mjs';
 import {
-  ASR_MODELS, transcribeAudio, transcribeAudioFull, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
+  ASR_MODELS, transcribeAudio, transcribeAudioFull, transcribeChunked, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
 } from './asr.mjs';
+import { makeSpeaker, pageSpeakText, splitSpeakSentences } from './tts.mjs';
 import { applyEdit } from '../../lib/site-build.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT, ocrImageDataUrl,
@@ -135,6 +136,10 @@ export class NotebookView {
     this.pdfToc = true;         // 导出 PDF 是否自动插一页目录
     this.plainPaper = false;    // 阅读版：导出时去格线
     this.searchIndex = 0;       // 笔记本内搜索当前高亮的命中
+    this.speaker = null;        // 朗读器（浏览器 TTS）
+    this.speak = { sentences: [], index: -1 };
+    this.chunkAsr = true;       // 长录音是否分片转写
+    this.asrChunkSeconds = 120;
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -476,7 +481,15 @@ export class NotebookView {
     if (act === 'ocrSelection') { this.recognizeSelection(); return true; }
     if (act === 'gotoHit') {
       const idx = Number(actEl.dataset.page);
-      if (Number.isFinite(idx)) { this.gotoPage(idx); this.closePanel(); }
+      const query = String(this.bookQuery || '').trim();
+      if (Number.isFinite(idx)) {
+        this.gotoPage(idx);
+        this.closePanel();
+        const page = (this.nb.pages || [])[idx];
+        const rects = page ? findHitRects(page, query) : [];
+        if (rects.length && this.editor) this.editor.flashRects(rects);
+        if (rects.length) this.toast(`已定位到第 ${idx + 1} 页的 ${rects.length} 处命中（黄框标出）`);
+      }
       return true;
     }
     if (act === 'syncPush') { this.syncPush(); return true; }
@@ -616,6 +629,9 @@ export class NotebookView {
     if (act === 'audioStop') { this.audioStop(); return true; }
     if (act === 'audioDelete') { this.audioDelete(actEl.dataset.id); return true; }
     if (act === 'audioTranscribe') { this.audioTranscribe(actEl.dataset.id); return true; }
+    if (act === 'speakPage') { this.speakPage(); return true; }
+    if (act === 'stopSpeak') { if (this.speaker) this.speaker.stop(); this.speak = { sentences: [], index: -1 }; this.renderPanel(); return true; }
+    if (act === 'speakJump') { this.speakFrom(Number(actEl.dataset.seg) || 0); return true; }
     if (act === 'audioSegGo') {
       const idx = Number(actEl.dataset.page);
       if (Number.isFinite(idx)) this.gotoPage(idx);
@@ -2401,6 +2417,20 @@ export class NotebookView {
         ${ok ? '' : '<div class="nb-hint">这个浏览器不支持录音（需要 https 或 localhost，且浏览器支持 MediaRecorder）：可以先看已有的录音。</div>'}
         <div class="nb-hint">录音会记下开始时的页码与手写对象数；播放时按进度自动跳回那一页 —— 这就是「录音与手写时间点同步」。</div>
         <div class="nb-divider"></div>
+        <div class="nb-row">
+          <button class="nb-btn" type="button" data-act="speakPage" title="用浏览器自带的语音把这一页读出来（文字 + 手写识别）">🔊 朗读本页</button>
+          <button class="nb-btn" type="button" data-act="stopSpeak">停止朗读</button>
+          <span class="nb-hint">${this.speaker && this.speaker.supported ? '逐句朗读，当前句会高亮' : '这个浏览器不支持语音合成（可以先看转写文字）'}</span>
+        </div>
+        ${this.speak && this.speak.sentences.length ? `<div class="nb-audio-segs" id="nbSpeakSegs">
+          <div class="nb-audio-segs-head">朗读中 · 点一句从那里接着读</div>
+          ${this.speak.sentences.map((s, i) => `<button class="nb-audio-seg${i === this.speak.index ? ' on' : ''}" type="button" data-act="speakJump" data-seg="${i}">
+            <span class="nb-audio-seg-time">${i + 1}</span>
+            <span class="nb-audio-seg-page">朗读</span>
+            <span class="nb-audio-seg-text">${nbEsc(s)}</span>
+          </button>`).join('')}
+        </div>` : ''}
+        <div class="nb-divider"></div>
         <div class="nb-audio-list" id="nbAudioList">${this.markupAudioItems()}</div>
         ${list.length ? '' : '<div class="nb-empty"><div class="big">🎙</div>还没有录音</div>'}
       </div>`;
@@ -2576,7 +2606,29 @@ export class NotebookView {
     try {
       const blob = await this.store.getAudio(id);
       if (!blob) { this.toast('这段录音的本体不在这台设备上（录音只存本机，不同步）'); return; }
-      const text = await transcribeAudio(blob, { apiKey: key, model: this.asrModel || ASR_MODELS[0].id, filename: `nb-${id}.webm` });
+      const model = this.asrModel || ASR_MODELS[0].id;
+      // 长录音走分片：既能避免超时，又能拿到逐片精确的时间区间
+      if ((Number(rec.duration) || 0) > 150 && this.chunkAsr !== false) {
+        try {
+          this.toast('这段录音较长，正在分片转写…');
+          const res = await transcribeChunked(blob, {
+            apiKey: key, model, chunkSeconds: this.asrChunkSeconds || 120,
+            onProgress: ({ done, total }) => this.toast(`分片转写 ${done}/${total}…`),
+          });
+          if (res.text) {
+            this.store.setAudioText(this.bookId, id, res.text, model);
+            const segs = anchorSegments(this.store, this.bookId, id, res.segments, { duration: rec.duration || 0 });
+            if (segs.length) this.store.setAudioSegments(this.bookId, id, segs);
+            this.toast(`分片转写完成（${res.chunks} 片 · ${res.text.length} 字 · ${res.segments.length} 句带时间）`);
+            this.renderPanel();
+            try { this.onChanged(); } catch (e) {}
+            return;
+          }
+        } catch (e) {
+          this.toast('分片转写没成功，改用整段转写：' + ((e && e.message) || '未知原因'));
+        }
+      }
+      const text = await transcribeAudio(blob, { apiKey: key, model, filename: `nb-${id}.webm` });
       if (!text) { this.toast('这段录音没转出文字（可能是纯音乐或太吵）'); return; }
       this.store.setAudioText(this.bookId, id, text, this.asrModel || ASR_MODELS[0].id);
       // 再把每一句挂到「说它时正在写的那一页 / 第几个对象」
@@ -2797,6 +2849,49 @@ export class NotebookView {
       }, { root: this.column || null, threshold: [0, 0.35, 0.6, 0.9] });
       qa(this.lane, '.nb-page').forEach((p) => this._io.observe(p));
     } catch (e) { this._io = null; }
+  }
+
+  /** 朗读本页（浏览器自带 TTS）：文字 + 手写识别，逐句高亮 */
+  speakPage() {
+    if (!this.speaker) this.speaker = makeSpeaker();
+    if (!this.speaker.supported) { this.toast('这个浏览器没有语音合成（TTS），可以先看转写文字'); return false; }
+    const page = (this.nb.pages || [])[this.cur] || {};
+    const text = pageSpeakText(page, { includeOcr: this.textLayer !== false, includeText: true });
+    if (!String(text).trim()) { this.toast('这一页还没有可读的文字：先打字或用 OCR 识别手写'); return false; }
+    this.speaker.stop();
+    this.speaker = makeSpeaker({
+      onSentence: (i, s) => {
+        this.speak = { sentences: this.speaker.sentences, index: i };
+        this.markSpeakRow(i);
+      },
+      onEnd: () => { this.speak = { sentences: this.speak ? this.speak.sentences : [], index: -1 }; this.markSpeakRow(-1); },
+    });
+    const ok = this.speaker.speak(text);
+    if (!ok) { this.toast('没切出可读的句子'); return false; }
+    this.speak = { sentences: this.speaker.sentences, index: -1 };
+    if (this.panelKind === 'audio') this.renderPanel();
+    this.toast(`朗读中：共 ${this.speaker.sentences.length} 句（点句可从那句接着读）`);
+    return true;
+  }
+
+  speakFrom(i) {
+    if (!this.speaker) { this.speakPage(); return; }
+    const list = (this.speak && this.speak.sentences) || this.speaker.sentences;
+    if (!list.length) return;
+    this.speaker.stop();
+    this.speaker = makeSpeaker({
+      onSentence: (idx) => { this.speak = { sentences: this.speaker.sentences, index: idx }; this.markSpeakRow(idx); },
+      onEnd: () => { this.markSpeakRow(-1); },
+    });
+    this.speaker.speak(list.join('\n'), { from: i });
+    this.speak = { sentences: this.speaker.sentences, index: i };
+    if (this.panelKind === 'audio') this.renderPanel();
+  }
+
+  markSpeakRow(i) {
+    const box = q(this.panelEl, '#nbSpeakSegs');
+    if (!box) return;
+    qa(box, '.nb-audio-seg').forEach((row, k) => row.classList.toggle('on', k === i));
   }
 
   disconnectObserver() {

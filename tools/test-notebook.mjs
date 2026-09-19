@@ -1308,5 +1308,121 @@ head('阅读版 PDF · 自动目录页 · 搜索键盘流 · 转写分段锚定'
   expect('转写全文仍进检索（分段不影响搜索）', s13.searchText(b13.id, '第二句').length === 1);
 }
 
+/* ============================ 14. 大纲层级 / 分片转写 / 命中高亮 / 朗读 ============================ */
+head('PDF 大纲层级 · 长录音分片 · 命中高亮 · 页面朗读');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]);
+  const asrMod = await import(pathToFileURL(path.join(dir, 'asr.mjs')).href);
+  const ttsMod = await import(pathToFileURL(path.join(dir, 'tts.mjs')).href);
+
+  // --- PDF 大纲层级 ---
+  const nb14 = { pages: [{ title: '第一章' }, { bookmarked: true }, { bookmarked: true }, { title: '第二章' }, {}] };
+  const items14 = studyMod.outlinesFromNotebook(nb14);
+  expect('有标题的页是一级、只设书签的页挂在它下面当二级', items14.map((i) => i.level).join(',') === '0,1,1,0');
+  const tree14 = studyMod.outlineTree(items14);
+  expect('树：第一章带 2 个子项，第二章没子项', tree14.length === 2 && tree14[0].children.length === 2 && tree14[1].children.length === 0);
+  const flat14 = studyMod.outlineFlat(tree14, 10, 5);
+  expect('摊平编号与父子关系正确', flat14.map((f) => `${f.num}<${f.parent}`).join(',') === '10<5,11<10,12<10,13<5');
+  {
+    const bytes = studyMod.pdfFromImages(nb14.pages.map(() => ({ jpeg, w: 595, h: 842 })), { outlines: items14 });
+    const t14 = Buffer.from(bytes).toString('latin1');
+    const root = /\/Type \/Outlines \/First (\d+) 0 R \/Last (\d+) 0 R \/Count (\d+)/.exec(t14);
+    expect('根大纲：First/Last/Count 对得上', !!root && root[3] === '4');
+    expect('父节点写了 /First /Last /Count（子项 2 个）', /\/First \d+ 0 R \/Last \d+ 0 R \/Count 2/.test(t14));
+    expect('子项的 /Parent 指向父项对象号', (() => {
+      const parentNum = Number(root[1]);
+      const childBlocks = [...t14.matchAll(/(\d+) 0 obj\n<< \/Title <FEFF[0-9A-F]+> \/Parent (\d+) 0 R/g)];
+      return childBlocks.length === 4 && childBlocks.filter((m) => m[2] === String(parentNum)).length === 2;
+    })());
+    expect('同级之间用 /Next /Prev 串起来', t14.includes('/Next') && t14.includes('/Prev'));
+    expect('带层级后对象偏移仍正确', (() => {
+      const xref = /xref\n0 \d+\n([\s\S]*?)trailer/.exec(t14);
+      const offs = xref[1].trim().split('\n').map((l) => Number(l.slice(0, 10)));
+      return offs.slice(1).every((off, i) => t14.startsWith(`${i + 1} 0 obj`, off));
+    })());
+  }
+
+  // --- 长录音分片转写 ---
+  expect('分片计划：按分钟切开且最后一段收尾', (() => {
+    const p = asrMod.planChunks(300, 120);
+    return p.length === 3 && p[0].start === 0 && p[2].end === 300 && p[1].start === 120;
+  })());
+  expect('时长为 0 时不切（返回空）', asrMod.planChunks(0, 120).length === 0);
+  {
+    const chs = [new Float32Array([0, 0.5, -0.5, 1, -1, 0.25])];
+    const bytes = asrMod.encodeWavBytes(chs, 16000);
+    const dv = new DataView(bytes.buffer);
+    const tag = (o, n) => String.fromCharCode(...bytes.slice(o, o + n));
+    expect('WAV 头正确（RIFF/WAVE/fmt/data + 采样率与位深）',
+      tag(0, 4) === 'RIFF' && tag(8, 4) === 'WAVE' && tag(12, 4) === 'fmt ' && tag(36, 4) === 'data'
+      && dv.getUint32(24, true) === 16000 && dv.getUint16(34, true) === 16 && dv.getUint32(40, true) === 12);
+    expect('WAV 总长度 = 44 + 样本字节数', bytes.length === 56);
+    expect('样本值被正确量化（1 → 32767，-1 → -32768）', dv.getInt16(44 + 3 * 2, true) === 32767 && dv.getInt16(44 + 4 * 2, true) === -32768);
+  }
+  {
+    const fakeDecode = async () => ({ channels: [new Float32Array(16000 * 250)], sampleRate: 16000, duration: 250 });
+    const names = [];
+    const fakeTr = async (b, o) => { names.push(o.filename); return `第${names.length}片`; };
+    const res = await asrMod.transcribeChunked({ type: 'audio/webm' }, { apiKey: 'k', decode: fakeDecode, transcribe: fakeTr, chunkSeconds: 120 });
+    expect('长录音被切成 3 片分别上传（每片是 wav）', res.chunks === 3 && names.join(',') === 'chunk-0.wav,chunk-1.wav,chunk-2.wav');
+    expect('分段带全局时间轴（精确到片）', res.segments.length === 3 && res.segments[1].start === 120 && res.segments[2].end === 250);
+    expect('全文按片拼接', res.text.split('\n').length === 3);
+    const off = await asrMod.transcribeChunked({ type: 'audio/webm' }, { apiKey: 'k', decode: fakeDecode, transcribe: fakeTf => fakeTf, chunkSeconds: 0 });
+    expect('chunkSeconds 有下限保护（不会碎成上百片）', off.chunks <= 25);
+  }
+
+  // --- 内搜命中高亮定位 ---
+  const page14 = {
+    items: [{ kind: 'text', id: 't', x: 0.1, y: 0.1, text: '见第 3 页，也可看 P12', size: 0.03, color: '#000' }],
+    ocr: { lines: [{ text: '参考 P3 那句话', box: [0.2, 0.5, 0.6, 0.55] }] },
+  };
+  const rects14 = pageMod.findHitRects(page14, '第 3 页');
+  expect('命中矩形：文本框里按字宽算到正确位置', rects14.length === 1 && rects14[0].x0 > 0.1 && rects14[0].x0 < 0.15 && rects14[0].source === 'text');
+  expect('命中矩形：手写行按行框比例切一段', (() => {
+    const r = pageMod.findHitRects(page14, 'p3');
+    return r.length === 1 && r[0].x0 > 0.2 && r[0].x1 <= 0.6 && r[0].source === 'ocr';
+  })());
+  expect('空查询 / 没命中都返回空数组', pageMod.findHitRects(page14, '   ').length === 0 && pageMod.findHitRects(page14, '不存在的词').length === 0);
+  {
+    const ed14 = new pageMod.PageEditor({
+      canvas: makeStub('canvas'), host: makeStub('host'),
+      getPage: () => ({ pageId: 'p', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: [] }),
+      setItems: () => {}, onToast: () => {},
+    });
+    ed14.setPage(0);
+    expect('flashRects：设上命中框并返回数量', ed14.flashRects(rects14, { ms: 120 }) === 1 && ed14.flash.length === 1);
+    await new Promise((r) => setTimeout(r, 220));
+    expect('flashRects：到时间自动消失', !ed14.flash);
+    expect('空数组等于清掉高亮', ed14.flashRects([], { ms: 40 }) === 0 && !ed14.flash);
+  }
+
+  // --- 页面朗读（TTS）---
+  expect('切句：按中英句末标点切开、去空句', ttsMod.splitSpeakSentences('第一句。第二句！\n第三句？').length === 3);
+  expect('切句：超长文本有上限', ttsMod.splitSpeakSentences(Array.from({ length: 300 }, (_, i) => `第${i}句。`).join('')).length <= 120);
+  expect('要读的内容 = 文本框 + 手写识别', (() => {
+    const t = ttsMod.pageSpeakText({ items: [{ kind: 'text', text: '打的字' }], ocr: { text: '手写的字' } });
+    return t.includes('打的字') && t.includes('手写的字');
+  })());
+  expect('可以只读文本框（不要手写）', ttsMod.pageSpeakText({ items: [{ kind: 'text', text: 'A' }], ocr: { text: 'B' } }, { includeOcr: false }) === 'A');
+  {
+    const spoken = [];
+    const fakeSynth = { speak(u) { spoken.push(u); }, cancel() { this.cancelled = true; }, pause() {}, resume() {} };
+    const events = [];
+    const sp = ttsMod.makeSpeaker({ synth: fakeSynth, onSentence: (i, s) => events.push(`${i}:${s.slice(0, 3)}`), onEnd: () => events.push('end') });
+    expect('不支持时干净返回 false', ttsMod.makeSpeaker({ synth: null }).speak('x') === false && ttsMod.makeSpeaker({ synth: null }).supported === false);
+    expect('朗读：按句排队', sp.speak('甲。乙。丙。') === true && spoken.length === 3 && sp.sentences.length === 3);
+    spoken.forEach((u) => u.onstart && u.onstart());
+    expect('每句开始都有回调（界面据此高亮）', events.length === 3 && sp.index === 2);
+    spoken.forEach((u) => u.onend && u.onend());
+    expect('最后一句读完回调 onEnd', events[events.length - 1] === 'end' && sp.speaking === false);
+    sp.speak('丁。戊。');
+    expect('重新朗读会先停掉上一段', fakeSynth.cancelled === true && spoken.length === 5);
+    sp.jump(1);
+    expect('可以从某一句接着读', spoken.length > 5 && sp.sentences.length === 2);
+    sp.stop();
+    expect('停止后不再标记为朗读中', sp.speaking === false && sp.index === -1);
+  }
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

@@ -166,6 +166,114 @@ export async function transcribeAudioFull(blob, opts = {}) {
   return { text, segments, exact: segments.some((s) => s.exact) };
 }
 
+/* ============================ 长录音分片转写（换取逐句精确时间戳） ============================ */
+
+/** 切段计划：把时长按 chunkSeconds 切开（最后一段收尾） */
+export function planChunks(duration, chunkSeconds = 120) {
+  const dur = Math.max(0, Number(duration) || 0);
+  const step = Math.max(10, Number(chunkSeconds) || 120);
+  if (!(dur > 0)) return [];
+  const out = [];
+  for (let start = 0, i = 0; start < dur; start += step, i++) {
+    out.push({ index: i, start: Number(start.toFixed(2)), end: Number(Math.min(dur, start + step).toFixed(2)) });
+  }
+  return out;
+}
+
+/** Float32 声道 → 16bit PCM WAV 字节（浏览器里能把切出来的片段再编码成可上传的文件） */
+export function encodeWavBytes(channels, sampleRate, { bitDepth = 16 } = {}) {
+  const chs = (channels || []).filter((c) => c && c.length);
+  if (!chs.length) return new Uint8Array(0);
+  const sr = Math.max(8000, Math.round(Number(sampleRate) || 16000));
+  const frames = chs[0].length;
+  const numCh = Math.min(2, chs.length);
+  const bps = Math.max(1, Math.round(bitDepth / 8));
+  const dataSize = frames * numCh * bps;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  let o = 0;
+  const str = (s) => { for (const ch of s) view.setUint8(o++, ch.charCodeAt(0)); };
+  str('RIFF'); view.setUint32(o, 36 + dataSize, true); o += 4; str('WAVE');
+  str('fmt '); view.setUint32(o, 16, true); o += 4;
+  view.setUint16(o, 1, true); o += 2;
+  view.setUint16(o, numCh, true); o += 2;
+  view.setUint32(o, sr, true); o += 4;
+  view.setUint32(o, sr * numCh * bps, true); o += 4;
+  view.setUint16(o, numCh * bps, true); o += 2;
+  view.setUint16(o, bps * 8, true); o += 2;
+  str('data'); view.setUint32(o, dataSize, true); o += 4;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const v = Math.max(-1, Math.min(1, Number(chs[c][i]) || 0));
+      view.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return new Uint8Array(buf);
+}
+
+export function encodeWavBlob(channels, sampleRate, opts) {
+  return new Blob([encodeWavBytes(channels, sampleRate, opts)], { type: 'audio/wav' });
+}
+
+/** 默认解码器：用浏览器 AudioContext 把录音解成 PCM（解不开就抛错，交给调用方回退） */
+export async function decodeWithAudioContext(blob, { AudioCtxImpl } = {}) {
+  const Ctx = AudioCtxImpl
+    || (typeof AudioContext !== 'undefined' ? AudioContext
+      : (typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null));
+  if (!Ctx) throw new Error('这个浏览器不支持音频解码（没法分片转写，可改用整段转写）');
+  const ctx = new Ctx();
+  try {
+    const arr = await blob.arrayBuffer();
+    const buf = await ctx.decodeAudioData(arr);
+    const channels = [];
+    for (let c = 0; c < buf.numberOfChannels; c++) channels.push(buf.getChannelData(c));
+    return { channels, sampleRate: buf.sampleRate, duration: buf.duration };
+  } finally {
+    try { ctx.close && ctx.close(); } catch (e) {}
+  }
+}
+
+/** 把一段录音切成若干 WAV 片段（每片带它在原录音里的起止时间） */
+export async function sliceAudio(blob, { chunkSeconds = 120, decode, AudioCtxImpl } = {}) {
+  const dec = decode || ((b) => decodeWithAudioContext(b, { AudioCtxImpl }));
+  const { channels, sampleRate, duration } = await dec(blob);
+  const plan = planChunks(duration, chunkSeconds);
+  return plan.map((p) => {
+    const from = Math.floor(p.start * sampleRate);
+    const to = Math.min(channels[0] ? channels[0].length : 0, Math.ceil(p.end * sampleRate));
+    const sliced = channels.map((ch) => ch.slice(from, to));
+    return { ...p, blob: encodeWavBlob(sliced, sampleRate) };
+  });
+}
+
+/**
+ * 分片转写：每片单独请求，片内的起止时间整体偏移到原录音上 → **逐句精确时间戳**
+ * （顺带解决了长录音容易超时的问题）
+ */
+export async function transcribeChunked(blob, {
+  apiKey, model, language = 'zh', chunkSeconds = 120, decode, transcribe, fetchImpl, onProgress, timeoutMs,
+} = {}) {
+  const chunks = await sliceAudio(blob, { chunkSeconds, decode });
+  const tr = transcribe || ((b, o) => transcribeAudio(b, o));
+  const texts = [];
+  const segments = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    const raw = await tr(c.blob, { apiKey, model, language, filename: `chunk-${i}.wav`, fetchImpl, timeoutMs });
+    const text = String(raw || '').trim();
+    if (text) {
+      texts.push(text);
+      // 片内也切成句，按片长等分后偏移到全局时间轴
+      const inner = parseAsrSegments({ text }, { duration: c.end - c.start })
+        .map((s) => ({ start: Number((c.start + s.start).toFixed(2)), end: Number((c.start + s.end).toFixed(2)), text: s.text, exact: false }));
+      segments.push(...(inner.length ? inner : [{ start: c.start, end: c.end, text, exact: true }]));
+    }
+    if (onProgress) { try { onProgress({ done: i + 1, total: chunks.length, start: c.start, end: c.end }); } catch (e) {} }
+  }
+  return { text: texts.join('\n'), segments, chunks: chunks.length };
+}
+
 /** 录音键：与 OCR 分开存，但接口一样（填一次即可） */
 export function getAsrKey(storage) {
   const s = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
