@@ -18,7 +18,15 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **223 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **259 项断言，当前全绿** |
+
+### 第六批交付（OCR 行位置 / 模板库 / Markdown 导出）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **OCR 带行位置** | `ocr.mjs` 的 `OCR_BOX_PROMPT / parseOcrLines / linesToText`、`store.setPageOcr`（存 `page.ocr.lines[].box`）、`study.textRunsForPage` | 识别时让模型返回 `{"lines":[{text,box}]}`（0~1 相对比例），存回页面；导出 PDF 时按行框原位摆放，并按框宽/字宽算 `Tz` 水平缩放，所以**选中/复制会贴着原来的文字位置**。解析器把模型的常见毛病都兜住了（前后夹话、代码围栏、box 反了、越界、缺 box、框太小），解析不出结构化行就退回纯文本行铺（搜索能力不丢）。面板里可关掉「同时识别行位置」 |
+| **笔记本模板库** | `store.mjs` 的 `BUILTIN_TEMPLATES / templates / saveAsTemplate / removeTemplate / createFromTemplate` + 资料库新建面板与「模板库…」 | 内置 4 套（康奈尔课堂笔记 / 周计划 / 错题本 / 读书笔记，含纸张与页数）；任何一本可「另存为模板」（可选「含内容」）；新建时可套用模板；自建模板可删、内置的删不掉。对照文档里「可导入模板本」这个 🟡 缺口到此补上 |
+| **导出 Markdown（进全站检索）** | `study.mjs` 的 `notebookToMarkdown / markdownSlug / markdownTarget` + 笔记本「导出 Markdown」与「把 Markdown 发到仓库」+ 资料库卡片菜单 | 生成的 `.md` 含 frontmatter（标题/分类=笔记本/标签/日期/摘要）+ 每页小节（文本框内容 + 手写识别）+ 学习集闪卡表格（竖线转义）。下载即可用；也可以一键提交到 `content/<标题>.md` 并用 `applyEdit` 重建 `docs/data/index.json`，**于是手写笔记本变成站点里的一篇笔记**，进资料库、全文检索与知识图谱（测试里真的喂给了站点的索引构建器验证） |
 
 ### 第五批交付（PDF 可搜索文字层 / 批量导出 / 搜索结果缩略图）
 

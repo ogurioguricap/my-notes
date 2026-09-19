@@ -26,7 +26,8 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget } from './study.mjs';
+import { applyEdit } from '../../lib/site-build.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT,
 } from './ocr.mjs';
@@ -114,6 +115,7 @@ export class NotebookView {
     this.ocrModel = OCR_MODELS[0].id;
     this.ocrRunning = false;
     this.ocrStatusText = '';
+    this.ocrBoxes = true;       // 识别时顺带要行位置（PDF 文字层更准）
     this.pdfQuality = 'high';   // standard / high / print
     this.dropTape = false;      // 导出时是否撕掉胶带
     this.textLayer = true;      // 导出 PDF 是否带可搜索文字层
@@ -169,6 +171,7 @@ export class NotebookView {
         <button type="button" data-act="exportPdf" data-note="print" title="放大看细节、正式打印，体积约 9 倍">导出 PDF · 打印级（288dpi）</button>
         <hr>
         <button type="button" data-act="exportPng">导出当前页 PNG（2×）</button>
+        <button type="button" data-act="exportMd">导出 Markdown（.md）</button>
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
         <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
         <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
@@ -185,6 +188,8 @@ export class NotebookView {
         <button type="button" data-act="syncPull">从仓库拉取这本</button>
         <hr>
         <button type="button" data-act="scrollToggle">切换竖排 / 横排滚动</button>
+        <button type="button" data-act="saveTemplate">另存为模板</button>
+        <button type="button" data-act="publishMd">把 Markdown 发到仓库（进全站检索）</button>
         <button type="button" data-act="penDoubleTapCycle">手写笔双击：切换动作</button>
         <button type="button" data-act="summary">总结当前页文字</button>
         <hr>
@@ -435,7 +440,16 @@ export class NotebookView {
     }
     if (act === 'syncPush') { this.syncPush(); return true; }
     if (act === 'syncPull') { this.syncPull(); return true; }
+    if (act === 'exportMd') { this.exportMarkdown(); return true; }
+    if (act === 'publishMd') { this.publishMarkdown(); return true; }
+    if (act === 'saveTemplate') { this.saveAsTemplate(); return true; }
     if (act === 'ocrModel') { this.ocrModel = note; this.renderPanel(); return true; }
+    if (act === 'ocrBoxes') {
+      this.ocrBoxes = this.ocrBoxes === false;
+      this.toast(this.ocrBoxes ? '识别时会给出行位置（PDF 里选中更准）' : '只识别文字，不要位置（更快、更省）');
+      this.renderPanel();
+      return true;
+    }
     if (act === 'ocrRun') { this.runOcr({}); return true; }
     if (act === 'ocrRunPage') { this.runOcr({ indices: [this.cur] }); return true; }
     if (act === 'ocrRunAll') { this.runOcr({ all: true, indices: (this.nb.pages || []).map((_, i) => i) }); return true; }
@@ -1669,6 +1683,7 @@ export class NotebookView {
           <span>模型</span>
           <div class="nb-row">
             ${OCR_MODELS.map((m) => `<button class="nb-chip${model === m.id ? ' on' : ''}" type="button" data-act="ocrModel" data-note="${nbEsc(m.id)}" title="${nbEsc(m.hint)}">${nbEsc(m.label)}</button>`).join('')}
+            <button class="nb-chip${this.ocrBoxes !== false ? ' on' : ''}" type="button" data-act="ocrBoxes" title="让模型同时给出每行的位置：导出的 PDF 里选中/复制会贴着原来的文字位置">同时识别行位置</button>
           </div>
         </div>
         <div class="nb-row">
@@ -1714,6 +1729,7 @@ export class NotebookView {
         onlyMissing: !opts.all,
         indices: opts.indices || null,
         concurrency: opts.concurrency || 3,
+        withBoxes: this.ocrBoxes !== false,
         renderPage,
         onProgress: ({ done, total: tt, failed }) => {
           this.ocrStatusText = progressText(done, tt, failed);
@@ -1721,7 +1737,7 @@ export class NotebookView {
         },
       });
       const st = this.store.ocrStats(this.bookId);
-      this.ocrStatusText = `识别完成：${res.done} 页成功${res.failed ? ` · ${res.failed} 页失败` : ''} · 已入库 ${st.chars} 字`;
+      this.ocrStatusText = `识别完成：${res.done} 页成功${res.failed ? ` · ${res.failed} 页失败` : ''}${res.withBoxes ? ` · ${res.withBoxes} 行带位置` : ''} · 已入库 ${st.chars} 字`;
       this.toast(`OCR：${res.done} 页成功${res.failed ? `，${res.failed} 页失败` : ''}`);
       if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
       this.refresh();
@@ -1756,6 +1772,52 @@ export class NotebookView {
     ed.redraw();
     this.setStatus(ed.info());
     this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
+  }
+
+  /* ---------- Markdown 导出 / 发到仓库 / 存模板 ---------- */
+
+  exportMarkdown() {
+    if (!this.nb) return;
+    this.flush();
+    try {
+      const md = notebookToMarkdown(this.nb);
+      downloadBlob(new Blob([md], { type: 'text/markdown' }), `${markdownSlug(this.nb.title)}.md`);
+      this.toast('已导出 Markdown（文本 + 手写识别 + 闪卡）');
+    } catch (e) { this.toast('导出 Markdown 失败：' + ((e && e.message) || '未知错误')); }
+  }
+
+  /** 把笔记本导出成 Markdown 提交到 content/，于是它进全站检索与知识图谱 */
+  async publishMarkdown() {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次'); return; }
+    this.flush();
+    try {
+      const md = notebookToMarkdown(this.nb);
+      const { slug, source } = markdownTarget(this.nb);
+      this.toast('正在把 Markdown 发到仓库…');
+      const exist = await gh.getFile(source);
+      await gh.putFile(source, md, `notes: 从手写笔记本导出「${this.nb.title}」`, exist ? exist.sha : null);
+      const idx = await gh.getFile('docs/data/index.json');
+      if (idx) {
+        // applyEdit 返回的是对象，写回仓库前要序列化（与编辑器的 rebuildIndex 同一套路）
+        const rebuilt = JSON.stringify(applyEdit(JSON.parse(idx.text), { raw: md, slug, source }));
+        await gh.putFile('docs/data/index.json', rebuilt, `build: 重新生成索引（${this.nb.title}）`, idx.sha);
+      }
+      this.toast('已发到仓库：约 1 分钟后可在资料库/搜索里看到这篇笔记');
+      try { this.onChanged(); } catch (e) {}
+    } catch (e) {
+      this.toast('发送失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  saveAsTemplate({ withContent = false } = {}) {
+    if (!this.nb) return null;
+    let name = this.nb.title;
+    try {
+      if (typeof prompt === 'function') name = prompt('模板叫什么名字？（只存纸张与页面结构，不存内容）', this.nb.title) || this.nb.title;
+    } catch (e) { /* prompt 不可用就用笔记本标题 */ }
+    const t = this.store.saveAsTemplate(this.bookId, { name, withContent });
+    if (t) this.toast(`已存为模板「${t.name}」：新建笔记本时可以套用`);
+    return t;
   }
 
   /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */

@@ -238,6 +238,78 @@ export async function buildPdf(pages, o = {}) {
   return new Blob([bytes], { type: 'application/pdf' });
 }
 
+/* ============================ 导出 Markdown（进全站检索） ============================ */
+
+/** 文件名 slug（与站点笔记一致的中文友好规则） */
+export function markdownSlug(title) {
+  const s = String(title == null ? '' : title).trim().toLowerCase()
+    .replace(/[^\p{Script=Han}\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return s || `notebook-${Date.now().toString(36)}`;
+}
+
+function mdText(text) {
+  return String(text == null ? '' : text).replace(/\r\n?/g, '\n').trim();
+}
+
+/**
+ * 笔记本 → Markdown（文本对象 + 手写识别结果 + 学习集闪卡）
+ * 导出的 .md 丢进 content/ 就能进站点的全文检索与知识图谱
+ */
+export function notebookToMarkdown(nb, {
+  includeText = true, includeOcr = true, includeCards = true, includeMeta = true, date = '',
+} = {}) {
+  const pages = (nb && nb.pages) || [];
+  const ocrDone = pages.filter((p) => p.ocr && (p.ocr.text || (p.ocr.lines || []).length)).length;
+  const day = date || new Date().toISOString().slice(0, 10);
+  const tags = ['手写笔记本', ...((nb && nb.tags) || [])];
+  const lines = [];
+  if (includeMeta) {
+    lines.push('---');
+    lines.push(`title: ${(nb && nb.title) || '未命名笔记本'}`);
+    lines.push('category: 笔记本');
+    lines.push(`tags: [${tags.join(', ')}]`);
+    lines.push(`date: ${day}`);
+    lines.push(`summary: 由「笔记本」模式导出：${pages.length} 页${ocrDone ? ` · 手写识别 ${ocrDone} 页` : ''}`);
+    lines.push('---', '');
+  }
+  lines.push(`# ${(nb && nb.title) || '未命名笔记本'}`, '');
+  lines.push(`> 由「笔记本」模式导出（${pages.length} 页${ocrDone ? `，其中 ${ocrDone} 页含手写识别结果` : ''}）`, '');
+
+  pages.forEach((p, i) => {
+    const texts = includeText
+      ? (p.items || []).filter((it) => it && it.kind === 'text' && mdText(it.text)).map((it) => mdText(it.text))
+      : [];
+    const ocr = includeOcr && p.ocr && p.ocr.text ? mdText(p.ocr.text) : '';
+    if (!texts.length && !ocr) return;
+    lines.push(`## 第 ${i + 1} 页${p.title ? ` · ${p.title}` : ''}`, '');
+    if (texts.length) {
+      lines.push(texts.join('\n\n'), '');
+    }
+    if (ocr) {
+      lines.push('### 手写识别', '', ocr, '');
+    }
+  });
+
+  if (includeCards && (nb.study || []).length) {
+    lines.push('## 学习集（闪卡）', '');
+    lines.push('| 正面 | 背面 |', '| --- | --- |');
+    for (const c of nb.study) {
+      lines.push(`| ${mdText(c.front).replace(/\|/g, '\\|')} | ${mdText(c.back).replace(/\|/g, '\\|')} |`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+/** 笔记本 → 「可提交到 content/ 的 Markdown」元信息 */
+export function markdownTarget(nb) {
+  const slug = markdownSlug((nb && nb.title) || 'notebook');
+  return { slug, source: `content/${slug}.md` };
+}
+
 /* ============================ 批量导出（资料库多选用） ============================ */
 
 /** 把若干本笔记本摊平成页面序列（保持顺序，带上书名，便于合并导出） */
@@ -436,26 +508,49 @@ export function textRunsForPage(page, { pageW = 794, pageH = 1123, includeOcr = 
       });
     }
   }
-  if (includeOcr && page && page.ocr && page.ocr.text) {
-    const size = 10;
-    const leading = 14;
-    let y = 22;
-    for (const line of String(page.ocr.text).split('\n')) {
-      if (y > pageH - 16) break;
-      if (line.trim()) runs.push({ text: line, x: 22, y: pageH - y - size, size, source: 'ocr' });
-      y += leading;
+  if (includeOcr && page && page.ocr && (page.ocr.text || (page.ocr.lines || []).length)) {
+    const boxed = (page.ocr.lines || []).filter((l) => l && l.text && l.box);
+    if (boxed.length) {
+      // 有位置：按识别出来的行框原位摆放（选中/复制就会落在那一行上）
+      for (const l of boxed) {
+        const [x0, y0, x1, y1] = l.box;
+        const w = Math.max(4, (x1 - x0) * pageW);
+        const h = Math.max(6, (y1 - y0) * pageH);
+        const size = Math.max(6, h * 0.86);
+        const textW = estimateTextSize(l.text, size / pageW).w * pageW;
+        const tz = textW > 1 ? Math.max(40, Math.min(400, Math.round((w / textW) * 100))) : 100;
+        runs.push({ text: l.text, x: x0 * pageW, y: pageH - y1 * pageH + h * 0.14, size, tz, source: 'ocr' });
+      }
+      const unboxed = (page.ocr.lines || []).filter((l) => l && l.text && !l.box);
+      let ny = 22;
+      for (const l of unboxed) {
+        if (ny > pageH - 16) break;
+        runs.push({ text: l.text, x: 22, y: pageH - ny - 10, size: 10, source: 'ocr' });
+        ny += 14;
+      }
+    } else if (page.ocr.text) {
+      // 老数据（只有纯文本）：按行铺在左侧，保证「可搜索」这件事不丢
+      const size = 10;
+      const leading = 14;
+      let y = 22;
+      for (const line of String(page.ocr.text).split('\n')) {
+        if (y > pageH - 16) break;
+        if (line.trim()) runs.push({ text: line, x: 22, y: pageH - y - size, size, source: 'ocr' });
+        y += leading;
+      }
     }
   }
   return runs;
 }
 
-/** 把文本行拼成 PDF 内容流片段（3 Tr = 隐形绘制） */
+/** 把文本行拼成 PDF 内容流片段（3 Tr = 隐形绘制；带 tz 的行会做水平缩放，让选中的宽度贴近真实文字） */
 export function textContentStream(runs, codeMap, { fontName = 'F1' } = {}) {
   const parts = [];
   for (const r of runs || []) {
     const hex = encodeTextHex(r.text, codeMap);
     if (!hex) continue;
-    parts.push(`BT 3 Tr /${fontName} ${Number(r.size).toFixed(2)} Tf 1 0 0 1 ${Number(r.x).toFixed(2)} ${Number(r.y).toFixed(2)} Tm <${hex}> Tj ET`);
+    const tz = Number(r.tz) > 0 && Math.abs(Number(r.tz) - 100) > 1 ? ` ${Number(r.tz).toFixed(0)} Tz` : '';
+    parts.push(`BT 3 Tr /${fontName} ${Number(r.size).toFixed(2)} Tf${tz} 1 0 0 1 ${Number(r.x).toFixed(2)} ${Number(r.y).toFixed(2)} Tm <${hex}> Tj ET`);
   }
   return parts.join('\n');
 }

@@ -138,8 +138,44 @@ export function makeNotebook(patch = {}) {
 }
 
 function emptyLibrary() {
-  return { version: SCHEMA_VERSION, folders: [], notebooks: [], settings: { sort: 'updated', view: 'grid' } };
+  return { version: SCHEMA_VERSION, folders: [], notebooks: [], templates: [], settings: { sort: 'updated', view: 'grid' } };
 }
+
+/** 内置模板：新建笔记本时可以直接套用（对齐 GoodNotes 的「可导入模板本」） */
+export const BUILTIN_TEMPLATES = [
+  {
+    id: 'builtin-cornell',
+    name: '康奈尔课堂笔记',
+    builtin: true,
+    cover: { color: '#2F6FE8', pattern: 'plain' },
+    paper: { template: 'cornell', size: 'a4', color: '#FFFFFF' },
+    pages: [{ paper: null }, { paper: null }, { paper: { template: 'cornell', size: 'a4', color: '#FFFFFF' } }],
+  },
+  {
+    id: 'builtin-week',
+    name: '周计划',
+    builtin: true,
+    cover: { color: '#12A05C', pattern: 'gradient' },
+    paper: { template: 'week', size: 'a4l', color: '#FFFFFF' },
+    pages: [{ paper: null }, { paper: { template: 'habit', size: 'a4l', color: '#FFFFFF' } }],
+  },
+  {
+    id: 'builtin-mistake',
+    name: '错题本',
+    builtin: true,
+    cover: { color: '#E8452F', pattern: 'stripes' },
+    paper: { template: 'grid', size: 'a4', color: '#FBF7EF' },
+    pages: [{ paper: null }, { paper: null }, { paper: null }],
+  },
+  {
+    id: 'builtin-reading',
+    name: '读书笔记',
+    builtin: true,
+    cover: { color: '#8B5CF6', pattern: 'kraft' },
+    paper: { template: 'lined', size: 'a4', color: '#FBF7EF' },
+    pages: [{ paper: null }, { paper: { template: 'cornell', size: 'a4', color: '#FBF7EF' } }],
+  },
+];
 
 /* ============================ 主类 ============================ */
 
@@ -190,6 +226,20 @@ export class NotebookStore {
       return nb;
     });
     out.settings = { sort: (j.settings && j.settings.sort) || 'updated', view: (j.settings && j.settings.view) || 'grid' };
+    out.templates = (Array.isArray(j.templates) ? j.templates : []).map((t) => ({
+      id: t.id || nid('tpl'),
+      name: String(t.name || '模板'),
+      builtin: false,
+      cover: t.cover && typeof t.cover === 'object' ? { ...t.cover } : null,
+      paper: t.paper && typeof t.paper === 'object' ? { ...t.paper } : { ...DEFAULT_PAPER },
+      scroll: t.scroll === 'horizontal' ? 'horizontal' : 'vertical',
+      withContent: !!t.withContent,
+      createdAt: asInt(t.createdAt, now()),
+      pages: (Array.isArray(t.pages) ? t.pages : []).map((p) => ({
+        paper: p && p.paper ? { ...p.paper } : null,
+        items: Array.isArray(p && p.items) ? p.items : [],
+      })),
+    }));
     return out;
   }
 
@@ -270,6 +320,65 @@ export class NotebookStore {
     const nb = this.get(bookId);
     if (!nb) return null;
     return nb.pages.find((p) => p.id === pageId) || null;
+  }
+
+  /* ---------- 模板：把一本笔记本存成模板 / 从模板新建 ---------- */
+
+  /** 全部模板（内置在前，自存在后） */
+  templates() {
+    return [...BUILTIN_TEMPLATES, ...(this.data.templates || [])].map((t) => ({ ...t, builtin: !!t.builtin }));
+  }
+
+  template(id) {
+    return this.templates().find((t) => t.id === id) || null;
+  }
+
+  /** 把某本笔记本另存为模板（默认只存结构与纸张，不带内容） */
+  saveAsTemplate(bookId, { name, withContent = false } = {}) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    const t = {
+      id: nid('tpl'),
+      name: String(name || nb.title || '未命名模板').trim().slice(0, 40) || '未命名模板',
+      builtin: false,
+      cover: { ...nb.cover },
+      paper: { ...nb.paper },
+      scroll: nb.scroll,
+      withContent: !!withContent,
+      createdAt: now(),
+      pages: nb.pages.map((p) => ({
+        paper: p.paper ? { ...p.paper } : null,
+        items: withContent ? clone(p.items || []) : [],
+      })),
+    };
+    this.data.templates.push(t);
+    this.save();
+    return t;
+  }
+
+  removeTemplate(id) {
+    const before = this.data.templates.length;
+    this.data.templates = this.data.templates.filter((t) => t.id !== id);
+    if (this.data.templates.length !== before) this.save();
+    return this.data.templates.length < before;
+  }
+
+  /** 从模板新建一本（内置模板也能用） */
+  createFromTemplate(templateId, patch = {}) {
+    const t = this.template(templateId);
+    if (!t) return null;
+    const pages = (t.pages && t.pages.length ? t.pages : [{ paper: null }]).map((p) => makePage({
+      paper: p.paper ? { ...p.paper } : null,
+      items: t.withContent ? clone(p.items || []) : [],
+    }));
+    return this.create({
+      title: patch.title || t.name || '新笔记本',
+      cover: t.cover ? { ...t.cover } : undefined,
+      paper: t.paper ? { ...t.paper } : undefined,
+      scroll: t.scroll || 'vertical',
+      folder: patch.folder || null,
+      pages,
+    });
   }
 
   /* ---------- 笔记本增删改 ---------- */
@@ -556,13 +665,31 @@ export class NotebookStore {
   }
 
   /* ---------- 手写识别（OCR）结果 ---------- */
-  /** 写入某页的识别文字（OCR 模块用它回填） */
-  setPageOcr(bookId, pageId, { text, model } = {}) {
+  /** 写入某页的识别文字（OCR 模块用它回填）；带位置时同时存 lines，PDF 文字层就能原位对齐 */
+  setPageOcr(bookId, pageId, { text, model, lines } = {}) {
     const p = this.page(bookId, pageId);
     if (!p) return null;
     const clean = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 12000);
-    if (!clean) return p;
-    p.ocr = { text: clean, model: model || '', chars: clean.length, at: Date.now() };
+    const safeLines = Array.isArray(lines)
+      ? lines
+        .filter((l) => l && String(l.text || '').trim())
+        .slice(0, 400)
+        .map((l) => {
+          const box = Array.isArray(l.box) && l.box.length >= 4 && l.box.every((v) => Number.isFinite(Number(v)))
+            ? l.box.slice(0, 4).map((v) => Math.min(1, Math.max(0, Number(v))))
+            : null;
+          return { text: String(l.text).slice(0, 600), box };
+        })
+      : [];
+    if (!clean && !safeLines.length) return p;
+    p.ocr = {
+      text: clean || safeLines.map((l) => l.text).join('\n'),
+      model: model || '',
+      chars: (clean || '').length,
+      lines: safeLines,
+      boxes: safeLines.filter((l) => l.box).length,
+      at: Date.now(),
+    };
     this.touch(bookId);
     return p;
   }

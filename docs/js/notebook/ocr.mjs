@@ -29,6 +29,51 @@ export const OCR_PROMPT = [
 
 export const MAX_OCR_CHARS = 12000;
 
+/** 带位置版提示词：让模型顺手给出每一行的外接矩形（0~1 相对比例） */
+export const OCR_BOX_PROMPT = [
+  '你是一个精确的 OCR 引擎，并且要给出每一行文字的位置。',
+  '只输出一个 JSON 对象，不要任何解释、不要代码块围栏，格式：',
+  '{"lines":[{"text":"这一行的文字","box":[x0,y0,x1,y1]}]}',
+  'box 是这一行文字在图片里的外接矩形，取值都是 0~1 的相对比例（左上角为 0,0，右下角为 1,1）。',
+  '要求：逐行输出；表格按行输出；数学公式用 LaTeX 或可读符号；没有文字则返回 {"lines":[]}。',
+].join('\n');
+
+/**
+ * 解析「带位置」的识别结果：模型偶尔会多说话或漏 box，这里一律兜住
+ * @returns {{lines:Array<{text:string, box:number[]|null}>, ok:boolean, json:boolean}}
+ */
+export function parseOcrLines(raw) {
+  const text = String(raw == null ? '' : raw).trim().replace(/^```[a-zA-Z]*\s*/, '').replace(/\s*```$/, '');
+  let json = null;
+  try { json = JSON.parse(text); } catch (e) {
+    const m = text.match(/\{[\s\S]*\}/);   // 容错：前后夹了说明文字
+    if (m) { try { json = JSON.parse(m[0]); } catch (e2) { json = null; } }
+  }
+  const src = json && Array.isArray(json.lines) ? json.lines : [];
+  const lines = [];
+  for (const it of src) {
+    if (!it) continue;
+    const t = String(it.text != null ? it.text : (it.content != null ? it.content : '')).trim();
+    if (!t) continue;
+    const b = Array.isArray(it.box) ? it.box.map(Number) : null;
+    if (!b || b.length < 4 || b.some((v) => !Number.isFinite(v))) { lines.push({ text: t, box: null }); continue; }
+    const x0 = Math.max(0, Math.min(b[0], b[2]));
+    const x1 = Math.min(1, Math.max(b[0], b[2]));
+    const y0 = Math.max(0, Math.min(b[1], b[3]));
+    const y1 = Math.min(1, Math.max(b[1], b[3]));
+    if (x1 - x0 < 0.002 || y1 - y0 < 0.002) { lines.push({ text: t, box: null }); continue; }
+    lines.push({ text: t, box: [x0, y0, x1, y1] });
+  }
+  return { lines, ok: lines.length > 0, json: !!json };
+}
+
+export function linesToText(lines) {
+  return (lines || []).map((l) => l.text).filter(Boolean).join('\n');
+}
+
+export function lineCount(lines) { return (lines || []).filter((l) => l && l.text).length; }
+
+
 /* ============================ 密钥 ============================ */
 
 function store(storage) {
@@ -217,12 +262,12 @@ export async function ocrImageDataUrl(dataUrl, { apiKey, model = OCR_MODELS[0].i
  */
 export async function ocrNotebook(store, bookId, {
   apiKey, model = OCR_MODELS[0].id, onlyMissing = true, indices = null, concurrency = 3,
-  renderPage, fetchImpl, onProgress, signal, dryRun = false,
+  renderPage, fetchImpl, onProgress, signal, dryRun = false, withBoxes = true,
 } = {}) {
   const nb = store.get(bookId);
   if (!nb) return { done: 0, failed: 0, skipped: 0, chars: 0, errors: ['找不到这本笔记本'] };
   const targets = Array.isArray(indices) ? indices : pickPagesToOcr(nb, { onlyMissing });
-  const summary = { done: 0, failed: 0, skipped: nb.pages.length - targets.length, chars: 0, errors: [] };
+  const summary = { done: 0, failed: 0, skipped: nb.pages.length - targets.length, chars: 0, withBoxes: 0, errors: [] };
   if (!targets.length) return summary;
   const scaleFor = (page) => ocrRenderScale(paperDims(page.paper || nb.paper));
 
@@ -230,9 +275,24 @@ export async function ocrNotebook(store, bookId, {
     const page = store.get(bookId).pages[idx];
     const jpeg = pageToJpeg({ paper: page.paper || nb.paper, items: page.items }, { renderPage, scale: scaleFor(page), quality: 0.82 });
     if (dryRun) return { idx, text: '', dry: true };
-    const text = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl });
-    if (!text || /^（?本页无文字）?$/.test(text.trim())) return { idx, text: '', empty: true };
-    store.setPageOcr(bookId, page.id, { text, model });
+    const raw = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl, prompt: withBoxes ? OCR_BOX_PROMPT : undefined });
+    if (withBoxes) {
+      const parsed = parseOcrLines(raw);
+      if (parsed.lines.length) {
+        const text = linesToText(parsed.lines);
+        if (!text.trim()) return { idx, text: '', empty: true };
+        store.setPageOcr(bookId, page.id, { text, model, lines: parsed.lines });
+        return { idx, text, boxes: parsed.lines.filter((l) => l.box).length };
+      }
+      // 模型没按格式回 → 退回纯文本（不丢结果）
+      const fallback = normalizeOcrText(raw);
+      if (!fallback) return { idx, text: '', empty: true };
+      store.setPageOcr(bookId, page.id, { text: fallback, model, lines: [] });
+      return { idx, text: fallback, boxes: 0, degraded: true };
+    }
+    const text = raw;
+    if (!text || /^（?本页无文字）?$/.test(String(text).trim())) return { idx, text: '', empty: true };
+    store.setPageOcr(bookId, page.id, { text, model, lines: [] });
     return { idx, text };
   }, { concurrency, onProgress, signal });
 
@@ -241,6 +301,7 @@ export async function ocrNotebook(store, bookId, {
     if (!r.ok) { summary.failed++; if (summary.errors.length < 5) summary.errors.push(r.error); return; }
     summary.done++;
     summary.chars += (r.value && r.value.text ? r.value.text.length : 0);
+    if (r.value && r.value.boxes) summary.withBoxes += r.value.boxes;
   });
   return summary;
 }

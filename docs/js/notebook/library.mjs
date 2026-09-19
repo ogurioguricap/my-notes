@@ -31,7 +31,7 @@ import {
   templateGroups,
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
-import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf } from './study.mjs';
+import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf, notebookToMarkdown, markdownSlug } from './study.mjs';
 import { gh } from '../editor.mjs';
 
 /* ============================ 常量 ============================ */
@@ -632,10 +632,13 @@ export class LibraryUI {
     layer.innerHTML = `${this._sheetHTML()}${this._panelHTML()}${this._menuHTML()}${this._selectbarHTML()}`;
   }
 
-  /** 附加面板（目前只有「线上笔记本」） */
+  /** 附加面板（线上笔记本 / 模板库） */
   _panelHTML() {
     if (!this._panel) return '';
     if (this._panel.kind === 'remote') return this.remoteHTML();
+    if (this._panel.kind === 'templates') {
+      return `<div class="lib-sheet-mask" data-act="panel-close"><div class="lib-sheet" data-stop="1">${this._sheetTemplates()}</div></div>`;
+    }
     return '';
   }
 
@@ -688,6 +691,8 @@ export class LibraryUI {
       { run: 'duplicate', label: '复制一本' },
       { run: 'sync-push', label: '同步到仓库' },
       { run: 'sync-pull', label: '从仓库拉取' },
+      { run: 'save-template', label: '另存为模板' },
+      { run: 'export-md', label: '导出 Markdown（下载）' },
       '-',
       { run: 'trash', label: '移到回收站', danger: true },
     ];
@@ -779,6 +784,13 @@ export class LibraryUI {
               <span>标题</span>
               <input class="lib-input" data-act="nb-title" value="${bkEsc(f.title)}" placeholder="比如：线性代数 · 第三章">
             </label>
+            <div class="lib-field">
+              <span>从模板开始（选模板会用它自带的纸张 / 封面 / 页数）</span>
+              <div class="lib-chips">
+                <button type="button" class="lib-chip${f.templateId ? '' : ' on'}" data-act="nb-tpl" data-v="">空白笔记本</button>
+                ${this.store.templates().map((t) => `<button type="button" class="lib-chip${f.templateId === t.id ? ' on' : ''}" data-act="nb-tpl" data-v="${bkEsc(t.id)}" title="${t.pages.length} 页 · ${bkEsc(paperTemplate((t.paper || {}).template || 'lined').label)}${t.builtin ? ' · 内置' : ''}">${bkEsc(t.name)}${t.builtin ? '' : ' · 我的'}</button>`).join('')}
+              </div>
+            </div>
             <div class="lib-field">
               <span>封面颜色</span>
               <div class="lib-swatches">
@@ -1002,6 +1014,10 @@ export class LibraryUI {
       case 'export': this.exportBackup(); break;
       case 'import': this.importBackup(); break;
       case 'panel-close': this._panel = null; this._renderLayer(); break;
+      case 'tpl-del':
+        e.stopPropagation();
+        if (this.store.removeTemplate(rowId)) { this.toast('模板已删除'); this._renderLayer(); }
+        break;
       case 'remote-import': e.stopPropagation(); this.importRemote(rowId); break;
       case 'sel-export':
         if (!this.sel.size) { this.toast('先勾选要导出的笔记本'); break; }
@@ -1031,6 +1047,7 @@ export class LibraryUI {
       /* sheet */
       case 'sheet-close': if (t === hit) this.closeSheet(); break;
       case 'nb-color': this._sheetField('color', hit.dataset.v); break;
+      case 'nb-tpl': this._sheetField('templateId', hit.dataset.v || ''); break;
       case 'nb-pattern': this._sheetField('pattern', hit.dataset.v); break;
       case 'nb-template': this._sheetField('template', hit.dataset.v); break;
       case 'nb-paper-color': this._sheetField('paperColor', hit.dataset.v); break;
@@ -1112,6 +1129,7 @@ export class LibraryUI {
         template: 'lined',
         paperColor: '#FFFFFF',
         size: 'a4',
+        templateId: '',
       },
     };
     this._renderLayer();
@@ -1221,6 +1239,7 @@ export class LibraryUI {
       { run: 'sync-all', label: '全部同步到仓库' },
       { run: 'sync-pull-all', label: '从仓库拉取线上更新' },
       { run: 'remote', label: '看线上笔记本（免令牌）' },
+      { run: 'templates', label: '模板库…' },
     ];
     if (this.onGoMarkdown) items.push('-', { run: 'go-md', label: '切回 Markdown 资料库' });
     return items;
@@ -1235,6 +1254,7 @@ export class LibraryUI {
       else if (run === 'sync-all') this.syncAll();
       else if (run === 'sync-pull-all') this.syncPullAll();
       else if (run === 'remote') this.openRemote();
+      else if (run === 'templates') { this._panel = { kind: 'templates' }; this._renderLayer(); }
       else if (run === 'go-md' && this.onGoMarkdown) this.onGoMarkdown();
       return;
     }
@@ -1242,6 +1262,8 @@ export class LibraryUI {
     if (run === 'open') this.openBook(id);
     if (run === 'sync-push') this.syncOne(id);
     if (run === 'sync-pull') this.syncPullOne(id);
+    if (run === 'save-template') this.saveTemplateFrom(id);
+    if (run === 'export-md') this.exportMarkdown(id);
     else if (run === 'fav') this._toggleFav(id);
     else if (run === 'rename') this._renameBook(id);
     else if (run === 'cover') this.openCoverSheet(id);
@@ -1517,12 +1539,26 @@ export class LibraryUI {
     if (!title) { this.toast('先给笔记本起个名字'); this._focusSheetInput('nb-title'); return; }
     let nb = null;
     try {
-      nb = this.store.create({
-        title,
-        cover: { color: f.color, pattern: f.pattern, glyph: title.slice(0, 1) || '笔' },
-        folder: this.state.scope === 'all' ? (this.state.folder || null) : null,
-        paper: { template: f.template, size: f.size, color: f.paperColor },
-      });
+      if (f.templateId) {
+        // 从模板新建：纸张 / 封面 / 页数 / 滚动方向都听模板的
+        nb = this.store.createFromTemplate(f.templateId, {
+          title,
+          folder: this.state.scope === 'all' ? (this.state.folder || null) : null,
+        });
+        if (nb) {
+          nb.cover = { ...nb.cover, glyph: title.slice(0, 1) || nb.cover.glyph };
+          if (f.color) nb.cover.color = f.color;
+          if (f.pattern) nb.cover.pattern = f.pattern;
+          this.store.save();
+        }
+      } else {
+        nb = this.store.create({
+          title,
+          cover: { color: f.color, pattern: f.pattern, glyph: title.slice(0, 1) || '笔' },
+          folder: this.state.scope === 'all' ? (this.state.folder || null) : null,
+          paper: { template: f.template, size: f.size, color: f.paperColor },
+        });
+      }
     } catch (err) { this._fail(err); return; }
     this.closeSheet();
     if (!nb) return;
@@ -1579,6 +1615,44 @@ export class LibraryUI {
     } catch (err) {
       this._fail(err);
     }
+  }
+
+  /* ---------- 模板与 Markdown 导出 ---------- */
+
+  saveTemplateFrom(id, { withContent = false } = {}) {
+    const nb = this.store.get(id);
+    if (!nb) return null;
+    let name = nb.title;
+    try {
+      if (typeof prompt === 'function') name = prompt('模板叫什么名字？（只存纸张与页面结构，不存内容）', nb.title) || nb.title;
+    } catch (e) { /* prompt 被禁用也无所谓 */ }
+    const t = this.store.saveAsTemplate(id, { name, withContent });
+    if (t) this.toast(`已存为模板「${t.name}」：新建笔记本时可以套用`);
+    return t;
+  }
+
+  exportMarkdown(id) {
+    const nb = this.store.get(id);
+    if (!nb) return;
+    try {
+      const md = notebookToMarkdown(nb);
+      downloadBlob(new Blob([md], { type: 'text/markdown' }), `${markdownSlug(nb.title)}.md`);
+      this.toast('已导出 Markdown（丢进 content/ 就能进全站检索）');
+    } catch (err) { this._fail(err); }
+  }
+
+  /** 从选中的那本顺手存模板（批量导出面板里也能用） */
+  _sheetTemplates() {
+    const list = this.store.templates();
+    return `<div class="lib-sheet-head"><h3>模板库</h3><button class="lib-btn ghost" type="button" data-act="panel-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <p class="lib-hint">新建笔记本时可以选这些模板（纸张 / 封面 / 页数一起套用）。把某本笔记本「另存为模板」就会出现在这里；内置模板不能删。</p>
+        ${list.map((t) => `<div class="lib-pick-row" data-id="${bkEsc(t.id)}">
+          <span class="bk-row-cover" style="--bk:${bkEsc((t.cover && t.cover.color) || '#5A6B8C')}" data-pattern="${bkEsc((t.cover && t.cover.pattern) || 'plain')}" aria-hidden="true"></span>
+          <span class="lib-pick-name">${bkEsc(t.name)}<i class="lib-pick-meta">${t.pages.length} 页 · ${bkEsc(paperTemplate((t.paper || {}).template || 'lined').label)}${t.builtin ? ' · 内置' : ' · 我的'}${t.withContent ? ' · 含内容' : ''}</i></span>
+          ${t.builtin ? '' : `<button class="lib-btn danger" type="button" data-act="tpl-del" data-id="${bkEsc(t.id)}">删除</button>`}
+        </div>`).join('')}
+      </div>`;
   }
 
   /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */

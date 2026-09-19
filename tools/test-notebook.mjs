@@ -11,6 +11,7 @@
  *
  * 用法： node tools/test-notebook.mjs
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -876,6 +877,127 @@ head('PDF 可搜索文字层 / 批量导出');
     { merge: true, dropTape: true, render: (page) => { seenTape.push(page.items.length); return { jpeg, w: 100, h: 100 }; } },
   );
   expect('批量导出也支持撕掉胶带（渲染时只拿到 0 个对象）', seenTape[0] === 0);
+}
+
+/* ============================ 10. OCR 坐标 / 模板库 / Markdown 导出 ============================ */
+head('OCR 行坐标 / 模板库 / Markdown 导出');
+{
+  // --- OCR 带位置 ---
+  expect('带位置版提示词要求返回 JSON 与 box', /JSON/.test(ocrMod.OCR_BOX_PROMPT) && /box/.test(ocrMod.OCR_BOX_PROMPT));
+  const good = ocrMod.parseOcrLines('{"lines":[{"text":"第一行","box":[0.1,0.2,0.6,0.28]},{"text":"第二行","box":[0.1,0.32,0.5,0.4]}]}');
+  expect('解析出两行且带框', good.lines.length === 2 && good.lines[0].box[3] === 0.28);
+  expect('容错：模型夹了说明文字也能解析', ocrMod.parseOcrLines('好的，结果如下：\n{"lines":[{"text":"X","box":[0,0,1,0.1]}]}').lines.length === 1);
+  expect('容错：代码围栏也去掉', ocrMod.parseOcrLines('```json\n{"lines":[{"text":"Y","box":[0,0,1,0.1]}]}\n```').lines.length === 1);
+  expect('容错：box 反了就自动摆正、越界就夹住', (() => {
+    const r = ocrMod.parseOcrLines('{"lines":[{"text":"Z","box":[0.8,0.6,0.2,0.1]},{"text":"W","box":[-1,0,5,2]}]}');
+    return r.lines[0].box.join(',') === '0.2,0.1,0.8,0.6' && r.lines[1].box.join(',') === '0,0,1,1';
+  })());
+  expect('缺 box / 坏 box 的行仍然保留文字（只是没位置）', (() => {
+    const r = ocrMod.parseOcrLines('{"lines":[{"text":"没框"},{"text":"坏框","box":[1,2]},{"text":"太小","box":[0.5,0.5,0.5001,0.5001]}]}');
+    return r.lines.length === 3 && r.lines.every((l) => l.box === null);
+  })());
+  expect('空结果与纯文本都算「没解析出结构化行」', ocrMod.parseOcrLines('{"lines":[]}').ok === false && ocrMod.parseOcrLines('随便一段文字').ok === false);
+  expect('行数统计与拼接', ocrMod.lineCount(good.lines) === 2 && ocrMod.linesToText(good.lines) === '第一行\n第二行');
+
+  // 存储与文字层
+  const s10 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b10 = s10.create({ title: '定位本' });
+  s10.setPageOcr(b10.id, s10.get(b10.id).pages[0].id, { text: '第一行\n第二行', model: 'test', lines: good.lines });
+  const pg10 = s10.get(b10.id).pages[0];
+  expect('识别结果连行框一起存下来', pg10.ocr.lines.length === 2 && pg10.ocr.boxes === 2 && pg10.ocr.text.includes('第二行'));
+  expect('超量行会被截断（最多 400 行）', (() => {
+    const many = Array.from({ length: 500 }, (_, i) => ({ text: 'x' + i, box: [0, 0, 1, 0.1] }));
+    s10.setPageOcr(b10.id, pg10.id, { text: 'x', lines: many });
+    return s10.page(b10.id, pg10.id).ocr.lines.length === 400;
+  })());
+  s10.setPageOcr(b10.id, pg10.id, { text: '第一行\n第二行', lines: good.lines });
+  const boxRuns = studyMod.textRunsForPage({ items: [], ocr: s10.page(b10.id, pg10.id).ocr }, { pageW: 1000, pageH: 1000 });
+  expect('有行框时：文字按框原位摆放', Math.abs(boxRuns[0].x - 100) < 1e-6 && Math.abs(boxRuns[0].y - (1000 - 280 + 80 * 0.14)) < 0.01);
+  expect('字号按行高算、并带水平缩放（选中宽度贴近真字）', boxRuns[0].size > 6 && boxRuns[0].tz > 0 && boxRuns[0].tz !== 100);
+  const stream10 = studyMod.textContentStream(boxRuns, studyMod.textCodeMap('第一行第二'));
+  expect('内容流里会写 Tz', /Tz/.test(stream10) && /3 Tr/.test(stream10));
+  expect('没框的老数据仍按行铺（向后兼容）', (() => {
+    const runs = studyMod.textRunsForPage({ items: [], ocr: { text: 'A\nB' } }, { pageW: 800, pageH: 1000 });
+    return runs.length === 2 && runs[0].x === 22 && runs[1].y < runs[0].y;
+  })());
+  expect('带行框的 PDF 仍能读回文字层', (async () => {
+    const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 1, 0xFF, 0xD9]);
+    const blob = await studyMod.buildPdf([{ paper: { template: 'lined', size: 'a4' }, items: [], ocr: s10.page(b10.id, pg10.id).ocr }], {
+      waitImages: false, render: () => ({ jpeg, w: 1000, h: 1000 }),
+    });
+    const back = studyMod.readTextLayer(new Uint8Array(await blob.arrayBuffer()));
+    return back.text.includes('第一行') && back.text.includes('第二行');
+  })() instanceof Promise ? 'async' : 'sync');
+  {
+    const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 2, 0xFF, 0xD9]);
+    const blob = await studyMod.buildPdf([{ paper: { template: 'lined', size: 'a4' }, items: [], ocr: s10.page(b10.id, pg10.id).ocr }], {
+      waitImages: false, render: () => ({ jpeg, w: 1000, h: 1000 }),
+    });
+    const back = studyMod.readTextLayer(new Uint8Array(await blob.arrayBuffer()));
+    expect('带行框导出后再读回：两行都在', back.text.includes('第一行') && back.text.includes('第二行'));
+  }
+
+  // --- 模板库 ---
+  const s11 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  expect('内置模板齐备（康奈尔/周计划/错题本/读书笔记）', (() => {
+    const t = s11.templates();
+    return t.length === 4 && t.every((x) => x.builtin) && t.some((x) => x.name === '错题本');
+  })());
+  expect('内置模板不能删（拿到的 id 删不动）', s11.removeTemplate('builtin-cornell') === false);
+  const book11 = s11.create({ title: '我的错题本', cover: { color: '#E8452F', pattern: 'stripes' } });
+  s11.addPage(book11.id, { count: 2 });
+  s11.setItems(book11.id, s11.get(book11.id).pages[0].id, [{ kind: 'text', id: 't', x: 0.1, y: 0.1, text: '第 1 题', size: 0.03, color: '#000' }]);
+  const tpl11 = s11.saveAsTemplate(book11.id, { name: '我的错题模板' });
+  expect('另存为模板：结构与纸张存下来、内容默认不存', !!tpl11 && tpl11.pages.length === 3 && tpl11.pages.every((p) => !p.items.length) && tpl11.builtin === false);
+  const tpl11b = s11.saveAsTemplate(book11.id, { name: '带内容的模板', withContent: true });
+  expect('「含内容」模板会把对象一起存', tpl11b.withContent === true && tpl11b.pages[0].items.length === 1);
+  const fromTpl = s11.createFromTemplate('builtin-week', { title: '这周计划' });
+  expect('从内置模板新建：纸张 / 页数 / 封面都听模板的', (() => {
+    const t = s11.template('builtin-week');
+    return fromTpl && fromTpl.pages.length === t.pages.length && fromTpl.paper.template === 'week' && fromTpl.cover.color === '#12A05C';
+  })());
+  expect('模板页里的内容默认不会带进新本', s11.createFromTemplate(tpl11.id, { title: '新错题本' }).pages.every((p) => !p.items.length));
+  expect('含内容模板新建后内容会带过去', s11.createFromTemplate(tpl11b.id, { title: '抄一份' }).pages[0].items.length === 1);
+  expect('自定义模板可以删', s11.removeTemplate(tpl11.id) === true && !s11.templates().some((t) => t.id === tpl11.id));
+  expect('老数据迁移后也有 templates 字段', (() => {
+    const s = new storeMod.NotebookStore({ storage: storeMod.memoryStorage({ 'note-books-v1': '{"notebooks":[]}' }) });
+    return Array.isArray(s.data.templates) && s.templates().length === 4;
+  })());
+
+  // --- Markdown 导出 ---
+  const nb12 = {
+    id: 'b12', title: '高数 · 第三章', tags: ['期末'],
+    pages: [
+      { items: [{ kind: 'text', id: 't', text: '导数定义：f\'(x)=lim(Δy/Δx)' }], ocr: { text: '手写第一行\n手写第二行' } },
+      { items: [] },
+      { items: [{ kind: 'text', id: 't2', text: '第二页的文字' }], ocr: null },
+    ],
+    study: [{ front: '导数定义', back: '极限形式' }, { front: '有|竖线', back: '要转义' }],
+  };
+  const md12 = studyMod.notebookToMarkdown(nb12, { date: '2026-09-19' });
+  expect('Markdown 有 frontmatter 且字段齐全', /^---\ntitle: 高数 · 第三章\ncategory: 笔记本\n/.test(md12) && /date: 2026-09-19/.test(md12) && /tags: \[手写笔记本, 期末\]/.test(md12));
+  expect('每页一个小节，只输出有内容的页', (md12.match(/^## 第 /gm) || []).length === 2 && !/第 2 页/.test(md12));
+  expect('文本对象与手写识别都在里面', md12.includes('导数定义：f\'(x)=lim(Δy/Δx)') && md12.includes('### 手写识别') && md12.includes('手写第二行'));
+  expect('闪卡导出为表格且竖线被转义', /\| 导数定义 \| 极限形式 \|/.test(md12) && md12.includes('有\\|竖线'));
+  expect('可以只导文本 / 只导手写', (() => {
+    const a = studyMod.notebookToMarkdown(nb12, { includeOcr: false });
+    const b = studyMod.notebookToMarkdown(nb12, { includeText: false });
+    return !a.includes('手写第二行') && !b.includes('导数定义：');
+  })());
+  expect('可以不带 frontmatter', !/^---/.test(studyMod.notebookToMarkdown(nb12, { includeMeta: false })));
+  expect('slug 对中文友好、可作文件名', studyMod.markdownSlug('高数 · 第三章') === '高数-第三章' && !/[\\/:*?"<>|]/.test(studyMod.markdownSlug('a/b:c*d?e"f<g>h|i')));
+  expect('空标题也能得到可用 slug', /^notebook-/.test(studyMod.markdownSlug('')));
+  expect('提交目标落在 content/ 下（进站点检索）', studyMod.markdownTarget(nb12).source === 'content/高数-第三章.md');
+  // 真喂给站点的索引构建器：导出的 Markdown 能变成一条笔记记录
+  {
+    const build = await import(pathToFileURL(path.join(ROOT, 'lib', 'site-build.mjs')).href);
+    const payload = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'data', 'index.json'), 'utf8'));
+    const { slug, source } = studyMod.markdownTarget(nb12);
+    const rebuilt = build.applyEdit(payload, { raw: md12, slug, source });
+    const note = rebuilt.notes.find((n) => n.slug === slug);
+    expect('导出的 Markdown 能被站点索引吸收（进全站检索/图谱）', !!note && note.title === '高数 · 第三章' && note.html.includes('手写识别'));
+    expect('新笔记带分类与封面配色', note.category === '笔记本' && /^#[0-9a-f]{6}$/i.test(note.cover.ink));
+  }
 }
 
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
