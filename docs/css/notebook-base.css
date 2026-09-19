@@ -1,0 +1,112 @@
+/* ============================================================================
+   GoodNotes 模式 · 基座样式（资料库与笔记本两个界面共用的零件）
+   颜色一律走站点既有 CSS 变量，所以深浅色、三套排版自动生效。
+   配套文件：notebook-library.css（资料库）、notebook-viewer.css（笔记本视图）
+   ============================================================================ */
+
+/* ---------- 通用按钮 ---------- */
+.nb-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line-strong); background: var(--paper); color: var(--text);
+  border-radius: 10px; padding: 7px 12px; font-size: 13px; line-height: 1;
+  cursor: pointer; white-space: nowrap;
+}
+.nb-btn:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.nb-btn:disabled { opacity: .38; cursor: not-allowed; }
+.nb-btn:disabled:hover { border-color: var(--line-strong); background: var(--paper); color: var(--text); }
+.nb-btn.on, .nb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nb-btn.primary:hover { filter: brightness(1.06); color: #fff; }
+.nb-btn.ghost { background: transparent; border-color: transparent; }
+.nb-btn.ghost:hover { background: var(--bg-soft); border-color: var(--line); }
+.nb-btn.danger { color: var(--c-danger); border-color: color-mix(in srgb, var(--c-danger) 40%, var(--line-strong)); }
+.nb-btn.danger:hover { background: color-mix(in srgb, var(--c-danger) 12%, transparent); color: var(--c-danger); }
+.nb-btn.icon { padding: 7px 10px; font-size: 15px; }
+.nb-btn.round { border-radius: 999px; }
+
+/* ---------- 分段控件 ---------- */
+.nb-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; }
+.nb-seg button {
+  border: 0; background: var(--paper); color: var(--text-soft);
+  padding: 7px 11px; font-size: 12.5px; cursor: pointer;
+}
+.nb-seg button + button { border-left: 1px solid var(--line); }
+.nb-seg button.on { background: var(--accent); color: #fff; }
+
+/* ---------- 表单 ---------- */
+.nb-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.nb-field > span { font-size: 12px; color: var(--text-faint); }
+.nb-input, .nb-select, .nb-textarea {
+  border: 1px solid var(--line-strong); background: var(--paper); color: var(--text);
+  border-radius: 10px; padding: 9px 11px; font-size: 14px; font-family: inherit; width: 100%;
+}
+.nb-input:focus, .nb-textarea:focus, .nb-select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.nb-textarea { min-height: 84px; resize: vertical; line-height: 1.7; }
+.nb-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.nb-hint { font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+
+/* ---------- 色板 ---------- */
+.nb-swatches { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.nb-swatch {
+  width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line-strong);
+  background: var(--c, #888); padding: 0; cursor: pointer;
+}
+.nb-swatch.on { border-color: var(--text); transform: scale(1.12); }
+.nb-swatch-input {
+  width: 26px; height: 26px; padding: 0; border: 2px dashed var(--line-strong);
+  border-radius: 50%; background: none; cursor: pointer;
+}
+
+/* ---------- 芯片 / 标签 ---------- */
+.nb-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); background: var(--bg-soft); color: var(--text-soft);
+  border-radius: 999px; padding: 3px 10px; font-size: 12px;
+}
+.nb-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- 弹出层（sheet / 面板 / 菜单） ---------- */
+.nb-mask {
+  position: fixed; inset: 0; background: rgba(24, 20, 16, .42); z-index: 200;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  backdrop-filter: blur(2px);
+}
+.nb-sheet {
+  background: var(--bg-elev); border: 1px solid var(--line-strong); border-radius: 16px;
+  box-shadow: var(--shadow-lg); width: min(720px, 96vw); max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.nb-sheet-head {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.nb-sheet-head h3 { margin: 0; font-size: 16px; flex: 1; }
+.nb-sheet-body { padding: 16px; overflow: auto; }
+.nb-sheet-foot {
+  display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px;
+  border-top: 1px solid var(--line); background: var(--bg-soft);
+}
+.nb-menu {
+  position: absolute; z-index: 240; min-width: 190px; padding: 6px;
+  background: var(--bg-elev); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.nb-menu button {
+  display: flex; width: 100%; align-items: center; gap: 8px;
+  border: 0; background: transparent; color: var(--text);
+  padding: 8px 10px; border-radius: 8px; font-size: 13px; text-align: left; cursor: pointer;
+}
+.nb-menu button:hover { background: var(--accent-soft); color: var(--accent-text); }
+.nb-menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 2px; }
+
+/* ---------- 空状态 ---------- */
+.nb-empty {
+  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm);
+  padding: 34px 20px; text-align: center; color: var(--text-soft); background: var(--bg-soft);
+}
+.nb-empty .big { font-size: 34px; margin-bottom: 8px; }
+
+/* ---------- 键盘提示 ---------- */
+.nb-kbd {
+  display: inline-block; border: 1px solid var(--line-strong); border-bottom-width: 2px;
+  border-radius: 6px; padding: 1px 6px; font-size: 11.5px; color: var(--text-soft); background: var(--paper);
+}

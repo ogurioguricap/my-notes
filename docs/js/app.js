@@ -8,6 +8,9 @@ import { createGraph } from './graph.js';
 import { Editor, gh, ink as inkApi } from './editor.mjs';
 import { InkLayer } from './ink.mjs';
 import { InstallGuide, isStandalone } from './install.mjs';
+import { NotebookStore } from './notebook/store.mjs';
+import { LibraryUI } from './notebook/library.mjs';
+import { NotebookView } from './notebook/viewer.mjs';
 import { renderDocument as renderDoc } from '../lib/markdown.mjs';
 import { applyEdit } from '../lib/site-build.mjs';
 
@@ -807,6 +810,9 @@ function parseHash() {
     return { route: 'note', slug: note[1].split('#')[0], anchor: params.get('a') || '' };
   }
   if (/^#\/(home)?$/.test(h)) return { route: 'home' };
+  if (/^#\/books$/.test(h)) return { route: 'books' };
+  const book = /^#\/book\/([^/?]+)/.exec(h);
+  if (book) return { route: 'book', id: book[1] };
   if (/^#\/timeline$/.test(h)) return { route: 'timeline' };
   if (/^#\/graph$/.test(h)) return { route: 'graph' };
   if (/^#\/tag\/(.+)$/.test(h)) return { route: 'tag', tag: /^#\/tag\/(.+)$/.exec(h)[1] };
@@ -817,10 +823,20 @@ function parseHash() {
 
 function handleRoute() {
   const r = parseHash();
+  if (r.route !== 'book') closeBook();   // 离开笔记本时先保存并收工
   closeDrawer();
   closeCtx();
   switch (r.route) {
     case 'note': openNote(r.slug, { anchor: r.anchor }); break;
+    case 'books':
+      renderBooks();
+      setView('books');
+      $('#breadcrumb').innerHTML = '<b>笔记本</b>';
+      state.currentSlug = '';
+      break;
+    case 'book':
+      openBook(r.id);
+      break;
     case 'timeline':
       renderTimeline();
       setView('timeline');
@@ -1195,6 +1211,68 @@ function openEditor(slug) {
   editor.open(slug || '');
 }
 
+/* ============================ GoodNotes 模式（笔记本资料库 + 页面编辑） ============================ */
+let bookStore = null;
+let bookLib = null;
+let bookView = null;
+
+/** 数据层：整座笔记本资料库存在浏览器本地（可导出备份；不依赖后端） */
+function ensureBookStore() {
+  if (!bookStore) {
+    bookStore = new NotebookStore();
+    try { bookStore.sweepTrash(); } catch (e) {}
+  }
+  return bookStore;
+}
+
+function renderBooks() {
+  const host = document.getElementById('booksBody');
+  if (!host) return;
+  const store = ensureBookStore();
+  if (!bookLib) {
+    bookLib = new LibraryUI({
+      root: host,
+      store,
+      toast: (m) => showToast(m),
+      onOpen: (id) => { location.hash = `#/book/${encodeURIComponent(id)}`; },
+      onGoMarkdown: () => { location.hash = '#/'; },
+    });
+  }
+  bookLib.render();
+  const st = store.stats();
+  const el = document.getElementById('bookStats');
+  if (el) {
+    el.innerHTML = `<span class="stat"><b>${st.notebooks}</b> 本笔记本</span>` +
+      `<span class="stat"><b>${st.pages}</b> 页</span>` +
+      `<span class="stat"><b>${st.strokes}</b> 笔手写</span>` +
+      `<span class="stat"><b>${(st.bytes / 1024).toFixed(0)}</b> KB 本地数据</span>`;
+  }
+}
+
+function openBook(id) {
+  const host = document.getElementById('bookBody');
+  if (!host) return;
+  const store = ensureBookStore();
+  if (!store.get(id)) { showToast('这本笔记本不在了，可能刚被删除'); location.hash = '#/books'; return; }
+  if (!bookView) {
+    bookView = new NotebookView({
+      root: host,
+      store,
+      toast: (m) => showToast(m),
+      onExit: () => { location.hash = '#/books'; },
+      onChanged: () => { if (bookLib) bookLib.render(); },
+    });
+  }
+  bookView.open(id);
+  setView('book');
+  const nb = store.get(id);
+  $('#breadcrumb').innerHTML = `<a href="#/books">笔记本</a> / <b>${escapeHtml(nb ? nb.title : '')}</b>`;
+}
+
+function closeBook() {
+  if (bookView) bookView.close();
+}
+
 /* ============================ 启动 ============================ */
 /** 出问题时不再让页面停在「载入中」：显示可操作的提示 */
 function showFatal(err) {
@@ -1354,8 +1432,12 @@ async function boot() {
     state,
     openNote,
     handleRoute,
+    renderBooks,
+    openBook,
+    books: () => ensureBookStore(),
     debug: () => {
       const q = (s) => document.querySelector(s);
+      const st = bookStore ? bookStore.stats() : null;
       return {
         slug: state.currentSlug,
         view: state.view,
@@ -1364,6 +1446,10 @@ async function boot() {
         articleLen: q('#article') ? q('#article').innerHTML.length : -1,
         listLen: q('#noteList') ? q('#noteList').innerHTML.length : -1,
         homeLen: q('#homeBody') ? q('#homeBody').innerHTML.length : -1,
+        books: st ? st.notebooks : 0,
+        bookPages: st ? st.pages : 0,
+        bookViewOn: !!(q('#view-book') && q('#view-book').classList.contains('on')),
+        bookBodyLen: q('#bookBody') ? q('#bookBody').innerHTML.length : -1,
       };
     },
   };

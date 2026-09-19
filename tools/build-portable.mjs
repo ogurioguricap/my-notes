@@ -23,7 +23,6 @@ export function main() {
   }
 
   const payload = fs.readFileSync(idxPath, 'utf8');
-  const css = fs.readFileSync(path.join(DOCS, 'css', 'style.css'), 'utf8');
   const html = fs.readFileSync(path.join(DOCS, 'index.html'), 'utf8');
 
   // 内联顺序即依赖顺序（被依赖的在前），全部拍平到同一作用域
@@ -33,6 +32,15 @@ export function main() {
     'docs/js/search.js',
     'docs/js/highlight.js',
     'docs/js/graph.js',
+    'docs/js/ink.mjs',
+    'docs/js/rte.mjs',
+    'docs/js/install.mjs',
+    'docs/js/notebook/paper.mjs',
+    'docs/js/notebook/store.mjs',
+    'docs/js/notebook/study.mjs',
+    'docs/js/notebook/page.mjs',
+    'docs/js/notebook/library.mjs',
+    'docs/js/notebook/viewer.mjs',
     'docs/js/editor.mjs',
     'docs/js/app.js',
   ].map((f) => ({ f, code: fs.readFileSync(path.join(ROOT, f), 'utf8') }));
@@ -70,9 +78,18 @@ export function main() {
   const siteCfg = path.join(DOCS, 'data', 'site.json');
   const siteJson = fs.existsSync(siteCfg) ? fs.readFileSync(siteCfg, 'utf8') : 'null';
 
-  let out = html
-    .replace(/<link rel="manifest"[^>]*>\s*/g, '')
-    .replace(/<link rel="stylesheet" href="css\/style\.css"[^>]*>/, `<style>\n${css}\n</style>`)
+  let out = html.replace(/<link rel="manifest"[^>]*>\s*/g, '');
+  // 所有样式表逐个内联（含 GoodNotes 模式的三份）
+  for (const f of ['style.css', 'notebook-base.css', 'notebook-library.css', 'notebook-viewer.css']) {
+    const css = fs.readFileSync(path.join(DOCS, 'css', f), 'utf8');
+    const re = new RegExp(`<link rel="stylesheet" href="css/${f.replace(/\./g, '\\.')}"[^>]*>`);
+    if (!re.test(out)) {
+      console.error(`✗ 内联失败：index.html 里找不到 css/${f} 的样式表引用`);
+      return false;
+    }
+    out = out.replace(re, `<style>\n/* ${f} */\n${css}\n</style>`);
+  }
+  out = out
     .replace(
       /<script[^>]*src="js\/app\.js[^"]*"[^>]*><\/script>/,
       `<script>${escScript(bundle)}\n\n/* ---- 启动 ---- */\nboot().catch(function (e) { showFatal(e); });\n</script>`
@@ -81,9 +98,11 @@ export function main() {
     .replace(/<link[^>]*href="https:\/\/cdn\.jsdelivr\.net\/npm\/katex[^>]*>/, '<!-- 离线便携版不含 KaTeX：公式会降级为等宽文本，内容不丢 -->')
     .replace(/<title>(.*?)<\/title>/, '<title>$1 · 离线版</title>');
 
-  // 校验：脚本真的内联进去了
-  if (!/class Editor/.test(out) || !/function renderDocument/.test(out)) {
-    console.error('✗ 内联失败：index.html 里的 app.js 引用没能被替换（请检查 index.html 的 script 标签写法）');
+  // 校验：脚本真的内联进去了（标注层与笔记本模式的类也要在，否则离线版点了没反应）
+  const missing = ['class Editor', 'function renderDocument', 'class InkLayer', 'class LibraryUI', 'class NotebookView', 'class PageEditor']
+    .filter((needle) => !out.includes(needle));
+  if (missing.length) {
+    console.error('✗ 内联失败：便携版里缺少这些定义 → ' + missing.join(' / '));
     return false;
   }
 

@@ -6,8 +6,8 @@
  * 2. 缓存版本号变更时清空所有旧缓存。
  * 3. 从缓存兜底返回时通知页面，便于提示「当前是离线缓存版本」。
  */
-const CACHE = 'notes-v7';
-const CORE = ['./', './index.html', './css/style.css', './js/app.js', './js/search.js', './js/highlight.js', './js/graph.js', './manifest.webmanifest'];
+const CACHE = 'notes-v8';
+const CORE = ['./', './index.html', './css/style.css', './css/notebook-base.css', './css/notebook-library.css', './css/notebook-viewer.css', './js/app.js', './js/search.js', './js/highlight.js', './js/graph.js', './manifest.webmanifest'];
 
 // 这些请求任何时候都以网络为准
 const ALWAYS_FRESH = [/\/data\//, /\/ink\//, /\.js$/, /\.css$/, /\/index\.html$/, /\/$/];

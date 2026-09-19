@@ -63,7 +63,7 @@ export const TEXT_SIZES = [
   { id: 'l', label: '大', value: 0.032 },
 ];
 
-export const TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'shape', 'text'];
+export const INK_TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'shape', 'text'];
 export const MAX_HISTORY = 200;
 export const TEXT_FONT = '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif';
 const SELECT_ACCENT = '#2F6FE8';
@@ -97,6 +97,14 @@ export function cloneItems(items) {
     try { return structuredClone(arr); } catch (e) { /* 含不可克隆值 → 退回 JSON */ }
   }
   try { return JSON.parse(JSON.stringify(arr)); } catch (e) { return arr.slice(); }
+}
+
+/** 通用深拷贝：撤销栈里存的不一定是数组（笔记本模式存的是「哪一页 + 内容」），不能只用 cloneItems */
+function deepClone(value) {
+  if (typeof structuredClone === 'function') {
+    try { return structuredClone(value); } catch (e) { /* 退回 JSON */ }
+  }
+  try { return JSON.parse(JSON.stringify(value)); } catch (e) { return value; }
 }
 
 /* ============================ 几何（纯函数） ============================ */
@@ -598,9 +606,9 @@ export class InkHistory {
   get undoDepth() { return this.undoStack.length; }
   get redoDepth() { return this.redoStack.length; }
 
-  /** 记一次操作：label 是操作名，before 是操作前的对象列表快照 */
+  /** 记一次操作：label 是操作名，before 是操作前的快照 */
   push(label, before) {
-    this.undoStack.push({ label: label || '编辑', before: cloneItems(before) });
+    this.undoStack.push({ label: label || '编辑', before: deepClone(before) });
     while (this.undoStack.length > this.limit) this.undoStack.shift();
     this.redoStack.length = 0;
     return this;
@@ -610,16 +618,16 @@ export class InkHistory {
   undo(current) {
     if (!this.undoStack.length) return null;
     const entry = this.undoStack.pop();
-    this.redoStack.push({ label: entry.label, before: cloneItems(current) });
-    return { state: cloneItems(entry.before), label: entry.label };
+    this.redoStack.push({ label: entry.label, before: deepClone(current) });
+    return { state: deepClone(entry.before), label: entry.label };
   }
 
   /** 重做：传入当前状态，返回 { state, label }；没得重做返回 null */
   redo(current) {
     if (!this.redoStack.length) return null;
     const entry = this.redoStack.pop();
-    this.undoStack.push({ label: entry.label, before: cloneItems(current) });
-    return { state: cloneItems(entry.before), label: entry.label };
+    this.undoStack.push({ label: entry.label, before: deepClone(current) });
+    return { state: deepClone(entry.before), label: entry.label };
   }
 
   clear() {
@@ -894,7 +902,7 @@ export class InkLayer {
   }
 
   setTool(tool) {
-    if (!TOOLS.includes(tool)) return;
+    if (!INK_TOOLS.includes(tool)) return;
     this.abortGesture();
     this.tool = tool;
     this.selection.clear();

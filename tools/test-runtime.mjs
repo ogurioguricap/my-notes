@@ -55,11 +55,21 @@ function mkEl(tag) {
     tagName: String(tag).toLowerCase(),
     childNodes: [],
     attrs: {},
-    style: {},
+    style: new Proxy({}, {
+      get(t, p) {
+        if (p === 'setProperty') return (k, v) => { t[k] = String(v); };
+        if (p === 'getPropertyValue') return (k) => t[k] || '';
+        if (p === 'removeProperty') return (k) => { delete t[k]; };
+        return t[p];
+      },
+      set(t, p, v) { t[p] = v; return true; },
+    }),
     dataset: {},
     value: '',
     checked: false,
     _html: '',
+    get id() { return el.attrs.id || ''; },
+    set id(v) { el.attrs.id = String(v); },
     get children() { return el.childNodes.filter((c) => c.nodeType === 1); },
     classList: {
       contains: (c) => classes.has(c),
@@ -108,8 +118,30 @@ function mkEl(tag) {
       }
       return true;
     },
-    querySelectorAll(sel) { return queryAll(el, sel, false); },
-    querySelector(sel) { return queryAll(el, sel, true)[0] || null; },
+    querySelectorAll(sel) { return queryAll(el, sel, false); },    querySelector(sel) { return queryAll(el, sel, true)[0] || null; },
+    /** 真 DOM 有它，界面代码常用（append 片段比拼字符串更安全） */
+    insertAdjacentHTML(pos, html) {
+      const frag = parseHtml(String(html));
+      const kids = frag.childNodes.filter((c) => c.nodeType === 1 || c.nodeType === 3);
+      if (pos === 'afterbegin') {
+        kids.slice().reverse().forEach((k) => { k.parentNode = el; el.childNodes.unshift(k); });
+        el._html = '';
+        return true;
+      }
+      if (pos === 'beforebegin' || pos === 'afterend') {
+        const p = el.parentNode;
+        if (!p) return false;
+        const i = p.childNodes.indexOf(el);
+        const at = pos === 'beforebegin' ? i : i + 1;
+        kids.forEach((k) => { k.parentNode = p; });
+        p.childNodes.splice(at, 0, ...kids);
+        p._html = '';
+        return true;
+      }
+      kids.forEach((k) => push(el, k));
+      el._html = '';
+      return true;
+    },
     closest(sel) {
       let n = el;
       while (n) { if (n.nodeType === 1 && matches(n, sel)) return n; n = n.parentNode; }
@@ -346,6 +378,35 @@ try {
     }
     expect('打开标注层无运行期异常', errors.length === 0, errors.slice(-1).join(''));
   }
+
+  // GoodNotes 模式：资料库 → 新建一本 → 打开笔记本 → 工具面板
+  location.hash = '#/books';
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(250);
+  const booksView = documentStub.getElementById('view-books');
+  expect('笔记本资料库视图可打开', !!(booksView && booksView.classList.contains('on')), JSON.stringify(globalThis.window.__notes.debug()));
+  const booksBody = documentStub.getElementById('booksBody');
+  expect('资料库渲染出内容（空状态或卡片）', !!(booksBody && booksBody.innerHTML.length > 60), booksBody ? `长度 ${booksBody.innerHTML.length}` : '未找到 #booksBody');
+  const nbStore = globalThis.window.__notes.books();
+  const nb = nbStore.create({ title: '运行期测试本', paper: { template: 'grid' } });
+  expect('新建笔记本（数据层）', !!nb && nbStore.stats().notebooks >= 1);
+  location.hash = `#/book/${encodeURIComponent(nb.id)}`;
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(400);
+  const bookBody = documentStub.getElementById('bookBody');
+  expect('笔记本视图已激活', !!(documentStub.getElementById('view-book') || {}).classList.contains('on'));
+  expect('笔记本渲染出页面与工具栏', !!(bookBody && bookBody.innerHTML.length > 200), bookBody ? `长度 ${bookBody.innerHTML.length}` : '未找到 #bookBody');
+  const toolBtns = queryAll(docRoot, '.nb-tool', false);
+  expect(`底部工具面板有工具按钮（${toolBtns.length} 个）`, toolBtns.length >= 8);
+  expect('页面画布已生成', queryAll(docRoot, '.nb-static', false).length >= 1);
+  expect('打开笔记本无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+  // 收拾干净：回到资料库并删掉测试笔记本
+  location.hash = '#/books';
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(200);
+  nbStore.purge(nb.id);
+  expect('退出笔记本回到资料库', !!(documentStub.getElementById('view-books') || {}).classList.contains('on'));
+  expect('测试笔记本已清理', nbStore.stats().notebooks === 0);
 
   // 打开编辑器
   if (editBtn[0]) {

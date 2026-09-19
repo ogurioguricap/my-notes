@@ -14,7 +14,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JS = path.join(ROOT, 'docs', 'js');
-const MODULES = ['search.js', 'highlight.js', 'graph.js', 'rte.mjs', 'ink.mjs', 'install.mjs', 'editor.mjs', 'app.js'];
+const MODULES = ['search.js', 'highlight.js', 'graph.js', 'rte.mjs', 'ink.mjs', 'install.mjs', 'editor.mjs', 'app.js',
+  'notebook/store.mjs', 'notebook/paper.mjs', 'notebook/page.mjs', 'notebook/study.mjs', 'notebook/library.mjs', 'notebook/viewer.mjs'];
 const LIB_MODULES = ['lib/markdown.mjs', 'lib/site-build.mjs'];
 
 export async function main() {

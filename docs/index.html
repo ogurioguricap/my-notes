@@ -13,6 +13,9 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/notebook-base.css">
+<link rel="stylesheet" href="css/notebook-library.css">
+<link rel="stylesheet" href="css/notebook-viewer.css">
 <script>
   // 提前应用主题 / 排版 / 列表布局，避免闪烁
   (function () {
@@ -74,6 +77,7 @@
       <div class="topbar-right">
         <div class="segmented" id="segs" role="tablist" aria-label="视图切换">
           <button type="button" data-view="home" class="on" role="tab">资料库</button>
+          <button type="button" data-view="books" role="tab">笔记本</button>
           <button type="button" data-view="timeline" role="tab">时间线</button>
           <button type="button" data-view="graph" role="tab">图谱</button>
         </div>
@@ -110,6 +114,25 @@
           <article class="article" id="article"></article>
           <aside class="toc" id="toc" aria-label="本页目录"></aside>
         </div>
+      </section>
+
+      <!-- 笔记本资料库（GoodNotes 模式） -->
+      <section class="view" id="view-books" aria-label="笔记本资料库">
+        <div class="lib">
+          <div class="lib-head">
+            <div class="lib-head-main">
+              <h1>笔记本</h1>
+              <p class="lib-sub">手写笔记本：纸张模板、多页管理、套索编辑、闪卡与录音——对齐手账 App 的用法。</p>
+            </div>
+            <div class="lib-stats" id="bookStats"></div>
+          </div>
+          <div id="booksBody"></div>
+        </div>
+      </section>
+
+      <!-- 笔记本页面（GoodNotes 模式的编辑器） -->
+      <section class="view" id="view-book" aria-label="笔记本">
+        <div id="bookBody"></div>
       </section>
 
       <!-- 时间线 -->

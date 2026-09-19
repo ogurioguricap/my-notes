@@ -1,0 +1,560 @@
+/* ============================================================================
+   GoodNotes 模式 · 笔记本页面视图样式（notebook-viewer.css）
+   配套：docs/js/notebook/viewer.mjs（结构由它生成）
+         docs/css/notebook-base.css（按钮 / 芯片 / 面板等基座零件）
+   规则：所有类名以 nb- 开头；颜色一律走站点 CSS 变量，深浅色与三套排版自动生效。
+   ============================================================================ */
+
+/* ============================================================================
+   1. 整体骨架：顶部工具条 + 主体（缩略图栏 / 页面区）+ 底部工具条
+   ============================================================================ */
+
+.nb-wrap {
+  position: relative;
+  height: calc(100vh - 132px);
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  --nb-paper-ink: var(--text);
+}
+.nb-wrap[hidden] { display: none; }
+
+/* ---------- 顶部工具条 ---------- */
+.nb-top {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; min-height: 54px; flex: none;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  position: relative; z-index: 30;
+}
+.nb-back { flex: none; }
+.nb-titlewrap { min-width: 0; max-width: 42vw; }
+.nb-title {
+  margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.3;
+  cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-bottom: 1px dashed transparent; padding-bottom: 1px;
+}
+.nb-title:hover { border-bottom-color: var(--line-strong); }
+.nb-title-input {
+  font: inherit; font-size: 15.5px; font-weight: 700; color: var(--text);
+  background: var(--paper); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 4px 8px; min-width: 160px; max-width: 42vw;
+}
+.nb-count {
+  font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; flex: none;
+}
+.nb-spacer { flex: 1; min-width: 4px; }
+
+/* ---------- 顶部下拉菜单 ---------- */
+.nb-drop { position: relative; flex: none; }
+.nb-menu[hidden] { display: none; }
+
+/* ---------- 主体 ---------- */
+.nb-main { flex: 1; min-height: 0; position: relative; display: flex; }
+
+/* ============================================================================
+   2. 页面区（页面栈 / 横向翻页 / 翻页按钮）
+   ============================================================================ */
+
+.nb-body { position: relative; flex: 1; min-width: 0; display: flex; }
+.nb-column {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 150px;
+  scrollbar-width: thin;
+}
+.nb-lane { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.nb-column.nb-hz { padding: 14px 16px 150px; }
+.nb-column.nb-hz .nb-lane {
+  flex-direction: row; align-items: center; gap: 26px;
+  scroll-snap-type: x mandatory;
+}
+.nb-column.nb-hz .nb-page { scroll-snap-align: center; flex: none; }
+
+/* 一张纸：白边 + 真实阴影，像纸一样浮在底色上 */
+.nb-page {
+  position: relative; flex: none;
+  background: var(--paper);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .08);
+  outline: 1px solid color-mix(in srgb, var(--line-strong) 55%, transparent);
+}
+.nb-dark .nb-page, .nb-wrap.nb-dark .nb-page { outline-color: rgba(255, 255, 255, .08); }
+.nb-page.on { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.nb-static {
+  display: block; width: 100%; height: 100%;
+  border-radius: 3px; position: relative; z-index: 1;
+}
+/* 当前页上覆盖的「活画布」（编辑用） */
+.nb-edit {
+  position: absolute; left: 0; top: 0;
+  z-index: 2; touch-action: none; cursor: crosshair;
+  background: transparent; border-radius: 3px;
+}
+
+/* 横排翻页按钮（竖排滚动时隐藏） */
+.nb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 42px; height: 42px; border-radius: 50%;
+  border: 1px solid var(--line-strong); background: var(--bg-elev); color: var(--text-soft);
+  font-size: 20px; line-height: 1; display: none; place-items: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .14); z-index: 12;
+}
+.nb-nav.prev { left: 10px; }
+.nb-nav.next { right: 10px; }
+.nb-wrap.nb-horizontal .nb-nav { display: grid; }
+.nb-nav:hover { color: var(--accent-text); border-color: var(--accent); }
+.nb-wrap.nb-horizontal .nb-column { overflow-x: auto; overflow-y: hidden; }
+
+/* ============================================================================
+   3. 左侧页面缩略图栏
+   ============================================================================ */
+
+.nb-thumbs {
+  width: 186px; flex: none;
+  display: flex; flex-direction: column;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+  transition: transform .2s ease;
+}
+.nb-thumbs-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--line);
+  font-size: 13px; color: var(--text-soft);
+}
+.nb-thumbs-head b { color: var(--text); font-size: 13px; }
+.nb-thumb-total { color: var(--text-faint); font-size: 12px; }
+.nb-thumbs-head button { margin-left: auto; }
+
+.nb-thumblist { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+
+.nb-thumb {
+  position: relative; cursor: pointer;
+  padding: 5px 5px 18px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-soft);
+  transition: border-color .15s, background .15s;
+}
+.nb-thumb:hover { border-color: var(--line-strong); background: var(--paper); }
+.nb-thumb.on { border-color: var(--accent); background: var(--accent-soft); }
+.nb-thumb-canvas {
+  display: block; width: 100%; height: auto; margin: 0 auto;
+  background: var(--paper); border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .08);
+}
+.nb-thumb-no {
+  position: absolute; left: 7px; bottom: 3px;
+  font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+}
+.nb-thumb-mark { position: absolute; right: 24px; bottom: 2px; font-size: 11px; }
+.nb-thumb-title {
+  position: absolute; right: 24px; bottom: 3px; left: 26px;
+  font-size: 10.5px; color: var(--text-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+}
+.nb-thumb-more {
+  position: absolute; right: 3px; top: 3px;
+  width: 22px; height: 22px; border-radius: 6px; padding: 0;
+  border: 1px solid transparent; background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+  color: var(--text-soft); font-size: 13px; line-height: 1;
+  opacity: 0; transition: opacity .15s;
+}
+.nb-thumb:hover .nb-thumb-more, .nb-thumb.on .nb-thumb-more { opacity: 1; }
+
+.nb-thumbs-foot {
+  flex: none; display: flex; gap: 6px; padding: 9px 10px;
+  border-top: 1px solid var(--line); background: var(--bg-soft);
+}
+.nb-thumbs-foot .nb-btn { flex: 1; justify-content: center; padding: 7px 6px; font-size: 12.5px; }
+
+/* 缩略图上的「⋯」菜单 */
+.nb-thumb-menu { min-width: 200px; }
+.nb-thumb-menu button.danger { color: var(--c-danger); }
+.nb-thumb-menu button.danger:hover { background: color-mix(in srgb, var(--c-danger) 12%, transparent); color: var(--c-danger); }
+.nb-thumb-paper {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12px; color: var(--text-faint); padding: 7px 10px;
+}
+.nb-thumb-paper select { width: 100%; }
+
+/* ============================================================================
+   4. 底部 GoodNotes 工具面板
+   ============================================================================ */
+
+.nb-toolbar {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  z-index: 25; max-width: min(1080px, calc(100% - 24px));
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+.nb-tools {
+  pointer-events: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .16);
+}
+.nb-tools-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.nb-tools-side {
+  gap: 6px; padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.nb-tool {
+  min-width: 44px; height: 44px; padding: 0 8px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid transparent; border-radius: 12px;
+  background: transparent; color: var(--text-soft); cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.nb-tool:hover { background: var(--bg-soft); color: var(--text); }
+.nb-tool.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nb-tool-glyph { font-size: 17px; line-height: 1; }
+.nb-tool-label { font-size: 10.5px; line-height: 1; }
+.nb-tool.on .nb-tool-label { color: #fff; }
+
+.nb-zoom { display: inline-flex; align-items: center; gap: 4px; }
+.nb-status {
+  font-size: 11.5px; color: var(--text-faint);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--line);
+}
+
+/* ---------- 笔 / 荧光笔 / 橡皮 … 的属性面板（浮在工具条上方） ---------- */
+.nb-props {
+  pointer-events: auto;
+  display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap;
+  max-width: min(1080px, calc(100vw - 40px));
+  max-height: 42vh; overflow: auto;
+  padding: 11px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  animation: nb-rise .14s ease-out;
+}
+.nb-props[hidden] { display: none; }
+@keyframes nb-rise { from { transform: translateY(6px); opacity: .4; } to { transform: none; opacity: 1; } }
+
+.nb-prop-group { display: flex; flex-direction: column; gap: 6px; }
+.nb-prop-group.grow { flex: 1; min-width: 170px; }
+.nb-prop-label { font-size: 11.5px; color: var(--text-faint); display: flex; align-items: center; gap: 5px; }
+.nb-prop-label b { color: var(--text); font-variant-numeric: tabular-nums; }
+.nb-prop-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nb-prop-empty { font-size: 12.5px; color: var(--text-faint); }
+.nb-chip-glyph { font-size: 14px; line-height: 1; }
+
+/* 颜色 / 粗细 */
+.nb-colors { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.nb-swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--c, #888); padding: 0; cursor: pointer; }
+.nb-swatch:hover { transform: scale(1.08); }
+.nb-swatch.on { border-color: var(--text); transform: scale(1.12); box-shadow: 0 0 0 2px var(--accent-soft); }
+.nb-swatch-input { width: 26px; height: 26px; padding: 0; border: 2px dashed var(--line-strong); border-radius: 50%; background: none; cursor: pointer; }
+.nb-widths { display: flex; align-items: center; gap: 6px; }
+.nb-width {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--bg-soft); color: var(--text-soft);
+  border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+}
+.nb-width-dot { background: currentColor; border-radius: 50%; flex: none; }
+.nb-width.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nb-range { width: 100%; min-width: 120px; accent-color: var(--accent); }
+
+.nb-shape-select { width: 150px; padding: 6px 9px; font-size: 13px; }
+.nb-bold { font-weight: 700; }
+.nb-italic { font-style: italic; }
+
+/* 贴纸 / 元素库 */
+.nb-stickers { display: flex; gap: 16px; flex-wrap: wrap; }
+.nb-sticker-group { display: flex; flex-direction: column; gap: 5px; }
+.nb-sticker-grid { display: grid; grid-template-columns: repeat(6, 30px); gap: 3px; }
+.nb-sticker {
+  width: 30px; height: 30px; padding: 0; font-size: 17px; line-height: 1;
+  border: 1px solid transparent; border-radius: 8px; background: var(--bg-soft);
+}
+.nb-sticker:hover { background: var(--accent-soft); border-color: var(--accent); transform: scale(1.1); }
+
+/* ============================================================================
+   5. 覆盖层面板（页面管理 / 大纲 / 学习集 / 录音 / 纸张）
+   ============================================================================ */
+
+.nb-mask {
+  position: absolute; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  background: rgba(24, 20, 16, .42);
+  backdrop-filter: blur(2px);
+}
+.nb-mask[hidden] { display: none; }
+.nb-panel {
+  width: min(760px, 96vw); max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong); border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+}
+.nb-panel-head {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 14px 16px; border-bottom: 1px solid var(--line);
+}
+.nb-panel-head h3 { margin: 0; font-size: 16px; flex: 1; }
+.nb-panel-body { padding: 16px; overflow: auto; }
+.nb-panel-body > * + * { margin-top: 12px; }
+.nb-panel-foot {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-top: 1px solid var(--line); background: var(--bg-soft);
+}
+.nb-panel-foot .nb-hint { margin-right: auto; }
+.nb-field { display: flex; flex-direction: column; gap: 6px; }
+.nb-field > span { font-size: 12px; color: var(--text-faint); }
+.nb-divider { height: 1px; background: var(--line); margin: 14px 0; }
+.nb-panel .nb-input, .nb-panel .nb-select { width: 100%; }
+
+/* ---------- 页面管理：大缩略图网格 ---------- */
+.nb-pages-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(122px, 1fr)); gap: 12px; }
+.nb-pages-item { border: 1px solid var(--line); border-radius: 10px; padding: 7px; background: var(--bg-soft); }
+.nb-pages-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.nb-pages-thumbwrap { position: relative; }
+.nb-pages-thumb {
+  display: block; width: 100%; height: auto; border-radius: 3px; background: var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .08);
+  cursor: pointer;
+}
+.nb-pages-no { position: absolute; left: 5px; top: 4px; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.nb-pages-mark { position: absolute; right: 4px; top: 3px; font-size: 11px; }
+.nb-pages-ops { display: flex; justify-content: space-between; gap: 1px; margin-top: 5px; }
+.nb-pages-ops .nb-btn { padding: 3px 6px; font-size: 12.5px; }
+
+/* ---------- 大纲 ---------- */
+.nb-outline { display: flex; flex-direction: column; gap: 4px; }
+.nb-outline-item {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  border: 1px solid transparent; border-radius: 9px; padding: 9px 11px;
+  background: var(--bg-soft); color: var(--text); font-size: 13.5px; cursor: pointer;
+}
+.nb-outline-item:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.nb-outline-no {
+  flex: none; width: 26px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--bg-elev); border: 1px solid var(--line); font-size: 11.5px; color: var(--text-faint);
+}
+.nb-outline-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 学习集（闪卡） ---------- */
+.nb-study { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.nb-card-box {
+  width: min(460px, 100%); min-height: 190px; cursor: pointer;
+  display: grid; place-items: center; text-align: center;
+  padding: 22px 20px;
+  background: var(--paper); color: var(--nb-paper-ink);
+  border: 1px solid var(--line-strong); border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .08);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.nb-card-box:hover { transform: translateY(-2px); }
+.nb-face { grid-area: 1 / 1; font-size: 20px; line-height: 1.6; word-break: break-word; transition: opacity .22s ease, transform .22s ease; }
+.nb-face.empty { color: var(--text-faint); font-size: 15px; }
+.nb-face.back { opacity: 0; transform: rotateY(-12deg); pointer-events: none; }
+.nb-card-box.flipped .nb-face.front { opacity: 0; transform: rotateY(12deg); }
+.nb-card-box.flipped .nb-face.back { opacity: 1; transform: none; }
+.nb-study-ops { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.nb-good { border-color: #2E9E63; color: #2E9E63; }
+.nb-good:hover { background: rgba(46, 158, 99, .12); border-color: #2E9E63; color: #2E9E63; }
+.nb-bad { border-color: var(--c-danger); color: var(--c-danger); }
+.nb-bad:hover { background: color-mix(in srgb, var(--c-danger) 12%, transparent); border-color: var(--c-danger); color: var(--c-danger); }
+.nb-card-add { align-items: stretch; }
+.nb-card-add .nb-input { flex: 1; min-width: 140px; }
+.nb-cards-list { display: flex; flex-direction: column; gap: 5px; max-height: 240px; overflow: auto; }
+.nb-cards-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-soft);
+  font-size: 13px;
+}
+.nb-cards-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+
+/* ---------- 纸张设置 ---------- */
+.nb-paper-grid { display: flex; flex-direction: column; gap: 10px; }
+.nb-paper-group { display: flex; flex-direction: column; gap: 5px; }
+.nb-paper-custom[hidden] { display: none; }
+.nb-paper-custom .nb-field { flex: 1; margin: 0; }
+
+/* ============================================================================
+   6. 录音面板
+   ============================================================================ */
+
+.nb-audio-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
+  background: var(--line-strong);
+}
+.nb-audio-dot.on { background: var(--c-danger); animation: nb-pulse 1s infinite; }
+@keyframes nb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.nb-audio-time { font-size: 12.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.nb-audio-list { display: flex; flex-direction: column; gap: 8px; }
+.nb-audio-item {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft);
+}
+.nb-audio-glyph { font-size: 16px; }
+.nb-audio-meta { display: flex; flex-direction: column; gap: 1px; min-width: 150px; flex: 1; }
+.nb-audio-meta b { font-size: 13px; }
+.nb-audio-bar { flex: 1; min-width: 90px; height: 6px; accent-color: var(--accent); }
+
+/* ============================================================================
+   7. 演示模式
+   ============================================================================ */
+
+.nb-present .nb-top,
+.nb-present .nb-thumbs,
+.nb-present .nb-tools,
+.nb-present .nb-props,
+.nb-present .nb-nav { display: none !important; }
+.nb-present { background: #0E0E10; border: 0; border-radius: 0; height: 100vh; }
+.nb-present .nb-main { background: #0E0E10; }
+.nb-present .nb-column { padding: 10px; overflow: hidden !important; }
+.nb-present .nb-lane { height: 100%; justify-content: center; gap: 0; }
+.nb-present .nb-page { box-shadow: 0 24px 70px rgba(0, 0, 0, .6); }
+.nb-present .nb-toolbar { display: none; }
+
+.nb-present-bar {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; z-index: 50;
+  padding: 7px 12px; border-radius: 999px;
+  background: rgba(20, 18, 16, .78); color: #F5F2EC;
+  border: 1px solid rgba(255, 255, 255, .16);
+  backdrop-filter: blur(10px);
+}
+.nb-present-bar .nb-btn { background: transparent; border-color: rgba(255, 255, 255, .22); color: #F5F2EC; }
+.nb-present-bar .nb-btn:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.nb-present-bar .nb-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nb-present-count { font-size: 12.5px; font-variant-numeric: tabular-nums; padding: 0 4px; }
+
+.nb-hint {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+  z-index: 50; font-size: 12px; color: rgba(255, 255, 255, .62);
+  background: rgba(20, 18, 16, .6); border-radius: 999px; padding: 4px 12px;
+}
+.nb-hint span { color: #fff; font-weight: 600; }
+.nb-hint[hidden] { display: none; }
+
+/* ============================================================================
+   8. page.mjs 自建浮层的样式（放大窗 / 原位文本编辑）
+   ============================================================================ */
+
+.pg-zoom {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 8; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 8px 10px; border-radius: 12px;
+  background: var(--bg-elev); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+}
+.pg-zoom[hidden] { display: none; }
+.pg-zoom-bar { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); }
+.pg-zoom-bar button {
+  border: 1px solid var(--line-strong); background: var(--paper); color: var(--text);
+  border-radius: 8px; padding: 3px 9px; font-size: 12px; cursor: pointer;
+}
+.pg-zoom-bar button:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.pg-zoom-label { color: var(--text-faint); }
+.pg-zoom-canvas {
+  display: block; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--paper); cursor: crosshair; touch-action: none;
+}
+.pg-text-edit {
+  position: absolute; z-index: 10;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  color: var(--nb-paper-ink);
+  border: 1.5px dashed var(--accent); border-radius: 6px;
+  padding: 2px 4px; resize: none; overflow: hidden; outline: none;
+  font-family: inherit; min-height: 1.6em;
+}
+
+/* ============================================================================
+   9. 响应式：窄屏把缩略图栏收成抽屉，工具条横向滚动
+   ============================================================================ */
+
+@media (max-width: 860px) {
+  .nb-wrap { height: calc(100vh - 96px); min-height: 440px; }
+  .nb-titlewrap { max-width: 34vw; }
+  .nb-top { padding: 7px 9px; gap: 6px; }
+  .nb-top .nb-btn { padding: 6px 9px; font-size: 12.5px; }
+
+  /* 缩略图栏：左下角浮层抽屉 */
+  .nb-thumbs {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 168px;
+    z-index: 40; transform: translateX(-104%);
+    box-shadow: var(--shadow-lg); border-right: 1px solid var(--line-strong);
+  }
+  .nb-thumbs.open { transform: none; }
+  .nb-column { padding: 10px 10px 168px; }
+  .nb-column.nb-hz { padding: 10px 10px 168px; }
+
+  .nb-toolbar { max-width: calc(100% - 12px); bottom: 8px; }
+  .nb-tools { border-radius: 16px; padding: 6px 8px; }
+  .nb-tools-row { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; max-width: 100%; }
+  .nb-tool { min-width: 40px; height: 40px; padding: 0 5px; }
+  .nb-tool-label { display: none; }
+  .nb-tool-glyph { font-size: 19px; }
+  .nb-tools-side { flex-wrap: wrap; border-top: 1px solid var(--line); }
+  .nb-status { display: none; }
+  .nb-props { max-height: 46vh; gap: 12px; padding: 9px 10px; }
+}
+
+@media (max-width: 560px) {
+  .nb-titlewrap { max-width: 42vw; }
+  .nb-top .nb-back { padding: 6px 8px; }
+  .nb-page { box-shadow: 0 1px 3px rgba(0, 0, 0, .14), 0 6px 16px rgba(0, 0, 0, .10); }
+  .nb-pages-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+}
+
+/* ============================================================================
+   10. 打印：只留页面，去掉所有 UI
+   ============================================================================ */
+
+@media print {
+  @page { margin: 0; }
+
+  .nb-top,
+  .nb-thumbs,
+  .nb-tools,
+  .nb-toolbar,
+  .nb-nav,
+  .nb-panel,
+  .nb-mask,
+  .nb-hint,
+  .nb-present-bar,
+  .pg-zoom,
+  .pg-text-edit { display: none !important; }
+
+  html, body { background: #fff !important; }
+  .nb-wrap {
+    height: auto !important; min-height: 0 !important; overflow: visible !important;
+    background: #fff !important; border: 0 !important; border-radius: 0 !important;
+  }
+  .nb-main, .nb-body, .nb-column {
+    display: block !important; overflow: visible !important;
+    background: #fff !important; padding: 0 !important; height: auto !important;
+  }
+  .nb-lane { display: block !important; gap: 0 !important; }
+  .nb-page {
+    box-shadow: none !important; outline: none !important;
+    border-radius: 0 !important; margin: 0 !important;
+    break-inside: avoid; page-break-inside: avoid; page-break-after: always;
+    width: 100% !important; height: auto !important;
+  }
+  .nb-page .nb-edit { display: none !important; }
+  .nb-static { width: 100% !important; height: auto !important; }
+}
+
+/* 尊重「减少动态效果」的系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  .nb-thumbs, .nb-props, .nb-card-box, .nb-face { transition: none !important; animation: none !important; }
+}

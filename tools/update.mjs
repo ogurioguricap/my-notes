@@ -95,18 +95,22 @@ head(10, 'PWA 可安装性自检（manifest / 图标 / Service Worker）');
 const pwa = spawnSync(process.execPath, ['tools/test-pwa.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const pwaOk = pwa.status === 0;
 
-head(11, '桌面脚本自检（VBS / BAT 语法与编码）');
+head(11, 'GoodNotes 模式实测（笔记本 / 页面 / 四种笔 / 闪卡 / 录音 / PDF）');
+const nbTest = spawnSync(process.execPath, ['tools/test-notebook.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
+const notebookOk = nbTest.status === 0;
+
+head(12, '桌面脚本自检（VBS / BAT 语法与编码）');
 const desk = spawnSync(process.execPath, ['tools/test-desktop-scripts.mjs'], { cwd: ROOT, encoding: 'utf8', stdio: 'inherit' });
 const deskOk = desk.status === 0;
 
-head(12, '离线便携版单文件');
+head(13, '离线便携版单文件');
 const { main: buildPortable } = await import('./build-portable.mjs');
 const portableOk = buildPortable();
 
-if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !inkOk || !pwaOk || !deskOk || !portableOk) {
+if (!selfOk || !modOk || !wysiwygOk || !searchOk || !uiOk || !runtimeOk || !inkOk || !pwaOk || !notebookOk || !deskOk || !portableOk) {
   console.log('\n✗ 检查未全部通过，已停止（不会提交有问题的版本）');
   console.log(
-    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  标注编辑：${inkOk ? 'OK' : 'FAIL'}  PWA：${pwaOk ? 'OK' : 'FAIL'}  桌面脚本：${deskOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
+    `  自检：${selfOk ? 'OK' : 'FAIL'}  模块：${modOk ? 'OK' : 'FAIL'}  往返：${wysiwygOk ? 'OK' : 'FAIL'}  检索：${searchOk ? 'OK' : 'FAIL'}  界面：${uiOk ? 'OK' : 'FAIL'}  运行时：${runtimeOk ? 'OK' : 'FAIL'}  标注编辑：${inkOk ? 'OK' : 'FAIL'}  笔记本：${notebookOk ? 'OK' : 'FAIL'}  PWA：${pwaOk ? 'OK' : 'FAIL'}  桌面脚本：${deskOk ? 'OK' : 'FAIL'}  便携版：${portableOk ? 'OK' : 'FAIL'}`
   );
   process.exit(1);
 }
