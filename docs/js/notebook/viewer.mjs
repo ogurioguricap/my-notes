@@ -26,10 +26,10 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage } from './study.mjs';
 import { applyEdit } from '../../lib/site-build.mjs';
 import {
-  OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT,
+  OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT, ocrImageDataUrl,
 } from './ocr.mjs';
 import { pushNotebook, pullNotebook, pushAll, fetchPublicIndex, pullFromPublicSite, PUBLIC_INDEX } from './sync.mjs';
 import { gh } from '../editor.mjs';
@@ -171,6 +171,7 @@ export class NotebookView {
         <button type="button" data-act="exportPdf" data-note="print" title="放大看细节、正式打印，体积约 9 倍">导出 PDF · 打印级（288dpi）</button>
         <hr>
         <button type="button" data-act="exportPng">导出当前页 PNG（2×）</button>
+        <button type="button" data-act="exportLong">导出长图（整本拼一张 PNG）</button>
         <button type="button" data-act="exportMd">导出 Markdown（.md）</button>
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
         <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
@@ -228,10 +229,11 @@ export class NotebookView {
     <div class="nb-toolbar" id="nbToolbar">
       <div class="nb-props" id="nbProps" hidden></div>
       <div class="nb-tools" id="nbTools">
-        <div class="nb-tools-row">
-          ${TOOL_META.map((t) => `<button class="nb-tool" type="button" data-tool="${t.id}" title="${nbEsc(t.label)}">
+        <div class="nb-tools-row" data-role="tools">
+          ${TOOL_META.map((t) => `<button class="nb-tool" type="button" data-tool="${t.id}"${['sticker', 'tape', 'laser', 'ruler'].includes(t.id) ? ' data-more="1"' : ''} title="${nbEsc(t.label)}">
             <span class="nb-tool-glyph">${t.glyph}</span><span class="nb-tool-label">${nbEsc(t.label)}</span>
           </button>`).join('')}
+          <button class="nb-tool nb-tool-more" type="button" data-act="toolsMore" title="更多工具">⋯</button>
         </div>
         <div class="nb-tools-row nb-tools-side">
           <button class="nb-btn icon" type="button" data-act="zoomToggle" title="放大窗">🔍</button>
@@ -271,6 +273,7 @@ export class NotebookView {
     root.addEventListener('input', (e) => this.onInput(e));
     root.addEventListener('change', (e) => this.onInput(e));
     root.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+    this.bindLongPressTools();   // 长按画笔/荧光笔 → 循环笔型
     if (this.titleInput) {
       this.titleInput.addEventListener('blur', () => this.commitTitle());
       this.titleInput.addEventListener('keydown', (e) => {
@@ -438,6 +441,15 @@ export class NotebookView {
       e.setPenDoubleTap(next);
       return true;
     }
+    if (act === 'toolsMore') {
+      this.toolsMore = !this.toolsMore;
+      const row = q(this.root, '[data-role="tools"]');
+      if (row) row.classList.toggle('more-open', !!this.toolsMore);
+      this.toast(this.toolsMore ? '已展开更多工具（贴纸 / 胶带 / 激光笔 / 尺子）' : '收起更多工具');
+      return true;
+    }
+    if (act === 'exportLong') { this.exportLongImage(); return true; }
+    if (act === 'ocrSelection') { this.recognizeSelection(); return true; }
     if (act === 'syncPush') { this.syncPush(); return true; }
     if (act === 'syncPull') { this.syncPull(); return true; }
     if (act === 'exportMd') { this.exportMarkdown(); return true; }
@@ -1450,6 +1462,7 @@ export class NotebookView {
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="front">置顶</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="back">置底</button>
           <button class="nb-btn" type="button" data-act="cropImage">裁剪图片</button>
+          <button class="nb-btn" type="button" data-act="ocrSelection" title="只识别圈中的这一块手写，并落成文本框">识别选区</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="peel">撕胶带</button>
         </div>
       </div>
@@ -1772,6 +1785,87 @@ export class NotebookView {
     ed.redraw();
     this.setStatus(ed.info());
     this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
+  }
+
+  /* ---------- 长图导出 / 选区 OCR / 移动端小工具 ---------- */
+
+  async exportLongImage() {
+    if (!this.nb) return;
+    this.flush();
+    this.toast('正在拼接长图…');
+    try {
+      const blob = await buildLongImage(this.nb, { scale: 1, gap: 14, renderPage });
+      if (!blob) { this.toast('长图生成失败（当前环境不支持 canvas）'); return; }
+      downloadBlob(blob, `${safeName(this.nb.title)}-长图.png`);
+      this.toast(`长图已导出（${this.nb.pages.length} 页拼一张 · ${(blob.size / 1048576).toFixed(1)} MB）`);
+    } catch (e) {
+      this.toast('导出长图失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  /** 只识别套索圈中的那一块（结果直接落成文本框，贴在选区上方） */
+  async recognizeSelection() {
+    const ed = this.editor;
+    if (!ed) return;
+    if (!ed.selection.size) { this.toast('先用套索圈住要识别的手写内容'); return; }
+    const key = getOcrKey();
+    if (!key) { this.toast('先在「识别手写文字（OCR）」里填一次 API Key'); return; }
+    const dataUrl = ed.selectionDataUrl({ scale: 2 });
+    if (!dataUrl) { this.toast('这块内容没法渲染成图片（可能只有胶带或图片）'); return; }
+    this.toast('正在识别选区…');
+    try {
+      const raw = await ocrImageDataUrl(dataUrl, { apiKey: key, model: this.ocrModel });
+      const text = String(raw || '').trim();
+      if (!text) { this.toast('这一块没识别出文字'); return; }
+      const box = ed.selectionBounds() || { x0: 0.06, y0: 0.06 };
+      ed.snapshot('选区识别');
+      ed.items.push({
+        kind: 'text',
+        id: 'ocr' + Date.now().toString(36),
+        x: Math.max(0, Math.min(0.9, box.x0)),
+        y: Math.max(0, box.y0 - 0.035),
+        text,
+        size: 0.02,
+        color: '#2B2723',
+        font: 'sans', bold: false, italic: false, align: 'left', rot: 0,
+      });
+      ed.commit('选区识别');
+      ed.redraw();
+      this.setStatus(ed.info());
+      this.toast(`已识别为文本框：${text.slice(0, 24)}${text.length > 24 ? '…' : ''}（可拖动、可撤销）`);
+    } catch (e) {
+      this.toast('选区识别失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  /** 长按画笔/荧光笔：在笔型之间循环（移动端省一步进属性面板） */
+  bindLongPressTools() {
+    const row = q(this.root, '[data-role="tools"]');
+    if (!row || !row.addEventListener) return;
+    let timer = 0;
+    const start = (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('[data-tool]') : null;
+      if (!btn) return;
+      const id = btn.dataset.tool;
+      if (id !== 'pen' && id !== 'highlighter') return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = 0;
+        const ed = this.editor;
+        if (!ed) return;
+        const order = PEN_TYPES.map((p) => p.id);
+        const next = order[(order.indexOf(ed.penType) + 1) % order.length];
+        ed.setPenType(next);
+        this.setStatus(ed.info());
+        this.renderProps();
+        this.toast(`笔型：${(PEN_TYPES.find((p) => p.id === next) || {}).label}`);
+      }, 450);
+    };
+    const stop = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+    row.addEventListener('pointerdown', start);
+    row.addEventListener('pointerup', stop);
+    row.addEventListener('pointercancel', stop);
+    row.addEventListener('pointerleave', stop);
   }
 
   /* ---------- Markdown 导出 / 发到仓库 / 存模板 ---------- */
@@ -2453,18 +2547,20 @@ export class NotebookView {
     this.toast(`正在生成 PDF（${q.label}，${total} 页）…`);
     try {
       const pages = (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [], ocr: p.ocr || null }));
+      const outlines = outlinesFromNotebook(this.nb);
       const blob = await buildPdf(pages, {
         title: this.nb.title || '笔记本',
         qualityId: q.id,
         dropTape: !!this.dropTape,
         textLayer: this.textLayer !== false,
+        outlines,
         renderPageImpl: renderPage,
         onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
       });
       if (!blob) { this.toast('PDF 生成失败'); return; }
       const mb = (blob.size / 1048576).toFixed(1);
       downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}.pdf`);
-      const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}`;
+      const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}${outlines.length ? ` · 目录 ${outlines.length} 项` : ''}`;
       this.toast(`PDF 已导出（${total} 页 · ${q.label} · ${mb} MB${extras}）`);
     } catch (e) {
       this.toast('导出 PDF 失败：' + ((e && e.message) || '未知错误'));

@@ -60,14 +60,21 @@ export function pdfFromImages(images, o = {}) {
   const n = Math.max(1, pages.length);
 
   // 对象编号：1 目录 / 2 页树 / 之后每页 3 个对象（Page、Contents、Image）
-  // 若有文本层，最后再补 3 个文档级对象：Type0 字体 / 后代 CIDFont / ToUnicode 映射
+  // 有文本层再补 3 个文档级对象（Type0 字体 / 后代 CIDFont / ToUnicode），有书签再补 1+N 个
   const textPages = Array.isArray(o.textPages) ? o.textPages : [];
   const hasText = textPages.some((s) => s && String(s).trim());
+  const outlineList = (Array.isArray(o.outlines) ? o.outlines : [])
+    .filter((x) => x && x.title && Number.isFinite(Number(x.pageIndex)))
+    .slice(0, 200);
+  const hasOutlines = outlineList.length > 0;
   const baseCount = 2 + n * 3;
   const fontNum = baseCount + 1;
   const descNum = baseCount + 2;
   const uniNum = baseCount + 3;
-  const objCount = hasText ? baseCount + 3 : baseCount;
+  const textCount = hasText ? 3 : 0;
+  const outlineRootNum = baseCount + textCount + 1;
+  const outlineFirstNum = outlineRootNum + 1;
+  const objCount = baseCount + textCount + (hasOutlines ? 1 + outlineList.length : 0);
   const push = (num, body) => {
     offsets[num] = buf.length;
     buf.push(`${num} 0 obj\n${body}\nendobj\n`);
@@ -77,7 +84,7 @@ export function pdfFromImages(images, o = {}) {
 
   const kids = [];
   for (let i = 0; i < n; i++) kids.push(`${3 + i * 3} 0 R`);
-  push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  push(1, `<< /Type /Catalog /Pages 2 0 R${hasOutlines ? ` /Outlines ${outlineRootNum} 0 R /PageMode /UseOutlines` : ''} >>`);
   push(2, `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${n} >>`);
 
   for (let i = 0; i < n; i++) {
@@ -105,6 +112,23 @@ export function pdfFromImages(images, o = {}) {
     push(descNum, '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor << /Type /FontDescriptor /FontName /Helvetica /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >> /CIDToGIDMap /Identity /DW 1000 >>');
     const cmap = o.toUnicode || '';
     push(uniNum, `<< /Length ${cmap.length} >>\nstream\n${cmap}\nendstream`);
+  }
+
+  if (hasOutlines) {
+    const last = outlineFirstNum + outlineList.length - 1;
+    push(outlineRootNum, `<< /Type /Outlines /First ${outlineFirstNum} 0 R /Last ${last} 0 R /Count ${outlineList.length} >>`);
+    outlineList.forEach((it, i) => {
+      const num = outlineFirstNum + i;
+      const pageNum = 3 + Math.min(n - 1, Math.max(0, Math.round(Number(it.pageIndex)))) * 3;
+      const parts = [
+        `/Title ${pdfTitleHex(it.title)}`,
+        `/Parent ${outlineRootNum} 0 R`,
+        `/Dest [${pageNum} 0 R /Fit]`,
+      ];
+      if (i > 0) parts.push(`/Prev ${num - 1} 0 R`);
+      if (i < outlineList.length - 1) parts.push(`/Next ${num + 1} 0 R`);
+      push(num, `<< ${parts.join(' ')} >>`);
+    });
   }
 
   const xrefAt = buf.length;
@@ -234,6 +258,7 @@ export async function buildPdf(pages, o = {}) {
     title: o.title,
     textPages,
     toUnicode: cmap,
+    outlines: o.outlines || [],
   });
   return new Blob([bytes], { type: 'application/pdf' });
 }
@@ -308,6 +333,72 @@ export function notebookToMarkdown(nb, {
 export function markdownTarget(nb) {
   const slug = markdownSlug((nb && nb.title) || 'notebook');
   return { slug, source: `content/${slug}.md` };
+}
+
+/* ============================ 多页长图（发聊天用） ============================ */
+
+/** 竖排拼接的尺寸计算（纯函数，便于测试） */
+export function longImageLayout(pages, { scale = 1, gap = 12 } = {}) {
+  const dims = (pages || []).map((p) => paperDims(p && p.paper));
+  if (!dims.length) return { width: 1, height: 1, offsets: [], pages: [], gap };
+  const s = Math.max(0.2, Math.min(4, Number(scale) || 1));
+  const pageSizes = dims.map((d) => ({ w: Math.max(1, Math.round(d.w * s)), h: Math.max(1, Math.round(d.h * s)) }));
+  const width = Math.max(...pageSizes.map((d) => d.w));
+  const offsets = [];
+  let y = 0;
+  pageSizes.forEach((d, i) => {
+    offsets.push(y);
+    y += d.h + (i < pageSizes.length - 1 ? gap : 0);
+  });
+  return { width, height: Math.max(1, y), offsets, pages: pageSizes, gap, scale: s };
+}
+
+/** 画布有尺寸上限：太高就把倍率降下来（保住「能生成」这件事） */
+export function fitLongImage(layout, { maxDim = 12000 } = {}) {
+  const h = Math.max(1, layout.height);
+  if (h <= maxDim) return { ...layout, adjusted: false };
+  const n = layout.pages.length;
+  const gap = Math.max(2, Math.round(layout.gap * 0.5));
+  const totalGap = gap * Math.max(0, n - 1);
+  const contentH = layout.pages.reduce((s, p) => s + p.h, 0) || 1;
+  const k = Math.max(0.05, (maxDim - totalGap) / contentH);   // 把间距也算进去，结果一定不超上限
+  const scaled = longImageLayout(
+    layout.pages.map((p) => ({ paper: { size: 'custom', width: Math.round(p.w * k), height: Math.round(p.h * k) } })),
+    { scale: 1, gap },
+  );
+  return { ...scaled, adjusted: true, shrink: k };
+}
+
+/** 整本笔记本 → 一张竖排长图（PNG Blob） */
+export async function buildLongImage(nb, { scale = 1, gap = 12, background = '#ffffff', renderPage, maxDim = 12000 } = {}) {
+  if (typeof document === 'undefined' || typeof renderPage !== 'function' || !nb) return null;
+  const pages = nb.pages || [];
+  if (!pages.length) return null;
+  const paperFor = (p) => p.paper || nb.paper || { template: 'lined', size: 'a4' };
+  const full = longImageLayout(pages.map((p) => ({ paper: paperFor(p) })), { scale, gap });
+  const layout = fitLongImage(full, { maxDim });
+  const k = layout.adjusted && full.height ? layout.height / full.height : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = layout.width;
+  canvas.height = layout.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < pages.length; i++) {
+    const off = document.createElement('canvas');
+    renderPage(off, { paper: paperFor(pages[i]), items: pages[i].items || [], scale: layout.scale, dpr: 1 });
+    try { ctx.drawImage(off, 0, layout.offsets[i]); } catch (e) { /* 单页失败不影响其它页 */ }
+  }
+  return new Promise((resolve) => {
+    if (canvas.toBlob) canvas.toBlob((b) => resolve(b), 'image/png');
+    else {
+      try {
+        const url = canvas.toDataURL('image/png');
+        resolve(new Blob([base64ToBytes(url)], { type: 'image/png' }));
+      } catch (e) { resolve(null); }
+    }
+  });
 }
 
 /* ============================ 批量导出（资料库多选用） ============================ */
@@ -404,6 +495,28 @@ export async function blobToDataUrl(blob) {
       fr.readAsDataURL(blob);
     } catch (e) { resolve(''); }
   });
+}
+
+/** PDF 书签用的标题字符串：中文要走 UTF-16BE + BOM，否则阅读器里会乱码 */
+export function pdfTitleHex(title) {
+  const t = String(title == null ? '' : title).replace(/[()\\]/g, ' ').trim().slice(0, 120);
+  if (!t) return '';
+  return `<FEFF${utf16beHex(t)}>`;
+}
+
+/** 笔记本 → PDF 书签项（书签页 + 有标题的页；一个都没有就不写目录，保持阅读器左侧干净） */
+export function outlinesFromNotebook(nb, { everyPageIfEmpty = false } = {}) {
+  const pages = (nb && nb.pages) || [];
+  const items = [];
+  pages.forEach((p, i) => {
+    const marked = p.bookmarked || (p.title && String(p.title).trim());
+    if (!marked) return;
+    items.push({ title: String(p.title || '').trim() || `第 ${i + 1} 页（书签）`, pageIndex: i });
+  });
+  if (!items.length && everyPageIfEmpty) {
+    pages.forEach((p, i) => items.push({ title: `第 ${i + 1} 页`, pageIndex: i }));
+  }
+  return items;
 }
 
 /* ============================ PDF 文本层（可搜索 / 可复制） ============================ */

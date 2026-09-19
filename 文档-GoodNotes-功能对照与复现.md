@@ -18,7 +18,16 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **259 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **284 项断言，当前全绿** |
+
+### 第七批交付（PDF 目录 / 长图 / 选区识别 / 移动端手势）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **PDF 书签目录** | `study.mjs` 的 `pdfTitleHex / outlinesFromNotebook` + `pdfFromImages({ outlines })` | 导出时把「书签页 + 有标题的页」写成 PDF `/Outlines`（`/PageMode /UseOutlines`，阅读器左侧直接跳页）；中文标题走 UTF-16BE+BOM，不会乱码；没有书签就不硬凑目录（保持干净），需要时可以按页编号。带目录后对象偏移与 startxref 仍逐项校验通过 |
+| **多页长图导出** | `study.mjs` 的 `longImageLayout / fitLongImage / buildLongImage` | 整本竖排拼成一张 PNG（发聊天/贴群）；宽度取最宽页、间距可设；页数太多导致高度超画布上限时**自动降倍率**（把间距也算进去，保证一定不超限） |
+| **选区 OCR** | `page.mjs` 的 `selectionCropGeometry / selectionBounds / selectionDataUrl` + 套索面板「识别选区」 | 只把圈中的那一块渲染成白底图（只画选中的对象，避免格线干扰识别）→ 交给 Qwen3-VL → 结果**直接落成可编辑文本框**（贴在选区上方，可拖动、可撤销）。比整页识别更省 token、也更准 |
+| **移动端手感** | `page.mjs` 的 `pinchScale` + `_bindCanvas` 双指捏合；`viewer.mjs` 的 `toolsMore` 两段式工具条与 `bindLongPressTools` 长按切笔型；`notebook-viewer.css` | 手机（≤860px）工具条两段式：常用一排 + 「⋯」展开贴纸/胶带/激光笔/尺子；**双指捏合缩放**页面（0.4×~4×，捏合时不落笔）；**长按画笔/荧光笔**循环切笔型（圆珠笔→钢笔→毛笔→铅笔） |
 
 ### 第六批交付（OCR 行位置 / 模板库 / Markdown 导出）
 

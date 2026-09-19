@@ -1000,5 +1000,99 @@ head('OCR 行坐标 / 模板库 / Markdown 导出');
   }
 }
 
+/* ============================ 11. PDF 目录 / 长图 / 选区 OCR / 手势 ============================ */
+head('PDF 目录 · 长图 · 选区识别 · 移动端手势');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 5, 5, 0xFF, 0xD9]);
+  // --- PDF 书签/大纲 ---
+  expect('书签标题走 UTF-16BE（中文在阅读器里不乱码）', /^<FEFF[0-9A-F]+>$/.test(studyMod.pdfTitleHex('第一章')));
+  const nbOut = { title: '目录本', pages: [{ bookmarked: true, title: '第一章' }, {}, { bookmarked: true }, { title: '第四章' }] };
+  const outs = studyMod.outlinesFromNotebook(nbOut);
+  expect('目录项 = 书签页 + 有标题的页', outs.length === 3 && outs[0].title === '第一章' && outs[2].title === '第四章');
+  expect('没有书签/标题就不硬凑目录', studyMod.outlinesFromNotebook({ pages: [{}, {}] }).length === 0);
+  expect('需要时也能给每页编一个', studyMod.outlinesFromNotebook({ pages: [{}, {}] }, { everyPageIfEmpty: true }).length === 2);
+  const pdfOut = studyMod.pdfFromImages([{ jpeg, w: 595, h: 842 }, { jpeg, w: 595, h: 842 }], { outlines: outs, title: '目录本' });
+  const outTxt = Buffer.from(pdfOut).toString('latin1');
+  expect('PDF 里有 /Outlines 与 /PageMode', outTxt.includes('/Outlines') && outTxt.includes('/PageMode /UseOutlines'));
+  expect('目录项数写对、前后项串起来', /\/Type \/Outlines \/First \d+ 0 R \/Last \d+ 0 R \/Count 3/.test(outTxt) && outTxt.includes('/Next') && outTxt.includes('/Prev'));
+  expect('每个目录项指向对应页（/Dest）', (outTxt.match(/\/Dest \[\d+ 0 R \/Fit\]/g) || []).length === 3);
+  expect('带目录时 PDF 结构依然正确（对象偏移与 startxref）', (() => {
+    const xref = /xref\n0 \d+\n([\s\S]*?)trailer/.exec(outTxt);
+    if (!xref) return false;
+    const offs = xref[1].trim().split('\n').map((l) => Number(l.slice(0, 10)));
+    const allOk = offs.slice(1).every((off, i) => outTxt.startsWith(`${i + 1} 0 obj`, off));
+    return allOk && Number(/startxref\n(\d+)/.exec(outTxt)[1]) === outTxt.indexOf('xref');
+  })());
+  expect('没书签时 PDF 里没有 /Outlines', !Buffer.from(studyMod.pdfFromImages([{ jpeg, w: 100, h: 100 }], {})).toString('latin1').includes('/Outlines'));
+
+  // --- 多页长图 ---
+  const lay = studyMod.longImageLayout([
+    { paper: { size: 'a4' } }, { paper: { size: 'square' } },
+  ], { scale: 1, gap: 10 });
+  expect('长图布局：宽取最宽、高为累加 + 间距', lay.width === 900 && lay.height === 1123 + 10 + 900 && lay.offsets.join(',') === '0,1133');
+  const lay2 = studyMod.longImageLayout([{ paper: { size: 'a4' } }], { scale: 2, gap: 0 });
+  expect('倍率作用于每页尺寸', lay2.pages[0].w === 1588 && lay2.pages[0].h === 2246);
+  expect('页数太多时自动降倍率（画布有上限）', (() => {
+    const big = studyMod.longImageLayout(Array.from({ length: 40 }, () => ({ paper: { size: 'a4' } })), { scale: 1, gap: 0 });
+    const fit = studyMod.fitLongImage(big, { maxDim: 12000 });
+    return fit.adjusted === true && fit.height <= 12000 && fit.width < big.width;
+  })());
+  expect('空笔记本不会算出 0 尺寸画布', studyMod.longImageLayout([]).height === 1);
+
+  // --- 选区识别（几何 + 调用链） ---
+  const box = { x0: 0.2, y0: 0.3, x1: 0.6, y1: 0.5 };
+  const geo = pageMod.selectionCropGeometry(box, { pageW: 800, pageH: 1000, scale: 2, pad: 0.01 });
+  expect('选区裁剪几何：尺寸按选区 × 倍率', geo.width === Math.round((0.61 - 0.19) * 800 * 2) && geo.height === Math.round((0.51 - 0.29) * 1000 * 2));
+  expect('选区裁剪几何：贴边时不会越界', (() => {
+    const g = pageMod.selectionCropGeometry({ x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }, { pageW: 800, pageH: 1000, scale: 1, pad: 0.05 });
+    return g.x0 === 0 && g.y0 === 0 && g.x1 === 1 && g.y1 === 1;
+  })());
+  expect('没有选区时几何返回 null', pageMod.selectionCropGeometry(null) === null);
+  {
+    const ed11 = new pageMod.PageEditor({
+      canvas: makeStub('canvas'), host: makeStub('host'),
+      getPage: () => ({ pageId: 'p', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: [] }),
+      setItems: () => {}, onToast: () => {},
+    });
+    ed11.setPage(0);
+    ed11.items = [{ kind: 'stroke', id: 's', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.2, 0.3], [0.5, 0.45]] }];
+    expect('没选中时拿不到选区盒子', ed11.selectionBounds() === null && ed11.selectionDataUrl() === '');
+    ed11.selection = new Set(['s']);
+    const sb = ed11.selectionBounds();
+    expect('选中后能算出选区盒子', sb && sb.x0 < 0.21 && sb.x1 > 0.49);
+    expect('选区能被渲染成图片（桩环境不抛错；真机返回 data URL 字符串）', (() => {
+      try {
+        const r = ed11.selectionDataUrl({ scale: 1 });
+        return r !== undefined && r !== null;
+      } catch (e) { return false; }
+    })());
+  }
+
+  // --- 移动端手势 ---
+  expect('双指捏合：放大 2 倍距离 → 视口 ×2', Math.abs(pageMod.pinchScale(100, 200, 1) - 2) < 1e-9);
+  expect('双指捏合：有上下限', pageMod.pinchScale(100, 10000, 1) === 4 && pageMod.pinchScale(100, 10, 1) === 0.4);
+  expect('双指捏合：距离太小时不动', pageMod.pinchScale(2, 200, 1.5) === 1.5);
+  {
+    const ed12 = new pageMod.PageEditor({
+      canvas: makeStub('canvas'), host: makeStub('host'),
+      getPage: () => ({ pageId: 'p', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: [] }),
+      setItems: () => {}, onToast: () => {},
+    });
+    ed12.setPage(0);
+    const H12 = ed12._canvasHandlers;
+    const touch = (x, y, id) => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y, preventDefault() {} });
+    ed12.setTool('pen');
+    H12.pointerdown(touch(100, 100, 1));
+    H12.pointerdown(touch(300, 100, 2));
+    expect('双指按下即进入捏合状态，且不会落笔', !!ed12._pinch && ed12.drawing === null);
+    H12.pointermove(touch(400, 100, 2));
+    expect('捏合过程中视口被放大', ed12.view.scale > 1);
+    H12.pointerup(touch(400, 100, 2));
+    H12.pointerup(touch(100, 100, 1));
+    expect('松手后退出捏合状态', !ed12._pinch);
+    ed12.setViewScale(1);
+  }
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

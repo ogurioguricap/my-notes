@@ -306,7 +306,28 @@ export function isPenDoubleTap(prev, next, { windowMs = 340, maxDistPx = 12 } = 
   return d <= maxDistPx;
 }
 
-/** 图片裁剪：把「图内相对框」换算成像素源矩形 + 新的归一化几何 */
+/** 选区裁剪的几何换算（纯函数：给「选区 OCR」用） */
+export function selectionCropGeometry(box, { pageW = 800, pageH = 1000, scale = 2, pad = 0.01 } = {}) {
+  if (!box) return null;
+  const x0 = Math.max(0, box.x0 - pad);
+  const y0 = Math.max(0, box.y0 - pad);
+  const x1 = Math.min(1, box.x1 + pad);
+  const y1 = Math.min(1, box.y1 + pad);
+  const s = Math.max(0.5, Math.min(4, Number(scale) || 1));
+  return {
+    x0, y0, x1, y1, scale: s, pageW, pageH,
+    width: Math.max(8, Math.round((x1 - x0) * pageW * s)),
+    height: Math.max(8, Math.round((y1 - y0) * pageH * s)),
+  };
+}
+
+/** 双指捏合的缩放换算（纯函数：给页面缩放用） */
+export function pinchScale(startDist, nowDist, startScale, { min = 0.4, max = 4 } = {}) {
+  const a = Number(startDist), b = Number(nowDist), s0 = Number(startScale) || 1;
+  if (!(a > 8) || !(b > 8)) return s0;
+  return Math.max(min, Math.min(max, s0 * (b / a)));
+}
+
 export function cropPixels(item, rel = { x: 0, y: 0, w: 1, h: 1 }, { pageW = 800, pageH = 1000, natural = null } = {}) {
   const x = Math.min(1, Math.max(0, Number(rel.x) || 0));
   const y = Math.min(1, Math.max(0, Number(rel.y) || 0));
@@ -724,6 +745,7 @@ export class PageEditor {
     this.crop = null;              // 图片裁剪状态 { itemId, rel, drag }
     this.penDoubleTap = 'eraser';  // 手写笔快速双击切换到哪个工具
     this._penTaps = [];
+    this._pinch = null;            // 双指捏合缩放状态
 
     this._pending = null;
     this._pendingPage = '';
@@ -983,7 +1005,22 @@ export class PageEditor {
     const c = this.canvas;
     if (!c || !c.addEventListener) return {};
     let activePen = false;
+    const touches = new Map();
+    const pinchState = () => {
+      const list = [...touches.values()];
+      if (list.length < 2) return 0;
+      return Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+    };
     const down = (e) => {
+      if (e.pointerType === 'touch') {
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size >= 2) {
+          // 双指：进入捏合缩放（并放弃正在画的那一笔）
+          this._pinch = { dist: pinchState(), scale: this.view.scale };
+          this.abortGesture();
+          return;
+        }
+      }
       if (e.pointerType === 'pen') {
         activePen = true;
         // 手写笔快速双击 = 切换工具（浏览器不暴露 Apple Pencil 的双击 API，用等效手势顶上）
@@ -1006,10 +1043,22 @@ export class PageEditor {
       this.onDown(this.toNorm(e), e);
     };
     const move = (e) => {
+      if (e.pointerType === 'touch') {
+        if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this._pinch && touches.size >= 2) {
+          const s = pinchScale(this._pinch.dist, pinchState(), this._pinch.scale);
+          if (Math.abs(s - this.view.scale) > 0.01) this.setViewScale(s);
+          return;   // 捏合时不落笔
+        }
+      }
       if (e.pointerType === 'touch' && activePen) return;
       this.onMove(this.toNorm(e), e);
     };
     const up = (e) => {
+      if (e.pointerType === 'touch') {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) this._pinch = null;
+      }
       if (e.pointerType === 'pen') activePen = false;
       if (e.pointerType === 'touch' && activePen) return;
       this.onUp(e);
@@ -1589,6 +1638,32 @@ export class PageEditor {
     this.commit('插入图片');
     this.redraw();
     return item;
+  }
+
+  /** 选中内容的包围盒（选区 OCR / 移动都用得上） */
+  selectionBounds() { return boxOfItems(this.selectedItems()); }
+
+  /** 把选区渲染成一张图（白底 + 只画选中的对象），交给 OCR 用 */
+  selectionDataUrl({ scale = 2, background = '#ffffff', pad = 0.01 } = {}) {
+    const sel = this.selectedItems();
+    if (!sel.length || typeof document === 'undefined') return '';
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const geo = selectionCropGeometry(boxOfItems(sel), { pageW: W, pageH: H, scale, pad });
+    if (!geo) return '';
+    const canvas = document.createElement('canvas');
+    canvas.width = geo.width;
+    canvas.height = geo.height;
+    const ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) return '';
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, geo.width, geo.height);
+    ctx.save();
+    ctx.scale(geo.scale, geo.scale);
+    ctx.translate(-geo.x0 * W, -geo.y0 * H);
+    const state = { onImageLoad: () => {} };
+    for (const it of sel) drawItem(ctx, it, W, H, state);
+    ctx.restore();
+    try { return canvas.toDataURL('image/jpeg', 0.9); } catch (e) { return ''; }
   }
 
   /* ---------- 图片裁剪 & 手写笔双击 ---------- */
