@@ -365,6 +365,54 @@ export function findHitRects(page, query, { pageW = 794, pageH = 1123 } = {}) {
   return out;
 }
 
+/**
+ * 「识别后替换」计划：把命中行框覆盖到的笔迹挑出来，并为每行生成一个文本框
+ *   · 只在有 OCR 行框时才有意义（没有行框就只插文本、不删笔迹）
+ *   · 贴纸 / 胶带 / 图片 / 已有文本都不动
+ * @returns {{removeIds:string[], texts:Array, lines:number, keptStrokes:number}}
+ */
+export function planInkToText(page, { pageW = 794, pageH = 1123, threshold = 0.5 } = {}) {
+  const lines = ((page && page.ocr && page.ocr.lines) || []).filter((l) => l && l.text && Array.isArray(l.box));
+  const items = (page && page.items) || [];
+  const strokes = items.filter((it) => it && it.kind === 'stroke');
+  const removeIds = [];
+  if (lines.length) {
+    for (const s of strokes) {
+      const b = itemBounds(s);
+      const cx = (b.x0 + b.x1) / 2;
+      const cy = (b.y0 + b.y1) / 2;
+      // 笔迹包围盒的「覆盖率」：中心落在行框内，或与行框重叠面积占比够大
+      const covered = lines.some((l) => {
+        const [x0, y0, x1, y1] = l.box;
+        const inside = cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+        if (inside) return true;
+        const ox = Math.max(0, Math.min(b.x1, x1) - Math.max(b.x0, x0));
+        const oy = Math.max(0, Math.min(b.y1, y1) - Math.max(b.y0, y0));
+        const area = Math.max(1e-9, (b.x1 - b.x0) * (b.y1 - b.y0));
+        return (ox * oy) / area >= threshold;
+      });
+      if (covered) removeIds.push(s.id);
+    }
+  }
+  const texts = lines.map((l) => {
+    const [x0, y0, x1, y1] = l.box;
+    const h = Math.max(0.008, y1 - y0);
+    return {
+      kind: 'text',
+      id: uid('t'),
+      x: Math.max(0, Math.min(0.98, x0)),
+      y: Math.max(0, Math.min(0.98, y0)),
+      w: Math.max(0.02, x1 - x0),
+      text: String(l.text).slice(0, 600),
+      size: Math.max(0.01, Math.min(0.06, h * 0.82)),
+      color: '#2B2723',
+      font: 'sans', bold: false, italic: false, align: 'left', rot: 0,
+      fromOcr: true,
+    };
+  });
+  return { removeIds, texts, lines: lines.length, keptStrokes: strokes.length - removeIds.length };
+}
+
 /** 选区裁剪的几何换算（纯函数：给「选区 OCR」用） */
 export function selectionCropGeometry(box, { pageW = 800, pageH = 1000, scale = 2, pad = 0.01 } = {}) {
   if (!box) return null;
@@ -848,6 +896,7 @@ export class PageEditor {
     this.pageId = info.pageId;
     this.paper = info.paper;
     this.items = normalizePageItems(info.items || []);
+    this.ocrLines = (info.ocr && Array.isArray(info.ocr.lines)) ? info.ocr.lines : [];
     this.selection.clear();
     this.drawing = null;
     this.gesture = null;
@@ -862,6 +911,7 @@ export class PageEditor {
     const info = this.getPage && this.getPage(this.pageIndex);
     if (!info || info.pageId !== this.pageId) return this.setPage(this.pageIndex);
     this.items = normalizePageItems(info.items || []);
+    this.ocrLines = (info.ocr && Array.isArray(info.ocr.lines)) ? info.ocr.lines : [];
     this.redraw();
     this.refreshStatus();
     return true;
@@ -1738,6 +1788,23 @@ export class PageEditor {
     this.commit('插入图片');
     this.redraw();
     return item;
+  }
+
+  /** 把手写识别结果「替换」成文本：删掉被行框覆盖的笔迹，并在原位放文本框（一次撤销可退回） */
+  replaceInkWithText({ threshold = 0.5 } = {}) {
+    const W = this.cssW || 794, H = this.cssH || 1123;
+    const plan = planInkToText({ items: this.items, ocr: { lines: this.ocrLines || [] } }, { pageW: W, pageH: H, threshold });
+    if (!plan.lines) { this.onToast('这一页还没有带位置的手写识别结果：先跑一次「识别手写文字」'); return null; }
+    if (!plan.texts.length) { this.onToast('识别结果里没有可用文字'); return null; }
+    this.snapshot('识别替换');
+    const drop = new Set(plan.removeIds);
+    this.items = [...this.items.filter((it) => !drop.has(it.id)), ...plan.texts];
+    this.selection = new Set(plan.texts.map((t) => t.id));
+    this.commit('识别替换');
+    this.redraw();
+    this.refreshStatus();
+    this.onToast(`已把 ${plan.removeIds.length} 笔手写替换成 ${plan.texts.length} 行文本（可撤销）`);
+    return { removed: plan.removeIds.length, texts: plan.texts.length };
   }
 
   /** 选中内容的包围盒（选区 OCR / 移动都用得上） */

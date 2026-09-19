@@ -554,6 +554,226 @@ export function renderTocPage(entries, { paper, title = '目录', scale = 2, qua
   return { jpeg, w: W, h: H, runs, links, entries: runs.length };
 }
 
+/* ============================ EPUB / 单文件 HTML ============================ */
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+export function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** 极简 ZIP 写出器（只做「存储」不压缩：EPUB 的 mimetype 必须不压缩，其余条目也一视同仁） */
+export function zipStore(entries, { date = new Date() } = {}) {
+  const list = (entries || []).filter((e) => e && e.name);
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const dosTime = ((date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)) & 0xFFFF;
+  const dosDate = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xFFFF;
+  for (const e of list) {
+    const name = enc.encode(e.name);
+    const data = e.data instanceof Uint8Array ? e.data : enc.encode(String(e.data == null ? '' : e.data));
+    const crc = crc32(data);
+    const head = new Uint8Array(30 + name.length);
+    const dv = new DataView(head.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 0, true);          // 不压缩
+    dv.setUint16(8, 0, true);
+    dv.setUint16(10, dosTime, true);
+    dv.setUint16(12, dosDate, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, data.length, true);
+    dv.setUint32(22, data.length, true);
+    dv.setUint16(26, name.length, true);
+    dv.setUint16(28, 0, true);
+    head.set(name, 30);
+    parts.push(head, data);
+    central.push({ name, crc, size: data.length, offset });
+    offset += head.length + data.length;
+  }
+  const cdParts = [];
+  let cdSize = 0;
+  for (const c of central) {
+    const buf = new Uint8Array(46 + c.name.length);
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(0, 0x02014b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 20, true);
+    dv.setUint16(8, 0, true);
+    dv.setUint16(10, 0, true);
+    dv.setUint16(12, dosTime, true);
+    dv.setUint16(14, dosDate, true);
+    dv.setUint32(16, c.crc, true);
+    dv.setUint32(20, c.size, true);
+    dv.setUint32(24, c.size, true);
+    dv.setUint16(28, c.name.length, true);
+    dv.setUint16(30, 0, true);
+    dv.setUint16(32, 0, true);
+    dv.setUint16(34, 0, true);
+    dv.setUint16(36, 0, true);
+    dv.setUint32(38, 0, true);
+    dv.setUint32(42, c.offset, true);
+    buf.set(c.name, 46);
+    cdParts.push(buf);
+    cdSize += buf.length;
+  }
+  const eocd = new Uint8Array(22);
+  const edv = new DataView(eocd.buffer);
+  edv.setUint32(0, 0x06054b50, true);
+  edv.setUint16(8, central.length, true);
+  edv.setUint16(10, central.length, true);
+  edv.setUint32(12, cdSize, true);
+  edv.setUint32(16, offset, true);
+  const all = [...parts, ...cdParts, eocd];
+  const total = all.reduce((s, b) => s + b.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const b of all) { out.set(b, at); at += b.length; }
+  return out;
+}
+
+/** 一页 → 每页的 JPEG 与文字（EPUB / 单文件 HTML 共用） */
+export function collectRenderablePages(nb, { renderPage, scale = 1.5, quality = 0.85, dropTape = false, plain = false } = {}) {
+  const pages = (nb && nb.pages) || [];
+  const out = [];
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    const paper = p.paper || nb.paper || { template: 'lined', size: 'a4' };
+    const im = defaultRenderJpeg(
+      { paper, items: (p.items || []).filter((it) => !(dropTape && it && it.kind === 'tape')) },
+      { scale, quality, renderPage, plain },
+    );
+    const texts = (p.items || []).filter((it) => it && it.kind === 'text' && String(it.text || '').trim()).map((it) => String(it.text).trim());
+    const ocr = p.ocr && p.ocr.text ? String(p.ocr.text).trim() : '';
+    out.push({
+      index: i,
+      title: String(p.title || '').trim(),
+      jpeg: (im && im.jpeg) || new Uint8Array(0),
+      w: im ? im.w : 0,
+      h: im ? im.h : 0,
+      text: [...texts, ocr].join('\n'),
+      ocr,
+    });
+  }
+  return out;
+}
+
+function xmlEsc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** 笔记本 → 单文件 HTML（图片内联 data URL + 文本，双击即可看，也能直接打印） */
+export function buildSingleHtml(nb, { renderPage, scale = 1.5, quality = 0.85, plain = false, dropTape = false } = {}) {
+  const pages = collectRenderablePages(nb, { renderPage, scale, quality, plain, dropTape });
+  const title = (nb && nb.title) || '笔记本';
+  const toc = pages.filter((p) => p.title).map((p) => `<li><a href="#p${p.index + 1}">${xmlEsc(p.title)}</a></li>`).join('');
+  const body = pages.map((p) => {
+    const img = p.jpeg && p.jpeg.length ? `<img src="data:image/jpeg;base64,${bytesToBase64(p.jpeg)}" alt="第 ${p.index + 1} 页">` : '<p>（这一页没渲染出来）</p>';
+    return `<section id="p${p.index + 1}"><h2>第 ${p.index + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</h2>${img}${p.text ? `<pre class="notes">${xmlEsc(p.text)}</pre>` : ''}</section>`;
+  }).join('\n');
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${xmlEsc(title)}</title>
+<style>
+ body{margin:0;padding:24px;background:#F4F2ED;color:#2B2723;font:15px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+ h1{font-size:22px;margin:0 0 4px} .sub{color:#6B635A;font-size:13px;margin-bottom:18px}
+ nav{background:#fff;border:1px solid #E9E5DE;border-radius:12px;padding:12px 16px;margin-bottom:20px}
+ nav ul{margin:6px 0 0;padding-left:20px;font-size:13px}
+ section{background:#fff;border:1px solid #E9E5DE;border-radius:12px;padding:14px;margin-bottom:18px;max-width:900px}
+ section h2{font-size:15px;margin:0 0 10px;color:#6B635A;font-weight:600}
+ img{width:100%;height:auto;border:1px solid #E9E5DE;border-radius:8px;display:block}
+ pre.notes{margin:12px 0 0;padding:10px;background:#F7F6F3;border-radius:8px;white-space:pre-wrap;font:13px/1.7 ui-monospace,Consolas,monospace}
+ @media print{body{background:#fff;padding:0}nav{display:none}section{border:0;padding:0;margin:0 0 8px;page-break-after:always}}
+</style></head>
+<body>
+<h1>${xmlEsc(title)}</h1>
+<div class="sub">共 ${pages.length} 页 · 由「笔记本」模式导出 · ${new Date().toLocaleString('zh-CN')}</div>
+${toc ? `<nav><b>目录</b><ul>${toc}</ul></nav>` : ''}
+${body}
+</body></html>`;
+}
+
+function bytesToBase64(bytes) {
+  if (!bytes || !bytes.length) return '';
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  if (typeof btoa === 'function') return btoa(bin);
+  if (typeof Buffer !== 'undefined') return Buffer.from(bin, 'binary').toString('base64');
+  return '';
+}
+
+/** 笔记本 → EPUB（电子书，任意阅读器可打开；正文是可搜索文本 + 每页图片） */
+export function buildEpub(nb, { renderPage, scale = 1.5, quality = 0.85, plain = false, dropTape = false, author = '我的笔记' } = {}) {
+  const pages = collectRenderablePages(nb, { renderPage, scale, quality, plain, dropTape });
+  const title = (nb && nb.title) || '笔记本';
+  const uuid = `urn:uuid:${String((nb && nb.id) || 'nb')}-${Date.now().toString(36)}`;
+  const entries = [];
+  entries.push({ name: 'mimetype', data: 'application/epub+zip' });
+  entries.push({
+    name: 'META-INF/container.xml',
+    data: '<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>\n</container>',
+  });
+  const manifest = [];
+  const spine = ['<itemref idref="nav"/>'];
+  pages.forEach((p, i) => {
+    const id = `p${i + 1}`;
+    const text = p.text ? `<div class="notes">${xmlEsc(p.text).replace(/\n/g, '<br>')}</div>` : '';
+    const img = p.jpeg && p.jpeg.length ? `<img src="${id}.jpg" alt="第 ${i + 1} 页"/>` : '';
+    entries.push({
+      name: `OEBPS/${id}.xhtml`,
+      data: `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN" lang="zh-CN"><head><title>第 ${i + 1} 页</title>
+<style>body{margin:0;padding:12px;font-family:sans-serif}img{width:100%;height:auto;display:block}.notes{margin-top:10px;font-size:13px;line-height:1.7;color:#333}</style>
+</head><body><h2>第 ${i + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</h2>${img}${text}</body></html>`,
+    });
+    manifest.push(`<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml"/>`);
+    if (p.jpeg && p.jpeg.length) {
+      entries.push({ name: `OEBPS/${id}.jpg`, data: p.jpeg });
+      manifest.push(`<item id="${id}img" href="${id}.jpg" media-type="image/jpeg"/>`);
+    }
+    spine.push(`<itemref idref="${id}"/>`);
+  });
+  const navList = pages.map((p) => `<li><a href="p${p.index + 1}.xhtml">第 ${p.index + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</a></li>`).join('');
+  entries.push({
+    name: 'OEBPS/nav.xhtml',
+    data: `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN" lang="zh-CN"><head><title>目录</title></head>
+<body><nav epub:type="toc" id="toc"><h1>目录</h1><ol>${navList}</ol></nav></body></html>`,
+  });
+  manifest.push('<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>');
+  entries.push({
+    name: 'OEBPS/content.opf',
+    data: `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier id="bookid">${uuid}</dc:identifier>
+<dc:title>${xmlEsc(title)}</dc:title>
+<dc:creator>${xmlEsc(author)}</dc:creator>
+<dc:language>zh-CN</dc:language>
+<meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta>
+</metadata>
+<manifest>${manifest.join('')}</manifest>
+<spine>${spine.join('')}</spine>
+</package>`,
+  });
+  return new Blob([zipStore(entries)], { type: 'application/epub+zip' });
+}
+
 /* ============================ 批量导出（资料库多选用） ============================ */
 
 /** 把若干本笔记本摊平成页面序列（保持顺序，带上书名，便于合并导出） */

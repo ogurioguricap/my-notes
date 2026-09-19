@@ -512,13 +512,24 @@ export class LibraryUI {
   _renderLibrary(body) {
     const list = this.getList();
     const filtering = this._isFiltering();
+    const review = (!filtering && this.state.scope === 'all' && typeof this.store.dueStats === 'function')
+      ? this.store.dueStats()
+      : { due: 0, list: [] };
+    const banner = review.due > 0 ? `<div class="lib-review" data-role="review">
+      <span class="lib-review-icon">🎴</span>
+      <span class="lib-review-text">
+        <b>今天该复习 ${review.due} 张卡</b>
+        <i>分布在 ${review.notebooks} 本笔记本 · 已掌握 ${review.mastered}/${review.total}${review.todayReviews ? ` · 今天已复习 ${review.todayReviews} 次` : ''}</i>
+      </span>
+      <button class="lib-btn primary" type="button" data-act="start-review">开始复习</button>
+    </div>` : '';
     if (!list.length) {
-      body.innerHTML = filtering ? this._emptyHTML('search') : this._emptyHTML('new');
+      body.innerHTML = banner + (filtering ? this._emptyHTML('search') : this._emptyHTML('new'));
       return;
     }
-    body.innerHTML = this.state.viewMode === 'list'
+    body.innerHTML = banner + (this.state.viewMode === 'list'
       ? `<div class="bk-list">${list.map((nb) => this._rowHTML(nb)).join('')}</div>`
-      : `<div class="bk-grid">${list.map((nb) => this._cardHTML(nb)).join('')}</div>`;
+      : `<div class="bk-grid">${list.map((nb) => this._cardHTML(nb)).join('')}</div>`);
   }
 
   _renderTrash(body) {
@@ -560,7 +571,8 @@ export class LibraryUI {
       <article class="bk-card${on ? ' on' : ''}${nb.fav ? ' fav' : ''}" data-id="${bkEsc(nb.id)}" data-act="open" title="${bkEsc(nb.title)}">
         ${this.selecting ? `<button type="button" class="bk-pick ${on ? 'on' : ''}" data-act="pick" data-id="${bkEsc(nb.id)}" aria-label="选择 ${bkEsc(nb.title)}">${on ? ICON.check : ''}</button>` : ''}
         <button type="button" class="bk-star ${nb.fav ? 'on' : ''}" data-act="fav" data-id="${bkEsc(nb.id)}" title="${nb.fav ? '取消收藏' : '收藏'}" aria-label="${nb.fav ? '取消收藏' : '收藏'}">${nb.fav ? ICON.star : ICON.starOff}</button>
-        <div class="bk-cover" data-pattern="${bkEsc((nb.cover && nb.cover.pattern) || 'plain')}" style="${bookCoverVars(nb)}">
+        <div class="bk-cover${nb.cover && nb.cover.image ? ' has-image' : ''}" data-pattern="${bkEsc((nb.cover && nb.cover.pattern) || 'plain')}" style="${bookCoverVars(nb)}">
+          ${nb.cover && nb.cover.image ? `<img class="bk-cover-img" src="${bkEsc(nb.cover.image)}" alt="" loading="lazy">` : ''}
           <span class="bk-glyph">${bkEsc((nb.cover && nb.cover.glyph) || '笔')}</span>
           <span class="bk-spine" aria-hidden="true"></span>
         </div>
@@ -850,7 +862,8 @@ export class LibraryUI {
       <div class="lib-sheet-body">
         <div class="lib-new">
           <div class="lib-new-preview">
-            <div class="bk-cover big" data-pattern="${bkEsc(f.pattern)}" style="--bk:${bkEsc(f.color)};--bk-soft:${bkEsc(f.color)}">
+            <div class="bk-cover big${f.image ? ' has-image' : ''}" data-pattern="${bkEsc(f.pattern)}" style="--bk:${bkEsc(f.color)};--bk-soft:${bkEsc(f.color)}">
+              ${f.image ? `<img class="bk-cover-img" src="${bkEsc(f.image)}" alt="">` : ''}
               <span class="bk-glyph">${bkEsc(f.glyph || '笔')}</span>
               <span class="bk-spine" aria-hidden="true"></span>
             </div>
@@ -870,6 +883,16 @@ export class LibraryUI {
               <span>封面花纹</span>
               <div class="lib-chips">
                 ${COVER_PATTERNS.map((p) => `<button type="button" class="lib-chip${f.pattern === p.id ? ' on' : ''}" data-act="cover-pattern" data-v="${bkEsc(p.id)}">${bkEsc(p.label)}</button>`).join('')}
+              </div>
+            </div>
+            <div class="lib-field">
+              <span>自定义封面图（可选，存本机 / 随笔记本 JSON 一起走）</span>
+              <div class="lib-row">
+                <label class="lib-btn" style="cursor:pointer">
+                  选一张图片
+                  <input type="file" accept="image/*" data-act="cover-image" hidden>
+                </label>
+                ${f.image ? '<button type="button" class="lib-btn danger" data-act="cover-image-clear">移除封面图</button>' : ''}
               </div>
             </div>
           </div>
@@ -1014,6 +1037,7 @@ export class LibraryUI {
       case 'export': this.exportBackup(); break;
       case 'import': this.importBackup(); break;
       case 'panel-close': this._panel = null; this._renderLayer(); break;
+      case 'start-review': this.startReview(); break;
       case 'tpl-del':
         e.stopPropagation();
         if (this.store.removeTemplate(rowId)) { this.toast('模板已删除'); this._renderLayer(); }
@@ -1054,6 +1078,7 @@ export class LibraryUI {
       case 'nb-size': this._sheetField('size', hit.dataset.v); break;
       case 'nb-create': this._createBook(); break;
       case 'cover-color': this._sheetField('color', hit.dataset.v); break;
+      case 'cover-image-clear': this._sheetField('image', ''); break;
       case 'cover-pattern': this._sheetField('pattern', hit.dataset.v); break;
       case 'cover-save': this._saveCover(); break;
       case 'move-apply': this._applyMove([...(this.sheet && this.sheet.data ? this.sheet.data.ids : [])], hit.dataset.folder || null); break;
@@ -1091,7 +1116,24 @@ export class LibraryUI {
   _onChange(e) {
     if (this._destroyed) return;
     const t = e.target;
-    if (t && t.dataset && t.dataset.act === 'sort') this.setSort(t.value);
+    if (!t || !t.dataset) return;
+    if (t.dataset.act === 'sort') { this.setSort(t.value); return; }
+    if (t.dataset.act === 'cover-image') {
+      const f = t.files && t.files[0];
+      t.value = '';
+      if (!f) return;
+      if (f.size > 2.4 * 1024 * 1024) { this.toast('封面图太大了（>2.4MB）：先压缩再试'); return; }
+      const FR = typeof FileReader === 'function' ? FileReader : null;
+      if (!FR) { this.toast('这个环境读不了本地文件'); return; }
+      const fr = new FR();
+      fr.onload = () => {
+        this._sheetField('image', String(fr.result || ''));
+        this.toast('封面图已选好，点「保存」生效');
+      };
+      fr.onerror = () => this.toast('这张图读不出来');
+      fr.readAsDataURL(f);
+      return;
+    }
   }
 
   _onKeydown(e) {
@@ -1104,7 +1146,7 @@ export class LibraryUI {
 
   /* ---------- 动作实现 ---------- */
 
-  openBook(id) {
+  openBook(id, opts = {}) {
     if (!id) return;
     const nb = this.store && typeof this.store.get === 'function' ? this.store.get(id) : null;
     if (!nb) return;
@@ -1114,7 +1156,16 @@ export class LibraryUI {
     for (const fn of this._hooks.slice()) {
       try { fn(id); } catch (err) { this._fail(err); }
     }
-    this.onOpen(id);
+    this.onOpen(id, opts);
+  }
+
+  /** 「今天该复习」入口：直接打开有到期卡片的那一本并弹出学习集面板 */
+  startReview() {
+    const list = typeof this.store.dueNotebooks === 'function' ? this.store.dueNotebooks() : [];
+    const first = list[0];
+    if (!first) { this.toast('今天没有到期的卡片'); return false; }
+    this.openBook(first.bookId, { panel: 'study' });
+    return true;
   }
 
   openNewSheet() {
@@ -1166,12 +1217,12 @@ export class LibraryUI {
     if (!nb) return;
     this._menu = null;
     this.sheet = {
-      type: 'cover',
-      data: { id },
+      type: 'cover',      data: { id },
       fields: {
         color: (nb.cover && nb.cover.color) || COVER_COLORS[0],
         pattern: (nb.cover && nb.cover.pattern) || 'plain',
         glyph: (nb.cover && nb.cover.glyph) || String(nb.title || '笔').slice(0, 1),
+        image: (nb.cover && nb.cover.image) || '',
       },
     };
     this._renderLayer();
@@ -1338,7 +1389,12 @@ export class LibraryUI {
     if (!sh || !sh.data || !sh.fields) return;
     try {
       this.store.update(sh.data.id, {
-        cover: { color: sh.fields.color, pattern: sh.fields.pattern, glyph: String(sh.fields.glyph || '笔').slice(0, 1) || '笔' },
+        cover: {
+          color: sh.fields.color,
+          pattern: sh.fields.pattern,
+          glyph: String(sh.fields.glyph || '笔').slice(0, 1) || '笔',
+          image: sh.fields.image || '',
+        },
       });
       this.closeSheet();
       this.toast('封面已更新');

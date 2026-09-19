@@ -119,6 +119,7 @@ export function makeNotebook(patch = {}) {
       color: (patch.cover && patch.cover.color) || '#E8452F',
       pattern: (patch.cover && patch.cover.pattern) || 'plain',
       glyph: patch.cover && patch.cover.glyph ? patch.cover.glyph : String(patch.title || '笔').trim().slice(0, 1) || '笔',
+      image: (patch.cover && patch.cover.image) || '',   // 自定义封面图（data URL，可选）
     },
     folder: patch.folder || null,
     tags: Array.isArray(patch.tags) ? patch.tags : [],
@@ -479,6 +480,24 @@ export class NotebookStore {
     return copy;
   }
 
+  setCoverImage(bookId, dataUrl) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    const src = String(dataUrl || '');
+    if (src && !/^data:image\//.test(src)) return null;
+    nb.cover.image = src.slice(0, 3_000_000);
+    this.touch(bookId);
+    return nb;
+  }
+
+  clearCoverImage(bookId) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    nb.cover.image = '';
+    this.touch(bookId);
+    return nb;
+  }
+
   setFav(id, fav) {
     const nb = this.get(id);
     if (!nb) return null;
@@ -809,6 +828,28 @@ export class NotebookStore {
     if (!nb) return [];
     return nb.study.filter((c) => (c.due || 0) <= at).sort((a, b) => (a.box || 0) - (b.box || 0));
   }
+
+  /** 全库「今天该复习」：总数 + 分布在哪些本子上（资料库首页入口用） */
+  dueStats(at = now()) {
+    const live = this.data.notebooks.filter((n) => !n.trashedAt);
+    const per = [];
+    let due = 0, total = 0, mastered = 0, todayReviews = 0;
+    for (const nb of live) {
+      const cards = nb.study || [];
+      if (!cards.length) continue;
+      const d = cards.filter((c) => (c.due || 0) <= at).length;
+      due += d;
+      total += cards.length;
+      mastered += cards.filter((c) => (c.box || 0) >= 5).length;
+      todayReviews += cards.filter((c) => c.last && at - c.last < 86400000).length;
+      if (d) per.push({ bookId: nb.id, title: nb.title, due: d, total: cards.length });
+    }
+    per.sort((a, b) => b.due - a.due);
+    return { due, total, mastered, todayReviews, notebooks: per.length, list: per };
+  }
+
+  /** 有到期卡片的本子（按到期数量排序） */
+  dueNotebooks(at = now()) { return this.dueStats(at).list; }
 
   /** 从页面里的文本对象自动生成闪卡（每行「前 —— 后」或整段作正面） */
   cardsFromText(bookId, pageId, text) {

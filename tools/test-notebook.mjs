@@ -1424,5 +1424,124 @@ head('PDF 大纲层级 · 长录音分片 · 命中高亮 · 页面朗读');
   }
 }
 
+/* ============================ 15. 替换式转换 / 封面图 / 复习入口 / EPUB ============================ */
+head('识别替换 · 封面图 · 今日复习入口 · EPUB');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 11, 11, 0xFF, 0xD9]);
+  const fakeRender = (canvas) => {
+    if (canvas) canvas.toDataURL = () => `data:image/jpeg;base64,${Buffer.from(jpeg).toString('base64')}`;
+    return { w: 794, h: 1123 };
+  };
+
+  // --- 识别替换：删掉被识别到的笔迹、原位放文本，并可撤销 ---
+  const page15 = {
+    items: [
+      { kind: 'stroke', id: 's1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.5, 0.13]] },
+      { kind: 'stroke', id: 's2', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.6], [0.5, 0.63]] },
+      { kind: 'sticker', id: 'st1', glyph: '⭐', x: 0.8, y: 0.1, size: 0.07 },
+      { kind: 'tape', id: 'tp1', x: 0.1, y: 0.3, w: 0.3, h: 0.05 },
+    ],
+    ocr: { lines: [{ text: '第一行', box: [0.08, 0.08, 0.55, 0.16] }] },
+  };
+  const plan15 = pageMod.planInkToText(page15, { pageW: 800, pageH: 1000 });
+  expect('替换计划：只删被行框覆盖的那一笔', plan15.removeIds.join(',') === 's1' && plan15.keptStrokes === 1);
+  expect('替换计划：贴纸与胶带不受影响', plan15.lines === 1 && plan15.texts.length === 1 && plan15.texts[0].text === '第一行');
+  expect('替换计划：文本按行框定位、字号按行高算', Math.abs(plan15.texts[0].x - 0.08) < 1e-9 && Math.abs(plan15.texts[0].y - 0.08) < 1e-9 && plan15.texts[0].size > 0.01 && plan15.texts[0].size <= 0.06);
+  expect('没有行框时不会删任何笔迹', pageMod.planInkToText({ items: page15.items, ocr: { lines: [] } }).removeIds.length === 0);
+  {
+    const ed15 = new pageMod.PageEditor({
+      canvas: makeStub('canvas'), host: makeStub('host'),
+      getPage: () => ({ pageId: 'p', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: page15.items, ocr: page15.ocr }),
+      setItems: () => {}, onToast: () => {},
+    });
+    ed15.setPage(0);
+    const before15 = ed15.items.length;
+    const res15 = ed15.replaceInkWithText();
+    expect('编辑器执行替换：笔迹 −1、文本 +1', !!res15 && ed15.items.length === before15 && !ed15.items.some((i) => i.id === 's1') && ed15.items.some((i) => i.fromOcr));
+    ed15.undo();
+    expect('替换可以撤销（笔迹回来、文本消失）', ed15.items.some((i) => i.id === 's1') && !ed15.items.some((i) => i.fromOcr));
+    ed15.setPage(0);
+    ed15.ocrLines = [];
+    expect('没有识别结果时给提示而不是乱删', ed15.replaceInkWithText() === null && ed15.items.some((i) => i.id === 's1'));
+  }
+
+  // --- 封面自定义图 ---
+  const s15 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b15 = s15.create({ title: '封面图本' });
+  expect('新建时默认没有封面图', s15.get(b15.id).cover.image === '');
+  s15.setCoverImage(b15.id, 'data:image/png;base64,AAAA');
+  expect('能设封面图', s15.get(b15.id).cover.image === 'data:image/png;base64,AAAA');
+  expect('非图片 data URL 会被拒绝', s15.setCoverImage(b15.id, 'javascript:alert(1)') === null && s15.get(b15.id).cover.image.startsWith('data:image/'));
+  expect('封面图能清掉', !!s15.clearCoverImage(b15.id) && s15.get(b15.id).cover.image === '');
+  s15.setCoverImage(b15.id, 'data:image/png;base64,BBBB');
+  expect('封面图随笔记本一起导出/导入', (() => {
+    const json = s15.exportJSON([b15.id]);
+    const s2 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    s2.importJSON(json);
+    return s2.notebooks()[0].cover.image === 'data:image/png;base64,BBBB';
+  })());
+  expect('资料库界面上接了封面图（上传 / 移除 / 渲染）', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+    return /cover-image/.test(src) && /bk-cover-img/.test(src) && /has-image/.test(src);
+  })());
+
+  // --- 今日复习入口 ---
+  const s16 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b16a = s16.create({ title: '卡组 A' });
+  const b16b = s16.create({ title: '卡组 B' });
+  const c1 = s16.addCard(b16a.id, '导数', '极限');
+  s16.addCard(b16a.id, '积分', '面积');
+  s16.addCard(b16b.id, '矩阵', '线性变换');
+  s16.reviewCard(b16a.id, c1.id, true);   // 这张推到明天
+  const due = s16.dueStats();
+  expect('全库到期统计：总数与涉及本数', due.due === 2 && due.total === 3 && due.notebooks === 2);
+  expect('按到期数量排序（列表里有本子与数量）', due.list.length === 2 && due.list[0].due >= due.list[1].due && due.list[0].title);
+  expect('dueNotebooks 与 dueStats 一致', s16.dueNotebooks().length === due.list.length);
+  expect('全部复习完后就不再提示', (() => {
+    for (const nb of s16.notebooks()) for (const card of nb.study) s16.reviewCard(nb.id, card.id, true);
+    return s16.dueStats().due === 0;
+  })());
+  expect('资料库界面上接了「今天该复习」入口', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+    return /lib-review/.test(src) && /start-review/.test(src) && /dueStats/.test(src) && /startReview/.test(src);
+  })());
+  expect('app.js 支持进本子后直接弹面板', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'app.js'), 'utf8');
+    return /pendingBookPanel/.test(src) && /openPanel\(panel\)/.test(src);
+  })());
+
+  // --- EPUB / 单文件 HTML ---
+  expect('CRC32 校验值正确（123456789 → CBF43926）', studyMod.crc32(new TextEncoder().encode('123456789')).toString(16).toUpperCase() === 'CBF43926');
+  {
+    const zip = studyMod.zipStore([{ name: 'mimetype', data: 'application/epub+zip' }, { name: 'a.txt', data: 'hello' }]);
+    const dv = new DataView(zip.buffer);
+    expect('ZIP：本地头与 EOCD 签名、存储方式（不压缩）', dv.getUint32(0, true) === 0x04034b50 && dv.getUint16(8, true) === 0 && dv.getUint32(zip.length - 22, true) === 0x06054b50);
+    expect('ZIP：中央目录条目数与名字都在', dv.getUint16(zip.length - 22 + 10, true) === 2 && Buffer.from(zip).toString('latin1').includes('mimetype'));
+    expect('ZIP：空输入也能生成合法的空包', (() => {
+      const empty = studyMod.zipStore([]);
+      return empty.length === 22 && new DataView(empty.buffer).getUint16(empty.length - 22 + 10, true) === 0;
+    })());
+  }
+  const nb17 = { id: 'bk17', title: '电子书测试', pages: [{ title: '第一章', items: [{ kind: 'text', id: 't', text: '正文一' }] }, { items: [], ocr: { text: '手写二' } }] };
+  {
+    const epub = studyMod.buildEpub(nb17, { renderPage: fakeRender });
+    const bytes = new Uint8Array(await epub.arrayBuffer());
+    const txt = Buffer.from(bytes).toString('latin1');
+    const text = Buffer.from(bytes).toString('utf8');
+    expect('EPUB：类型正确、以 ZIP 开头（mimetype 在最前且不压缩）', epub.type === 'application/epub+zip' && txt.startsWith('PK') && txt.startsWith('PK\x03\x04'));
+    expect('EPUB：含 container.xml / content.opf / nav.xhtml', txt.includes('META-INF/container.xml') && txt.includes('content.opf') && txt.includes('nav.xhtml'));
+    expect('EPUB：每页一个 xhtml 且带图', new Set(txt.match(/OEBPS\/p\d+\.xhtml/g) || []).size === 2 && new Set(txt.match(/OEBPS\/p\d+\.jpg/g) || []).size === 2);
+    expect('EPUB：正文与手写文本都进了书（可搜索）', text.includes('正文一') && text.includes('手写二'));
+    expect('EPUB：书目元数据带标题与语言', text.includes('电子书测试') && text.includes('zh-CN'));
+  }
+  {
+    const html = studyMod.buildSingleHtml(nb17, { renderPage: fakeRender });
+    expect('单文件 HTML：图片内联为 data URL', html.includes('data:image/jpeg;base64'));
+    expect('单文件 HTML：每页一个 section + 标题文字 + 手写文本', (html.match(/<section /g) || []).length === 2 && html.includes('正文一') && html.includes('手写二'));
+    expect('单文件 HTML：有打印样式（每页分页）', html.includes('page-break-after'));
+    expect('单文件 HTML：没图时也不崩', studyMod.buildSingleHtml({ title: 'x', pages: [{ items: [] }] }, {}).includes('<section '));
+  }
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

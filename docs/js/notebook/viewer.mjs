@@ -26,7 +26,7 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
 import {
   ASR_MODELS, transcribeAudio, transcribeAudioFull, transcribeChunked, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
 } from './asr.mjs';
@@ -195,6 +195,8 @@ export class NotebookView {
         <button type="button" data-act="exportPng">导出当前页 PNG（2×）</button>
         <button type="button" data-act="exportLong">导出长图（整本拼一张 PNG）</button>
         <button type="button" data-act="exportMd">导出 Markdown（.md）</button>
+        <button type="button" data-act="exportEpub">导出 EPUB（电子书）</button>
+        <button type="button" data-act="exportHtml">导出单文件 HTML</button>
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
         <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
         <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
@@ -495,6 +497,8 @@ export class NotebookView {
     if (act === 'syncPush') { this.syncPush(); return true; }
     if (act === 'syncPull') { this.syncPull(); return true; }
     if (act === 'exportMd') { this.exportMarkdown(); return true; }
+    if (act === 'exportEpub') { this.exportEpub(); return true; }
+    if (act === 'exportHtml') { this.exportHtml(); return true; }
     if (act === 'publishMd') { this.publishMarkdown(); return true; }
     if (act === 'saveTemplate') { this.saveAsTemplate(); return true; }
     if (act === 'ocrModel') { this.ocrModel = note; this.renderPanel(); return true; }
@@ -514,6 +518,14 @@ export class NotebookView {
       return true;
     }
     if (act === 'ocrToText') { this.ocrToText(); return true; }
+    if (act === 'ocrReplace') {
+      const ed = this.editor;
+      if (ed) {
+        const res = ed.replaceInkWithText();
+        if (res) { this.setStatus(ed.info()); this.refresh(); }
+      }
+      return true;
+    }
     if (act === 'clearPage') {
       const e = ed();
       if (!e) return true;
@@ -1107,7 +1119,7 @@ export class NotebookView {
     const idx = Number.isFinite(i) ? i : this.cur;
     const nb = this.nb || { pages: [] };
     const p = nb.pages[idx] || { id: '', items: [] };
-    return { pageId: p.id, pageIndex: idx, paper: this.paperFor(idx), items: p.items || [] };
+    return { pageId: p.id, pageIndex: idx, paper: this.paperFor(idx), items: p.items || [], ocr: p.ocr || null };
   }
 
   /** 把活画布（含放大窗）搬到第 i 页容器里 */
@@ -1837,6 +1849,7 @@ export class NotebookView {
           <button class="nb-btn" type="button" data-act="ocrRunAll" ${key ? '' : 'disabled'}>全部重识别</button>
           <button class="nb-btn danger" type="button" data-act="ocrClearPage">清掉本页识别结果</button>
           <button class="nb-btn" type="button" data-act="ocrToText" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr) ? '' : 'disabled'} title="把手写识别结果变成可编辑的文本框">识别结果转成文本框</button>
+          <button class="nb-btn danger" type="button" data-act="ocrReplace" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr && (nb.pages[this.cur].ocr.lines || []).length) ? '' : 'disabled'} title="删掉被识别到的笔迹，并在原位放文本（一次撤销可退回）">识别并替换手写</button>
         </div>
         <div class="nb-field">
           <span>进度</span>
@@ -1917,6 +1930,35 @@ export class NotebookView {
     ed.redraw();
     this.setStatus(ed.info());
     this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
+  }
+
+  /** 导出 EPUB（电子书）：每页图片 + 可搜索文本 + 目录 */
+  async exportEpub() {
+    if (!this.nb) return;
+    this.flush();
+    this.toast('正在生成 EPUB…');
+    try {
+      const blob = buildEpub(this.nb, { renderPage, scale: 1.5, quality: 0.85, plain: !!this.plainPaper, dropTape: !!this.dropTape });
+      if (!blob) { this.toast('EPUB 生成失败（当前环境不支持 canvas）'); return; }
+      downloadBlob(blob, `${safeName(this.nb.title)}.epub`);
+      this.toast(`EPUB 已导出（${this.nb.pages.length} 页 · ${(blob.size / 1048576).toFixed(1)} MB）`);
+    } catch (e) {
+      this.toast('导出 EPUB 失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  /** 导出单文件 HTML：双击就能看、能打印、能直接发人 */
+  async exportHtml() {
+    if (!this.nb) return;
+    this.flush();
+    this.toast('正在生成单文件 HTML…');
+    try {
+      const html = buildSingleHtml(this.nb, { renderPage, scale: 1.5, quality: 0.85, plain: !!this.plainPaper, dropTape: !!this.dropTape });
+      downloadBlob(new Blob([html], { type: 'text/html' }), `${safeName(this.nb.title)}.html`);
+      this.toast(`单文件 HTML 已导出（${this.nb.pages.length} 页 · ${(html.length / 1048576).toFixed(1)} MB）`);
+    } catch (e) {
+      this.toast('导出 HTML 失败：' + ((e && e.message) || '未知错误'));
+    }
   }
 
   /* ---------- 长图导出 / 选区 OCR / 移动端小工具 ---------- */
