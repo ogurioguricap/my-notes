@@ -26,7 +26,7 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY } from './study.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT,
 } from './ocr.mjs';
@@ -114,6 +114,8 @@ export class NotebookView {
     this.ocrModel = OCR_MODELS[0].id;
     this.ocrRunning = false;
     this.ocrStatusText = '';
+    this.pdfQuality = 'high';   // standard / high / print
+    this.dropTape = false;      // 导出时是否撕掉胶带
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -161,9 +163,14 @@ export class NotebookView {
     <div class="nb-drop">
       <button class="nb-btn" type="button" data-act="menu" data-menu="export">导出 ▾</button>
       <div class="nb-menu" data-menu="export" hidden>
-        <button type="button" data-act="exportPdf">导出 PDF</button>
-        <button type="button" data-act="exportPng">导出当前页 PNG</button>
+        <button type="button" data-act="exportPdf" data-note="standard" title="文件小，屏幕看够用">导出 PDF · 标准（96dpi）</button>
+        <button type="button" data-act="exportPdf" data-note="high" title="打印清晰，体积约 4 倍">导出 PDF · 高清（192dpi）</button>
+        <button type="button" data-act="exportPdf" data-note="print" title="放大看细节、正式打印，体积约 9 倍">导出 PDF · 打印级（288dpi）</button>
+        <hr>
+        <button type="button" data-act="exportPng">导出当前页 PNG（2×）</button>
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
+        <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
+        <hr>
         <button type="button" data-act="print">打印</button>
       </div>
     </div>
@@ -453,8 +460,13 @@ export class NotebookView {
     if (act === 'deleteBook') { this.deleteBook(); return true; }
 
     // ---- 导出 ----
-    if (act === 'exportPdf') { this.exportPdf(); return true; }
+    if (act === 'exportPdf') { this.exportPdf(note || 'high'); return true; }
     if (act === 'exportPng') { this.exportPng(); return true; }
+    if (act === 'toggleDropTape') {
+      this.dropTape = !this.dropTape;
+      this.toast(this.dropTape ? '导出 PDF 时会撕掉胶带（看答案用）' : '导出 PDF 时保留胶带');
+      return true;
+    }
     if (act === 'exportJson') {
       try {
         const json = this.store.exportJSON([this.bookId]);
@@ -2361,16 +2373,26 @@ export class NotebookView {
      十二、导出
      ==================================================================== */
 
-  async exportPdf() {
+  async exportPdf(qualityId = 'high') {
     if (!this.nb) return;
     this.flush();
-    this.toast('正在生成 PDF…');
+    const q = qualityOf(qualityId);
+    this.pdfQuality = q.id;
+    const total = (this.nb.pages || []).length;
+    this.toast(`正在生成 PDF（${q.label}，${total} 页）…`);
     try {
       const pages = (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [] }));
-      const blob = await buildPdf(pages, { title: this.nb.title || '笔记本' });
+      const blob = await buildPdf(pages, {
+        title: this.nb.title || '笔记本',
+        qualityId: q.id,
+        dropTape: !!this.dropTape,
+        renderPageImpl: renderPage,
+        onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
+      });
       if (!blob) { this.toast('PDF 生成失败'); return; }
-      downloadBlob(blob, `${safeName(this.nb.title)}.pdf`);
-      this.toast(`PDF 已导出（${this.nb.pages.length} 页）`);
+      const mb = (blob.size / 1048576).toFixed(1);
+      downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}.pdf`);
+      this.toast(`PDF 已导出（${total} 页 · ${q.label} · ${mb} MB${this.dropTape ? ' · 已撕掉胶带' : ''}）`);
     } catch (e) {
       this.toast('导出 PDF 失败：' + ((e && e.message) || '未知错误'));
     }
@@ -2378,14 +2400,14 @@ export class NotebookView {
 
   async exportPng() {
     this.flush();
-    const page = { paper: this.paperFor(this.cur), items: ((this.nb.pages[this.cur] || {}).items || []) };
-    const scale = (((this.editor && this.editor.view && this.editor.view.scale) || 1) > 1.4) ? 2 : 1.5;
+    const page = { paper: this.paperFor(this.cur), items: ((this.nb.pages[this.cur] || {}).items || []).filter((it) => !(this.dropTape && it && it.kind === 'tape')) };
+    const scale = 2;
     this.toast('正在导出 PNG…');
     try {
-      const blob = await pageToPng(page, { scale });
+      const blob = await pageToPng(page, { scale, renderPage });
       if (!blob) { this.toast('PNG 生成失败'); return; }
       downloadBlob(blob, `${safeName(this.nb.title)}-第${this.cur + 1}页.png`);
-      this.toast('当前页 PNG 已导出');
+      this.toast(`当前页 PNG 已导出（${scale}×）`);
     } catch (e) {
       this.toast('导出 PNG 失败：' + ((e && e.message) || '未知错误'));
     }

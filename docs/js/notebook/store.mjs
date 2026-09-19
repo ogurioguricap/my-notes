@@ -21,6 +21,39 @@ export const SCHEMA_VERSION = 3;
 export const DEFAULT_STORAGE_KEY = 'note-books-v1';
 export const TRASH_RETENTION_DAYS = 30;
 
+/** 关键词在文本里出现了几次（大小写不敏感；用于「命中 N 处」） */
+export function countHits(text, needle) {
+  const q = String(needle || '').trim().toLowerCase();
+  if (!q) return 0;
+  const hay = String(text || '').toLowerCase();
+  let n = 0, at = 0;
+  for (;;) {
+    const i = hay.indexOf(q, at);
+    if (i < 0) break;
+    n++;
+    at = i + q.length;
+  }
+  return n;
+}
+
+/**
+ * 取「命中位置前后一小段」当摘要（首页搜索里笔记本结果用）
+ * @returns {{excerpt:string, hits:number, at:number}}
+ */
+export function excerptAround(text, needle, { radius = 70, max = 220 } = {}) {
+  const src = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  const hits = countHits(src, needle);
+  if (!src) return { excerpt: '', hits: 0, at: -1 };
+  const q = String(needle || '').trim();
+  const i = q ? src.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return { excerpt: src.slice(0, max), hits: 0, at: -1 };
+  const start = Math.max(0, i - radius);
+  const end = Math.min(src.length, i + q.length + radius);
+  const head = start > 0 ? '…' : '';
+  const tail = end < src.length ? '…' : '';
+  return { excerpt: `${head}${src.slice(start, end)}${tail}`.slice(0, max + 2), hits, at: i };
+}
+
 /* ============================ 小工具 ============================ */
 
 let seq = 0;
@@ -523,7 +556,6 @@ export class NotebookStore {
   }
 
   /* ---------- 手写识别（OCR）结果 ---------- */
-
   /** 写入某页的识别文字（OCR 模块用它回填） */
   setPageOcr(bookId, pageId, { text, model } = {}) {
     const p = this.page(bookId, pageId);

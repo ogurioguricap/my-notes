@@ -100,6 +100,56 @@ export function pdfFromImages(images, o = {}) {
   return buf.bytes();
 }
 
+/** 导出画质档位（对齐「打印出来能不能看」这个真实需求） */
+export const PDF_QUALITY = [
+  { id: 'standard', label: '标准（96dpi）', scale: 1, quality: 0.86, hint: '文件小，屏幕看/发微信够用' },
+  { id: 'high', label: '高清（192dpi）', scale: 2, quality: 0.9, hint: '默认：打印清晰，体积约 4 倍' },
+  { id: 'print', label: '打印级（288dpi）', scale: 3, quality: 0.92, hint: '放大看细节、正式打印用，体积约 9 倍' },
+];
+
+export function qualityOf(id) { return PDF_QUALITY.find((q) => q.id === id) || PDF_QUALITY[1]; }
+
+/** 页面里用到的所有图片地址（去重） */
+export function imageSources(pages) {
+  const set = new Set();
+  for (const p of pages || []) {
+    for (const it of (p && p.items) || []) {
+      if (it && it.kind === 'image' && it.src) set.add(it.src);
+    }
+  }
+  return [...set];
+}
+
+/**
+ * 预加载页面里的图片：导出前等它们就位，否则 PDF 里会出现「图片」占位框
+ * @param {Array} pages
+ * @param {object} o { ImageImpl, timeoutMs }
+ */
+export function preloadImages(pages, { ImageImpl, timeoutMs = 8000 } = {}) {
+  const Impl = ImageImpl || (typeof Image === 'function' ? Image : null);
+  const srcs = imageSources(pages);
+  if (!Impl || !srcs.length) return Promise.resolve({ total: srcs.length, loaded: 0, failed: srcs.length ? srcs.length : 0, skipped: !Impl });
+  return new Promise((resolve) => {
+    let done = 0, loaded = 0, failed = 0;
+    const finish = () => resolve({ total: srcs.length, loaded, failed, skipped: false });
+    const tick = (ok) => {
+      done++;
+      if (ok) loaded++; else failed++;
+      if (done >= srcs.length) finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    for (const src of srcs) {
+      try {
+        const img = new Impl();
+        img.onload = () => { tick(!!(img.naturalWidth || img.width)); };
+        img.onerror = () => tick(false);
+        img.src = src;
+      } catch (e) { tick(false); }
+    }
+    if (!srcs.length) { clearTimeout(timer); finish(); }
+  });
+}
+
 /** 在浏览器里把一页渲染成 JPEG（导出 PDF / PNG 都用它） */
 export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage } = {}) {
   if (typeof document === 'undefined' || typeof renderPage !== 'function') return null;
@@ -116,19 +166,31 @@ export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage 
 }
 
 /**
- * 整本笔记本 → PDF Blob
+ * 整本笔记本 → PDF Blob（打印级）
  * @param {Array} pages [{ paper, items }]
- * @param {object} o { title, scale, render } render 可注入（测试用）
+ * @param {object} o { title, quality|scale, quality 值, render, renderPageImpl, dropTape, onProgress, waitImages }
+ *   · dropTape=true 时导出会跳过胶带（看答案用）
+ *   · 导出前会先等图片加载完，避免 PDF 里出现占位框
  */
 export async function buildPdf(pages, o = {}) {
-  const render = o.render || ((page) => {
-    const mod = o.renderPageImpl;
-    return defaultRenderJpeg(page, { scale: o.scale || 1, renderPage: mod });
-  });
+  const q = qualityOf(o.qualityId);
+  const scale = Number(o.scale) > 0 ? Number(o.scale) : q.scale;
+  const jpegQuality = Number(o.quality) > 0 ? Number(o.quality) : q.quality;
+  const list = (pages || []).map((p) => ({
+    paper: p && p.paper,
+    items: ((p && p.items) || []).filter((it) => !(o.dropTape && it && it.kind === 'tape')),
+  }));
+
+  if (o.waitImages !== false) {
+    try { await preloadImages(list, { ImageImpl: o.ImageImpl, timeoutMs: o.imageTimeoutMs }); } catch (e) { /* 图挂了也照样导 */ }
+  }
+
+  const render = o.render || ((page) => defaultRenderJpeg(page, { scale, quality: jpegQuality, renderPage: o.renderPageImpl }));
   const images = [];
-  for (const p of pages || []) {
-    const im = render(p);
+  for (let i = 0; i < list.length; i++) {
+    const im = render(list[i], i);
     if (im) images.push(im);
+    if (o.onProgress) { try { o.onProgress({ done: i + 1, total: list.length }); } catch (e) {} }
   }
   const bytes = pdfFromImages(images, { title: o.title });
   return new Blob([bytes], { type: 'application/pdf' });

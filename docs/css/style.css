@@ -408,6 +408,18 @@ img { max-width: 100%; height: auto; }
 .result-title .where { font-size: 11px; color: var(--text-faint); font-weight: 400; }
 .result-snippet { font-size: 13px; color: var(--text-soft); line-height: 1.65; }
 .result-snippet mark, .nb-card mark, .ql-body mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+/* 首页搜索里「笔记本（含手写识别）」那一段 */
+.search-block { margin-top: 22px; }
+.search-block-head {
+  font-size: 12.5px; font-weight: 650; color: var(--text-soft);
+  padding: 0 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.result-book { border-left: 4px solid var(--nb, var(--accent)); }
+.result-book::before {
+  content: ''; display: block; float: left; width: 0; height: 0;
+}
+.search-results .result-book + .result-book { margin-top: 10px; }
 
 /* ============================ 笔记本（正文） ============================ */
 .reader { display: grid; grid-template-columns: minmax(0, var(--content-max)) var(--toc-w); gap: 46px; justify-content: center; padding: 10px 26px 90px; }

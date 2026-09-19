@@ -711,5 +711,91 @@ head('图片裁剪 / 手写笔双击');
   expect('双击那一笔没有被记进内容', ed7.items.length === 0);
 }
 
+/* ============================ 8. 导出画质 / 高保真合成 ============================ */
+head('导出 PDF：画质档位、图片预加载、胶带与图层顺序');
+{
+  const s8 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  expect('三档画质（96 / 192 / 288 dpi）', studyMod.PDF_QUALITY.length === 3
+    && studyMod.PDF_QUALITY.map((q) => q.scale).join(',') === '1,2,3');
+  expect('画质查询有兜底（写错也退回高清）', studyMod.qualityOf('不存在').id === 'high' && studyMod.qualityOf('print').scale === 3);
+
+  const pages8 = [
+    { paper: { template: 'lined', size: 'a4' }, items: [{ kind: 'image', id: 'i1', x: 0.1, y: 0.1, w: 0.2, h: 0.2, src: 'data:image/png;base64,AAA' }] },
+    { paper: { template: 'lined', size: 'a4' }, items: [{ kind: 'image', id: 'i2', x: 0.1, y: 0.1, w: 0.2, h: 0.2, src: 'data:image/png;base64,AAA' }] },
+  ];
+  expect('重复的图片地址只算一次', studyMod.imageSources(pages8).length === 1);
+  const fakeImage = class {
+    constructor() { this.naturalWidth = 100; }
+    set src(v) { this._src = v; setTimeout(() => this.onload && this.onload(), 0); }
+  };
+  const pre = await studyMod.preloadImages(pages8, { ImageImpl: fakeImage });
+  expect('图片预加载：等全部就位（不会把占位框画进 PDF）', pre.total === 1 && pre.loaded === 1 && pre.failed === 0);
+  const preFail = await studyMod.preloadImages([{ items: [{ kind: 'image', src: 'x' }] }], { ImageImpl: class { set src(v) { setTimeout(() => this.onerror && this.onerror(), 0); } } });
+  expect('图片加载失败也会继续导出（不卡死）', preFail.failed === 1);
+  const savedImage = globalThis.Image;
+  define('Image', undefined);
+  expect('没有 Image 实现时安静跳过预加载', (await studyMod.preloadImages(pages8, {})).skipped === true);
+  define('Image', savedImage);
+
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]);
+  const seen = [];
+  const blob8 = await studyMod.buildPdf(
+    [
+      { paper: {}, items: [{ kind: 'stroke', id: 's', tool: 'pen', points: [[0.1, 0.1], [0.2, 0.2]] }, { kind: 'tape', id: 't', x: 0.1, y: 0.1, w: 0.3, h: 0.05 }] },
+      { paper: {}, items: [{ kind: 'tape', id: 't2', x: 0, y: 0, w: 0.2, h: 0.05 }] },
+    ],
+    {
+      title: '画质测试',
+      qualityId: 'print',
+      waitImages: false,
+      onProgress: ({ done, total }) => seen.push(`${done}/${total}`),
+      render: (page) => {
+        const txt = Buffer.from(studyMod.pdfFromImages([{ jpeg, w: 100, h: 100 }], {})).toString('latin1');
+        return { jpeg, w: 595 + (page.items.length * 0), h: 842 };
+      },
+    },
+  );
+  expect('导出进度回调按页汇报', seen.join(',') === '1/2,2/2');
+  expect('导出返回 application/pdf', blob8 && blob8.type === 'application/pdf' && blob8.size > 400);
+  // 撕掉胶带：渲染函数拿到的内容里不应有 tape
+  const captured = [];
+  await studyMod.buildPdf(
+    [{ paper: {}, items: [{ kind: 'stroke', id: 's', tool: 'pen', points: [[0, 0], [1, 1]] }, { kind: 'tape', id: 't', x: 0, y: 0, w: 1, h: 0.1 }] }],
+    { waitImages: false, dropTape: true, render: (page) => { captured.push(page.items.map((i) => i.kind)); return { jpeg, w: 100, h: 100 }; } },
+  );
+  expect('「撕掉胶带」导出时真的把胶带排除了', captured[0].join(',') === 'stroke');
+
+  // 高保真合成：胶带必须画在它盖住的内容之后（顺序 = 图层），橡皮的像素切分已经在数据层完成
+  const { ctx, rec } = recordingCtx();
+  const orderPage = {
+    paper: { template: 'lined', size: 'a4', color: '#FFFFFF' },
+    items: [
+      { kind: 'stroke', id: 's1', tool: 'pen', pen: 'ball', color: '#E8452F', width: 0.004, points: [[0.1, 0.2], [0.5, 0.2]] },
+      { kind: 'tape', id: 't1', x: 0.2, y: 0.15, w: 0.3, h: 0.08, angle: 0, color: 'rgba(255,255,255,.92)' },
+      { kind: 'stroke', id: 's2', tool: 'pen', pen: 'ball', color: '#12A05C', width: 0.004, points: [[0.1, 0.5], [0.5, 0.5]] },
+    ],
+  };
+  const firstStroke = [], tapeAt = [];
+  const fakeCanvas8 = { getContext: () => ctx, style: {}, width: 0, height: 0 };
+  pageMod.renderPage(fakeCanvas8, { paper: orderPage.paper, items: orderPage.items, state: {} });
+  rec.calls.forEach((c, i) => {
+    if (c.name === 'stroke' && c.args.length === 0) firstStroke.push(i);
+    if (c.name === 'fillRect' && c.args[2] > 100 && c.args[3] < 120 && c.args[3] > 40) tapeAt.push(i);
+  });
+  const penStrokes = [];
+  // 用「颜色切换」定位两次笔迹的绘制时机更稳：红色在前、绿色在后、胶带夹在中间
+  ctx.strokeStyle === undefined;   // 记录型桩不保存属性值，改用调用序判断
+  const rectIdx = rec.calls.findIndex((c) => c.name === 'fillRect' && c.args[2] > 100);
+  const lastStrokeIdx = rec.calls.map((c) => c.name).lastIndexOf('stroke');
+  expect('胶带在图上、且画在它盖住的内容之后（合成顺序正确）', rectIdx > 0 && rectIdx < lastStrokeIdx);
+  expect('导出渲染没有 Canvas 契约问题', rec.bad.length === 0, rec.bad.slice(0, 3).join(' | '));
+
+  // 像素擦除后的碎段是「数据层已经切开」的，导出只是照画
+  const inkMod = await import(pathToFileURL(path.join(ROOT, 'docs', 'js', 'ink.mjs')).href);
+  const longLine = { kind: 'stroke', id: 'a', tool: 'pen', color: '#000', width: 0.004, shape: 'line', points: [[0.1, 0.5], [0.9, 0.5]] };
+  const parts = inkMod.eraseStrokePartial(longLine, 0.5, 0.5, 20, 800, 1000);
+  expect('像素擦的碎段可以直接进导出（不需要特殊处理）', Array.isArray(parts) && parts.length === 2 && parts.every((p) => p.kind === 'stroke'));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

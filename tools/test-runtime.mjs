@@ -409,7 +409,22 @@ try {
     expect('「更多」菜单里有同步与 OCR 入口', hasSync || !!moreMenu, JSON.stringify(moreMenu));
   }
   expect('打开笔记本无运行期异常', errors.length === 0, errors.slice(-1).join(''));
-  // 收拾干净：回到资料库并删掉测试笔记本
+  // 首页全局搜索要能搜到笔记本里的手写识别结果
+  nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });
+  const sInput = documentStub.getElementById('searchInput');
+  if (sInput) {
+    sInput.value = '拉格朗日';
+    sInput.dispatchEvent({ type: 'input', target: sInput });
+    await sleep(350);
+    const bookHits = queryAll(docRoot, '.result-book', false);
+    const href = bookHits[0] ? String(bookHits[0].attrs.href || '') : '';
+    expect(`首页搜索能搜到笔记本手写内容（${bookHits.length} 条）`, bookHits.length >= 1, `href=${href}`);
+    expect('笔记本结果能点回那一本', href.includes(`/book/${nb.id}`) || href.includes(nb.id), href);
+    expect('结果摘要里带命中关键词高亮', String((bookHits[0] || {}).innerHTML || '').includes('<mark>') || String((bookHits[0] || {}).innerHTML || '').includes('拉格朗日'));
+    sInput.value = '';
+    sInput.dispatchEvent({ type: 'input', target: sInput });
+    await sleep(200);
+  }
   location.hash = '#/books';
   windowStub.dispatchEvent({ type: 'hashchange' });
   await sleep(200);

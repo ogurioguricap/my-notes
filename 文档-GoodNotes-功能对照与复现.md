@@ -18,7 +18,14 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **187 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **199 项断言，当前全绿** |
+
+### 第四批交付（全局搜索合并 / 打印级导出）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **首页全局搜索合并笔记本** | `app.js` 的 `runSearch` + `store.excerptAround/countHits` | 原来首页搜索只搜 Markdown 笔记；现在结果下方多出一段「笔记本（含手写识别）」，按笔记本聚合、显示命中处数、摘要围绕关键词截取并高亮，点一下直接跳回那一本（`.result-book`，左侧色条用封面配色）。只读探测 `peekBookStore()` 保证「没用过笔记本的人不会被凭空建一份空资料库」 |
+| **打印级 PDF 导出** | `study.mjs` 的 `PDF_QUALITY / qualityOf / preloadImages / buildPdf` + viewer 的导出菜单 | 三档画质（96 / 192 / 288 dpi，JPEG 质量 0.86/0.9/0.92）；**导出前预加载页面里的图片**（否则 PDF 里会出现「图片」占位框）；可选「导出时撕掉胶带」做看答案版；逐页进度回调；PNG 固定 2×。合成顺序有测试兜底：荧光笔先画（压字不糊）、胶带画在它盖住的内容之后、像素橡皮的切段在数据层就完成 |
 
 ### 第三批交付（手写可搜 / 笔记本进 git / 图片裁剪 / 手写笔双击）
 
@@ -63,7 +70,7 @@
 | 封面 Cover | 每本笔记本自定义封面颜色与图案 | 封面 12 色 × 6 花纹 + 标题首字标记（`paper.mjs` 的 `COVER_COLORS / COVER_PATTERNS / renderCover`）；新建与改封面两个入口都能选 | ✅ |
 | 网格 / 列表视图 | 资料库两种排布切换 | 网格 / 列表一键切换，偏好存 localStorage（`note-books-lib`） | ✅ |
 | 排序 Sort | 按更新时间 / 名称 / 日期排序 | 三种排序：最近打开 / 创建时间 / 标题（中文按 `zh-Hans-CN` 排）；收藏恒排前 | ✅ |
-| 搜索 Search | 跨全部笔记本搜索标题与内容 | 资料库搜索覆盖**标题 / 标签 / 文字摘要 / 已 OCR 的手写**（`store.notebooks({q})`，`snippetOf` 把 `page.ocr.text` 也算进去）；笔记本内可搜并标出「文字 / 手写识别」来源（`store.searchText` / `searchAll`）；原 Markdown 站的实时搜索仍覆盖正文/代码/图片附件文字。**前提**：手写要先在笔记本里跑一次 OCR | ✅ |
+| 搜索 Search | 跨全部笔记本搜索标题与内容 | **首页全局搜索已合并笔记本**（`app.js` 的 `runSearch`）：Markdown 结果 + 「笔记本（含手写识别）」一段（按本聚合、命中处数、关键词高亮、点击跳回）；资料库搜索覆盖**标题 / 标签 / 文字摘要 / 已 OCR 的手写**；笔记本内可搜并标出来源（`searchText` / `searchAll`）。**前提**：手写要先在笔记本里跑一次 OCR | ✅ |
 | 手写搜索（OCR） | 全书搜索手写内容，课上也能立刻查到 | **本期已交付**（`docs/js/notebook/ocr.mjs`）：把页面渲染成 JPEG → 交给 SiliconFlow 的 **Qwen3-VL**（8B 快 / 32B 准）识别 → 写回 `page.ocr` → 进入资料库与本笔记本搜索。三层保护：密钥只存本机 localStorage、默认只识别「没识别过的且非空白」的页、并发 3 线程 + 进度与错误中文提示（余额不足 / 限流 / 密钥无效分别给可操作方案）。另有「识别结果转成文本框」把手写变成可编辑文本 | ✅（需自备 API Key） |
 | 多选批量操作 Multi-select | 长按进入多选，批量移动/删除/打标签 | 多选模式 + 底部批量条：移入文件夹 / 加标签 / 收藏 / 复制 / 移到回收站（`library.mjs` 选态 + `sel-*` 动作） | ✅ |
 | 垃圾桶 Trash | 删除进垃圾桶，30 天内可恢复 | 回收站视图：恢复 / 彻底删除 / 清空 + 30 天自动清理提示（`TRASH_RETENTION_DAYS = 30`、`sweepTrash`） | ✅ |

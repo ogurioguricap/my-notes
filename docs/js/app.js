@@ -8,7 +8,7 @@ import { createGraph } from './graph.js';
 import { Editor, gh, ink as inkApi } from './editor.mjs';
 import { InkLayer } from './ink.mjs';
 import { InstallGuide, isStandalone } from './install.mjs';
-import { NotebookStore } from './notebook/store.mjs';
+import { NotebookStore, excerptAround } from './notebook/store.mjs';
 import { LibraryUI } from './notebook/library.mjs';
 import { NotebookView } from './notebook/viewer.mjs';
 import { renderDocument as renderDoc } from '../lib/markdown.mjs';
@@ -579,6 +579,25 @@ function handleCtxAction(act) {
 }
 
 /* ============================ 检索 ============================ */
+/** 只读地看看笔记本资料库是否存在（避免第一次搜索就凭空建一份空资料库） */
+function peekBookStore() {
+  if (bookStore) return bookStore;
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('note-books-v1')) return ensureBookStore();
+  } catch (e) {}
+  return null;
+}
+
+/** 笔记本（含手写 OCR）的命中：笔记本级 + 页面级 */
+function bookSearchHits(q) {
+  const store = peekBookStore();
+  if (!store) return { books: [], pages: [], total: 0 };
+  const books = store.notebooks({ q });
+  const pages = store.searchAll(q, { limit: 24 });
+  const total = pages.length || books.length;
+  return { books, pages, total };
+}
+
 function runSearch(q) {
   state.query = q;
   $('#searchClear').classList.toggle('on', !!q);
@@ -588,10 +607,13 @@ function runSearch(q) {
     return;
   }
   const hits = search(state.index, q, { category: state.category, limit: 60 });
+  const books = bookSearchHits(q);
   $('#searchHead').textContent = `搜索「${q}」`;
   $('#searchSub').textContent =
-    `${hits.length} 本笔记命中${state.category ? ` · 限分类「${state.category}」` : ''} · 范围：标题 / 正文 / 代码 / 标签 / 图表文字`;
-  $('#searchResults').innerHTML = hits.length
+    `${hits.length} 本笔记命中${books.total ? ` · 笔记本里还有 ${books.total} 处（含手写）` : ''}`
+    + `${state.category ? ` · 限分类「${state.category}」` : ''} · 范围：标题 / 正文 / 代码 / 标签 / 图表文字 / 笔记本内容`;
+
+  const noteHtml = hits.length
     ? hits
         .map((h) => {
           const note = state.bySlug.get(h.slug);
@@ -601,9 +623,39 @@ function runSearch(q) {
           </a>`;
         })
         .join('')
-    : `<div class="empty"><div class="big">🫥</div>没有匹配「${escapeHtml(q)}」的内容<br><span style="font-size:13px">试试更短的关键词，或换个说法</span></div>`;
+    : `<div class="empty"><div class="big">🫥</div>没有匹配「${escapeHtml(q)}」的 Markdown 笔记<br><span style="font-size:13px">试试更短的关键词，或换个说法</span></div>`;
+
+  // 笔记本命中（含手写识别结果）：按页聚合，点一下直接跳到那一页
+  let bookHtml = '';
+  if (books.pages.length) {
+    const byBook = new Map();
+    for (const p of books.pages) {
+      if (!byBook.has(p.bookId)) byBook.set(p.bookId, { title: p.title, pages: [] });
+      byBook.get(p.bookId).pages.push(p);
+    }
+    bookHtml = `<div class="search-block"><div class="search-block-head">笔记本（含手写识别）· ${books.pages.length} 处命中</div>
+      ${[...byBook.entries()].map(([id, g]) => {
+        const nb = bookStore ? bookStore.get(id) : null;
+        const cover = nb ? coverVarsForBook(nb) : '';
+        const first = g.pages[0];
+        const ex = excerptAround(first.excerpt || '', q);
+        return `<a class="result result-book" href="#/book/${encodeURIComponent(id)}" style="${cover}">
+          <span class="result-title">${escapeHtml(g.title)}<span class="where">${nb ? nb.pages.length : '?'} 页 · 命中 ${g.pages.length} 处 · ${escapeHtml(first.source)}</span></span>
+          <span class="result-snippet">${highlight(ex.excerpt || '', [q])}</span>
+        </a>`;
+      }).join('')}
+    </div>`;
+  }
+
+  $('#searchResults').innerHTML = noteHtml + bookHtml;
   setView('search');
   renderSidebar();
+}
+
+/** 笔记本封面配色（列表里用 --bk 上色） */
+function coverVarsForBook(nb) {
+  const c = (nb && nb.cover) || {};
+  return `--nb:${c.color || 'var(--accent)'}`;
 }
 
 /* ============================ 时间线 ============================ */
