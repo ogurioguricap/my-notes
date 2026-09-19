@@ -39,6 +39,7 @@ export function main() {
     'docs/js/notebook/store.mjs',
     'docs/js/notebook/study.mjs',
     'docs/js/notebook/ocr.mjs',
+    'docs/js/notebook/asr.mjs',
     'docs/js/notebook/sync.mjs',
     'docs/js/notebook/page.mjs',
     'docs/js/notebook/library.mjs',

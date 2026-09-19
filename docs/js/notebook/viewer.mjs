@@ -27,6 +27,9 @@ import {
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
 import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage } from './study.mjs';
+import {
+  ASR_MODELS, transcribeAudio, getAsrKey, setAsrKey,
+} from './asr.mjs';
 import { applyEdit } from '../../lib/site-build.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT, ocrImageDataUrl,
@@ -45,6 +48,15 @@ function nbEsc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** 把命中的关键词标出来（先转义再包 <mark>，避免注入） */
+function nbMark(text, query) {
+  const t = nbEsc(text);
+  const qq = String(query == null ? '' : query).trim();
+  if (!qq) return t;
+  const esc = nbEsc(qq).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try { return t.replace(new RegExp(esc, 'gi'), (m) => `<mark>${m}</mark>`); } catch (e) { return t; }
 }
 
 /** 文件名安全化（导出用） */
@@ -116,6 +128,7 @@ export class NotebookView {
     this.ocrRunning = false;
     this.ocrStatusText = '';
     this.ocrBoxes = true;       // 识别时顺带要行位置（PDF 文字层更准）
+    this.bookQuery = '';        // 本笔记本内搜索的关键词
     this.pdfQuality = 'high';   // standard / high / print
     this.dropTape = false;      // 导出时是否撕掉胶带
     this.textLayer = true;      // 导出 PDF 是否带可搜索文字层
@@ -161,6 +174,7 @@ export class NotebookView {
     <button class="nb-btn" type="button" data-act="panel" data-panel="pages">页面</button>
     <button class="nb-btn" type="button" data-act="panel" data-panel="outline">大纲</button>
     <button class="nb-btn" type="button" data-act="panel" data-panel="study">学习集</button>
+    <button class="nb-btn icon" type="button" data-act="panel" data-panel="search" title="本笔记本内搜索（含手写识别）">🔎</button>
     <button class="nb-btn icon" type="button" data-act="panel" data-panel="audio" title="录音">🎙</button>
     <button class="nb-btn" type="button" data-act="present">演示</button>
     <div class="nb-drop">
@@ -384,6 +398,11 @@ export class NotebookView {
       return;
     }
     if (key === 'trim') { this._trimN = Math.max(0, Math.min(12, Math.round(Number(v) || 0))); return; }
+    if (key === 'bookQuery') {
+      this.bookQuery = String(v || '');
+      this.renderBookSearch();
+      return;
+    }
 
     if (!this.editor) return;
     const ed = this.editor;
@@ -450,6 +469,11 @@ export class NotebookView {
     }
     if (act === 'exportLong') { this.exportLongImage(); return true; }
     if (act === 'ocrSelection') { this.recognizeSelection(); return true; }
+    if (act === 'gotoHit') {
+      const idx = Number(actEl.dataset.page);
+      if (Number.isFinite(idx)) { this.gotoPage(idx); this.closePanel(); }
+      return true;
+    }
     if (act === 'syncPush') { this.syncPush(); return true; }
     if (act === 'syncPull') { this.syncPull(); return true; }
     if (act === 'exportMd') { this.exportMarkdown(); return true; }
@@ -576,6 +600,13 @@ export class NotebookView {
     if (act === 'audioPlay') { this.audioPlay(actEl.dataset.id); return true; }
     if (act === 'audioStop') { this.audioStop(); return true; }
     if (act === 'audioDelete') { this.audioDelete(actEl.dataset.id); return true; }
+    if (act === 'audioTranscribe') { this.audioTranscribe(actEl.dataset.id); return true; }
+    if (act === 'audioTextClear') {
+      this.store.clearAudioText(this.bookId, actEl.dataset.id);
+      this.toast('已清掉这段录音的转写');
+      this.renderPanel();
+      return true;
+    }
     if (act === 'audioGoPage') { this.gotoPage(Number(actEl.dataset.page)); this.closePanel(); return true; }
 
     // ---- 纸张设置 ----
@@ -1669,10 +1700,47 @@ export class NotebookView {
     else if (k === 'audio') this.panelEl.innerHTML = this.markupAudioPanel();
     else if (k === 'paper') this.panelEl.innerHTML = this.markupPaperPanel();
     else if (k === 'ocr') this.panelEl.innerHTML = this.markupOcrPanel();
+    else if (k === 'search') this.panelEl.innerHTML = this.markupSearchPanel();
     if (k === 'study') { this.paintStudy(); this.renderStudyCard(); }
     if (k === 'audio') this.renderAudioLists();
     if (k === 'pages') this.paintPanelThumbs();
     if (k === 'ocr') this.renderOcrStatus();
+    if (k === 'search') this.renderBookSearch();
+    if (k === 'search') this.renderBookSearch();
+  }
+
+  /* ---------- 本笔记本内搜索（含手写识别结果） ---------- */
+
+  markupSearchPanel() {
+    const q = this.bookQuery || '';
+    const st = this.store.ocrStats(this.bookId);
+    return `${this.panelHead('本笔记本内搜索')}
+      <div class="nb-panel-body">
+        <input class="nb-input" id="nbBookQuery" data-x="bookQuery" type="search" value="${nbEsc(q)}"
+               placeholder="搜这一本里的文字与手写（手写要先跑一次 OCR）" autocomplete="off">
+        <div class="nb-hint">已识别 ${st.done}/${st.pages} 页手写；命中行会标出来源（文字 / 手写识别）。</div>
+        <div class="nb-search-hits" id="nbBookHits"></div>
+      </div>`;
+  }
+
+  renderBookSearch() {
+    const host = q(this.panelEl, '#nbBookHits');
+    if (!host) return;
+    const query = String(this.bookQuery || '').trim();
+    if (!query) {
+      host.innerHTML = '<div class="nb-hint">输入关键词开始搜索；结果点一下直接跳到那一页。</div>';
+      return;
+    }
+    const hits = this.store.searchText(this.bookId, query);
+    if (!hits.length) {
+      host.innerHTML = `<div class="nb-hint">没找到「${nbEsc(query)}」。<br>如果这页是手写，先去「更多 → 识别手写文字（OCR）」跑一次。</div>`;
+      return;
+    }
+    host.innerHTML = `<div class="nb-search-count">命中 ${hits.length} 页</div>` + hits.map((h) => `<button class="nb-search-hit" type="button" data-act="gotoHit" data-page="${h.index}">
+        <span class="nb-search-page">第 ${h.index + 1} 页</span>
+        <span class="nb-search-src">${nbEsc(h.source)}</span>
+        <span class="nb-search-text">${nbMark(h.excerpt || '', query)}</span>
+      </button>`).join('');
   }
 
   /* ---------- 手写识别（OCR）面板 ---------- */
@@ -2300,8 +2368,11 @@ export class NotebookView {
       </span>
       <progress class="nb-audio-bar" max="100" value="0"></progress>
       <button class="nb-btn" type="button" data-act="audioPlay" data-id="${nbEsc(a.id)}">▶ 播放</button>
+      <button class="nb-btn" type="button" data-act="audioTranscribe" data-id="${nbEsc(a.id)}" title="把这段录音转成文字，之后就能被搜索到">${a.text ? '重新转文字' : '转文字'}</button>
       <button class="nb-btn ghost icon" type="button" data-act="audioGoPage" data-page="${a.pageIndex || 0}" title="跳到这一页">↗</button>
       <button class="nb-btn ghost icon" type="button" data-act="audioDelete" data-id="${nbEsc(a.id)}" title="删除">🗑</button>
+      ${a.text ? `<div class="nb-audio-text">${nbEsc(a.text.slice(0, 600))}${a.text.length > 600 ? '…' : ''}
+        <button class="nb-btn ghost" type="button" data-act="audioTextClear" data-id="${nbEsc(a.id)}">清掉转写</button></div>` : ''}
     </div>`).join('');
   }
 
@@ -2422,8 +2493,28 @@ export class NotebookView {
     }
   }
 
-  async audioDelete(id) {
-    if (!id) return;
+  /** 把一段录音转成文字（用 SiliconFlow 的 ASR；与 OCR 共用同一家的 Key） */
+  async audioTranscribe(id) {
+    const key = getAsrKey() || getOcrKey();
+    if (!key) { this.toast('先在「识别手写文字（OCR）」里填一次 SiliconFlow Key（录音转写用的是同一家）'); return; }
+    const rec = (this.nb.audio || []).find((a) => a.id === id);
+    if (!rec) return;
+    this.toast('正在取录音并转写…');
+    try {
+      const blob = await this.store.getAudio(id);
+      if (!blob) { this.toast('这段录音的本体不在这台设备上（录音只存本机，不同步）'); return; }
+      const text = await transcribeAudio(blob, { apiKey: key, model: this.asrModel || ASR_MODELS[0].id, filename: `nb-${id}.webm` });
+      if (!text) { this.toast('这段录音没转出文字（可能是纯音乐或太吵）'); return; }
+      this.store.setAudioText(this.bookId, id, text, this.asrModel || ASR_MODELS[0].id);
+      this.toast(`转写完成（${text.length} 字）：现在这段录音的内容也能被搜到了`);
+      this.renderPanel();
+      try { this.onChanged(); } catch (e) {}
+    } catch (e) {
+      this.toast('转写失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  async audioDelete(id) {    if (!id) return;
     if (this.audio.playingId === id) this.audioStop();
     try { await this.store.removeAudio(this.bookId, id); } catch (e) {}
     this.toast('录音已删除');

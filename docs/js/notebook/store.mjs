@@ -284,7 +284,7 @@ export class NotebookStore {
     return list;
   }
 
-  /** 笔记本的文字摘要（文本对象 + 已识别的 OCR 手写），供搜索与卡片副标题用 */
+  /** 笔记本的文字摘要（文本对象 + 已识别的 OCR 手写 + 录音转写），供搜索与卡片副标题用 */
   snippetOf(nb) {
     const bits = [];
     for (const p of nb.pages || []) {
@@ -294,7 +294,11 @@ export class NotebookStore {
       if (p.ocr && p.ocr.text) bits.push(p.ocr.text.slice(0, 600));   // 手写识别结果也进搜索
       if (bits.length > 40) break;
     }
-    return bits.join(' ').slice(0, 900);
+    for (const a of nb.audio || []) {
+      if (a && a.text) bits.push(a.text.slice(0, 600));               // 录音转写也进搜索
+      if (bits.length > 60) break;
+    }
+    return bits.join(' ').slice(0, 1200);
   }
 
   stats() {
@@ -646,6 +650,22 @@ export class NotebookStore {
       if (ocr.toLowerCase().includes(q)) where.push('手写识别');
       if (where.length) hits.push({ pageId: p.id, index: i, source: where.join('+'), excerpt: (texts + '\n' + ocr).slice(0, 120) });
     });
+    // 录音转写命中的，挂到它当时所在的那一页
+    for (const a of nb.audio || []) {
+      const t = (a && a.text) || '';
+      if (!t || !t.toLowerCase().includes(q)) continue;
+      const idx = Math.max(0, nb.pages.findIndex((p) => p.id === a.pageId));
+      const page = nb.pages[idx];
+      if (!page) continue;
+      const exist = hits.find((h) => h.index === idx);
+      if (exist) {
+        if (!exist.source.includes('录音转写')) exist.source += '+录音转写';
+        exist.excerpt = `${exist.excerpt}\n${t}`.slice(0, 200);
+      } else {
+        hits.push({ pageId: page.id, index: idx, source: '录音转写', excerpt: t.slice(0, 160) });
+      }
+    }
+    hits.sort((a, b) => a.index - b.index);
     return hits;
   }
 
@@ -893,8 +913,42 @@ export class NotebookStore {
     return true;
   }
 
-  /** 录音回放时：找到「录到这段时正在写的那一页 / 那一笔」 */
-  audioAnchor(bookId, audioId, elapsedRatio = 0) {
+  /** 录音转写结果（ASR）：写回录音记录，于是音频内容也能被搜到 */
+  setAudioText(bookId, audioId, text, model = '') {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    const rec = (nb.audio || []).find((a) => a.id === audioId);
+    if (!rec) return null;
+    const clean = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 20000);
+    if (!clean) return rec;
+    rec.text = clean;
+    rec.asrModel = model || '';
+    rec.asrAt = Date.now();
+    this.touch(bookId);
+    return rec;
+  }
+
+  clearAudioText(bookId, audioId) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    const rec = (nb.audio || []).find((a) => a.id === audioId);
+    if (!rec) return null;
+    delete rec.text;
+    delete rec.asrModel;
+    delete rec.asrAt;
+    this.touch(bookId);
+    return rec;
+  }
+
+  /** 录音转写统计 */
+  audioStats(bookId) {
+    const nb = this.get(bookId);
+    const list = (nb && nb.audio) || [];
+    const done = list.filter((a) => a.text).length;
+    return { total: list.length, done, pending: list.length - done, chars: list.reduce((s, a) => s + ((a.text || '').length), 0) };
+  }
+
+  /** 录音回放时：找到「录到这段时正在写的那一页 / 那一笔」 */  audioAnchor(bookId, audioId, elapsedRatio = 0) {
     const nb = this.get(bookId);
     if (!nb) return null;
     const rec = nb.audio.find((a) => a.id === audioId);

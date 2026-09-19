@@ -1511,6 +1511,7 @@ async function boot() {
     renderBooks,
     openBook,
     books: () => ensureBookStore(),
+    bookView: () => bookView,
     debug: () => {
       const q = (s) => document.querySelector(s);
       const st = bookStore ? bookStore.stats() : null;

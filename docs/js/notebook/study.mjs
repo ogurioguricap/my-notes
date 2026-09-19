@@ -72,9 +72,21 @@ export function pdfFromImages(images, o = {}) {
   const descNum = baseCount + 2;
   const uniNum = baseCount + 3;
   const textCount = hasText ? 3 : 0;
+  const outlineCount = hasOutlines ? 1 + outlineList.length : 0;
   const outlineRootNum = baseCount + textCount + 1;
   const outlineFirstNum = outlineRootNum + 1;
-  const objCount = baseCount + textCount + (hasOutlines ? 1 + outlineList.length : 0);
+  // 页内链接：每页一组，对象编号接在目录后面
+  const linkPages = (Array.isArray(o.linkPages) ? o.linkPages : []).map((arr) => (Array.isArray(arr) ? arr : []));
+  const linksFlat = [];
+  for (let i = 0; i < n; i++) {
+    (linkPages[i] || []).forEach((l) => {
+      if (!l || !Array.isArray(l.rect) || !(Number(l.target) >= 1)) return;
+      linksFlat.push({ ...l, fromPage: i });
+    });
+  }
+  const linkStartNum = baseCount + textCount + outlineCount + 1;
+  linksFlat.forEach((x, idx) => { x.objNum = linkStartNum + idx; });
+  const objCount = baseCount + textCount + outlineCount + linksFlat.length;
   const push = (num, body) => {
     offsets[num] = buf.length;
     buf.push(`${num} 0 obj\n${body}\nendobj\n`);
@@ -95,10 +107,12 @@ export function pdfFromImages(images, o = {}) {
     const w = Math.max(1, Math.round(im.w || 595));
     const h = Math.max(1, Math.round(im.h || 842));
     const text = textPages[i] && String(textPages[i]).trim() ? String(textPages[i]) : '';
+    const myLinks = linksFlat.filter((x) => x.fromPage === i).map((x) => x.objNum);
+    const annots = myLinks.length ? ` /Annots [${myLinks.map((num) => `${num} 0 R`).join(' ')}]` : '';
     const res = text
       ? `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /Font << /F1 ${fontNum} 0 R >> /ProcSet [/PDF /Text /ImageC] >>`
       : `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /ProcSet [/PDF /ImageC] >>`;
-    push(pageNum, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] ${res} /Contents ${contentNum} 0 R >>`);
+    push(pageNum, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] ${res}${annots} /Contents ${contentNum} 0 R >>`);
     const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q` + (text ? `\n${text}` : '');
     push(contentNum, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
     offsets[imageNum] = buf.length;
@@ -129,6 +143,14 @@ export function pdfFromImages(images, o = {}) {
       if (i < outlineList.length - 1) parts.push(`/Next ${num + 1} 0 R`);
       push(num, `<< ${parts.join(' ')} >>`);
     });
+  }
+
+  if (linksFlat.length) {
+    for (const l of linksFlat) {
+      const targetPageNum = 3 + Math.min(n - 1, Math.max(0, Math.round(Number(l.target)) - 1)) * 3;
+      const r = l.rect.slice(0, 4).map((v) => Number(v).toFixed(2));
+      push(l.objNum, `<< /Type /Annot /Subtype /Link /Rect [${r.join(' ')}] /Border [0 0 0] /Dest [${targetPageNum} 0 R /Fit] >>`);
+    }
   }
 
   const xrefAt = buf.length;
@@ -259,6 +281,10 @@ export async function buildPdf(pages, o = {}) {
     textPages,
     toUnicode: cmap,
     outlines: o.outlines || [],
+    linkPages: o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => pageRefLinks(
+      { items: page.items, ocr: page.ocr },
+      { pageW: im.w || 794, pageH: im.h || 1123, pageCount: rendered.length },
+    ))),
   });
   return new Blob([bytes], { type: 'application/pdf' });
 }
@@ -517,6 +543,84 @@ export function outlinesFromNotebook(nb, { everyPageIfEmpty = false } = {}) {
     pages.forEach((p, i) => items.push({ title: `第 ${i + 1} 页`, pageIndex: i }));
   }
   return items;
+}
+
+/* ============================ PDF 页内链接（「见 P12」点得动） ============================ */
+
+/** 从一段文字里找出「第 N 页」「P12」这类页引用 */
+export function findPageRefs(text, { pageCount = 0 } = {}) {
+  const src = String(text == null ? '' : text);
+  const out = [];
+  const seen = new Set();
+  const patterns = [/第\s*(\d{1,3})\s*页/g, /[Pp]\.?\s*(\d{1,3})(?!\d)/g];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(src))) {
+      const page = Number(m[1]);
+      if (!(page >= 1)) continue;
+      if (pageCount && page > pageCount) continue;   // 指到本子外面的不算
+      const key = `${m.index}:${page}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ at: m.index, label: m[0].trim(), page });
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * 一页里所有可点的页引用 → PDF 链接注解（矩形用 PDF 用户空间：原点左下角）
+ *   · 文本框里的引用：按字符前缀宽度算矩形（和文字层同一套字体宽度估算）
+ *   · 手写识别出来的行：按行框内的字符比例切一段
+ */
+export function pageRefLinks(page, { pageW = 794, pageH = 1123, pageCount = 1 } = {}) {
+  const out = [];
+  const items = (page && page.items) || [];
+  for (const it of items) {
+    if (!it || it.kind !== 'text' || !it.text) continue;
+    const size = Number(it.size) || 0.026;
+    const px = Math.max(4, size * pageW);
+    const blockW = estimateTextSize(it.text, size).w * pageW;
+    const align = it.align || 'left';
+    const lines = String(it.text).split('\n');
+    lines.forEach((line, i) => {
+      const refs = findPageRefs(line, { pageCount });
+      if (!refs.length) return;
+      const lineW = estimateTextSize(line, size).w * pageW;
+      const baseX = (Number(it.x) || 0) * pageW
+        + (align === 'center' ? (blockW - lineW) / 2 : align === 'right' ? blockW - lineW : 0);
+      const yTop = (Number(it.y) || 0) * pageH + i * px * 1.36;
+      for (const ref of refs) {
+        const preW = estimateTextSize(line.slice(0, ref.at), size).w * pageW;
+        const midW = Math.max(6, estimateTextSize(ref.label, size).w * pageW);
+        out.push({
+          target: ref.page,
+          label: ref.label,
+          source: 'text',
+          rect: [baseX + preW, pageH - yTop - px, baseX + preW + midW, pageH - yTop + px * 0.25],
+        });
+      }
+    });
+  }
+  for (const l of ((page && page.ocr && page.ocr.lines) || [])) {
+    if (!l || !l.text || !Array.isArray(l.box)) continue;
+    const refs = findPageRefs(l.text, { pageCount });
+    if (!refs.length) continue;
+    const [x0, y0, x1, y1] = l.box;
+    const lineW = Math.max(1e-6, x1 - x0);
+    const total = Math.max(1e-6, estimateTextSize(l.text, 1).w);
+    for (const ref of refs) {
+      const preFrac = estimateTextSize(l.text.slice(0, ref.at), 1).w / total;
+      const midFrac = Math.max(0.02, estimateTextSize(ref.label, 1).w / total);
+      out.push({
+        target: ref.page,
+        label: ref.label,
+        source: 'ocr',
+        rect: [(x0 + preFrac * lineW) * pageW, (1 - y1) * pageH, (x0 + (preFrac + midFrac) * lineW) * pageW, (1 - y0) * pageH],
+      });
+    }
+  }
+  return out;
 }
 
 /* ============================ PDF 文本层（可搜索 / 可复制） ============================ */

@@ -1094,5 +1094,132 @@ head('PDF 目录 · 长图 · 选区识别 · 移动端手势');
   }
 }
 
+/* ============================ 12. 捏合锚点 / 笔记本内搜索 / PDF 内链 / 录音转写 ============================ */
+head('捏合锚点 · 笔记本内搜索 · PDF 内链 · 录音转写');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 6, 6, 0xFF, 0xD9]);
+
+  // --- 捏合以手指中点为锚点 ---
+  const anchor = pageMod.pinchAnchor({ n: 0.5, m: 0.5, rectW: 800, rectH: 1000, x0: 0, y0: 0, k: 2 });
+  expect('放大 2 倍时平移量把中点钉住（x = n·W·(1−k)）', anchor.x === -400 && anchor.y === -500);
+  expect('缩小时方向相反', pageMod.pinchAnchor({ n: 0.5, m: 0.5, rectW: 800, rectH: 1000, k: 0.5 }).x === 200);
+  expect('k=1（没缩放）时平移量不变', pageMod.pinchAnchor({ n: 0.3, m: 0.4, rectW: 800, rectH: 1000, x0: 12, y0: -8, k: 1 }).x === 12);
+  expect('锚点归一化坐标被夹在 0~1', pageMod.pinchAnchor({ n: 5, m: -3, rectW: 100, rectH: 100, k: 2 }).x === -100);
+  {
+    // 真实不变量：锚点那一页位置在缩放前后的屏幕位置一致
+    const ed = new pageMod.PageEditor({
+      canvas: makeStub('canvas'), host: makeStub('host'),
+      getPage: () => ({ pageId: 'p', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: [] }),
+      setItems: () => {}, onToast: () => {},
+    });
+    ed.setPage(0);
+    const H = ed._canvasHandlers;
+    const touch = (x, y, id) => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y, preventDefault() {} });
+    ed.setViewScale(1);
+    ed.setViewPan(0, 0);
+    H.pointerdown(touch(0, 0, 1));
+    H.pointerdown(touch(800, 0, 2));      // 中点 = 400（桩里画布宽 794，取 n≈0.5）
+    const n0 = ed._pinch.n;
+    const before = ed.view.x + n0 * ed._pinch.rectW * 1;
+    H.pointermove(touch(1600, 0, 2));     // 距离翻倍 → 放大 2 倍
+    const s1 = ed.view.scale;
+    const after = ed.view.x + n0 * ed._pinch.rectW * s1;
+    expect('缩放前后「手指按住的那一点」屏幕位置一致', Math.abs(before - after) < 1e-6, `before=${before} after=${after} scale=${s1}`);
+    H.pointerup(touch(1600, 0, 2));
+    H.pointerup(touch(0, 0, 1));
+  }
+
+  // --- 笔记本内搜索（含录音转写） ---
+  const s12 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b12 = s12.create({ title: '搜索本' });
+  s12.addPage(b12.id, { count: 1 });
+  const pgA = s12.get(b12.id).pages[0];
+  const pgB = s12.get(b12.id).pages[1];
+  s12.setItems(b12.id, pgA.id, [{ kind: 'text', id: 't', x: 0.1, y: 0.1, text: '导数定义与极限', size: 0.03, color: '#000' }]);
+  s12.setPageOcr(b12.id, pgB.id, { text: '手写里写着中值定理', lines: [] });
+  const audio12 = await s12.saveAudio(b12.id, { type: 'audio/webm', size: 1024 }, { pageId: pgA.id, pageIndex: 0, itemCount: 3, duration: 30 });
+  s12.setAudioText(b12.id, audio12.id, '这节课讲了导数与中值定理', 'test-model');
+  const hitA = s12.searchText(b12.id, '导数');
+  const hitB = s12.searchText(b12.id, '中值定理');
+  expect('页内搜索：文本对象命中并标来源', hitA.length === 1 && hitA[0].source.includes('文字') && hitA[0].source.includes('录音转写'));
+  expect('页内搜索：手写识别命中', hitB.some((h) => h.index === 1 && h.source.includes('手写识别')));
+  expect('录音转写的内容也能搜到（音频不再是搜索盲区）', hitB.some((h) => h.source.includes('录音转写')));
+  expect('搜索命中按页码排序', hitA.concat(hitB).every((h, i, arr) => i === 0 || arr[i - 1].index <= h.index));
+  expect('跨笔记本搜索也能命中录音转写', s12.searchAll('中值定理').length >= 1);
+  expect('资料库搜索命中录音转写', s12.notebooks({ q: '导数与中值定理' }).length === 1);
+  expect('录音转写统计', (() => { const st = s12.audioStats(b12.id); return st.total === 1 && st.done === 1 && st.chars > 5; })());
+  expect('清掉转写后搜不到了', (() => {
+    s12.clearAudioText(b12.id, audio12.id);
+    return !s12.searchText(b12.id, '这节课讲了').length && s12.audioStats(b12.id).done === 0;
+  })());
+
+  // --- PDF 内链 ---
+  expect('认出「第 N 页」', studyMod.findPageRefs('详见第 3 页', { pageCount: 5 })[0].page === 3);
+  expect('认出「P12 / p.12」', studyMod.findPageRefs('见 P12 与 p.4', { pageCount: 20 }).map((r) => r.page).join(',') === '12,4');
+  expect('指到本子外面的不认', studyMod.findPageRefs('第 99 页', { pageCount: 5 }).length === 0);
+  expect('同一处不重复计数', studyMod.findPageRefs('第 2 页、第 2 页', { pageCount: 5 }).length === 2);
+  const linkPage = {
+    items: [{ kind: 'text', id: 't', x: 0.1, y: 0.2, text: '见第 2 页', size: 0.03, color: '#000' }],
+    ocr: { text: '参考 P3', lines: [{ text: '参考 P3', box: [0.2, 0.5, 0.6, 0.55] }] },
+  };
+  const links12 = studyMod.pageRefLinks(linkPage, { pageW: 794, pageH: 1123, pageCount: 3 });
+  expect('一页里同时有文本框引用与手写引用时都能生成链接', links12.length === 2 && links12[0].target === 2 && links12[1].target === 3);
+  expect('链接矩形在页面范围内且有宽度', links12.every((l) => l.rect[0] >= 0 && l.rect[2] <= 794 && l.rect[2] > l.rect[0] && l.rect[3] > l.rect[1]));
+  {
+    const blob12 = await studyMod.buildPdf([linkPage, { paper: {}, items: [] }, { paper: {}, items: [] }], {
+      waitImages: false, render: () => ({ jpeg, w: 794, h: 1123 }),
+    });
+    const t12 = Buffer.from(new Uint8Array(await blob12.arrayBuffer())).toString('latin1');
+    expect('PDF 里写出 /Annots 与 Link 注解', t12.includes('/Annots [') && (t12.match(/\/Subtype \/Link/g) || []).length === 2);
+    expect('链接指向正确页（/Dest 里是目标页对象）', (() => {
+      const pageObj = (n) => 3 + (n - 1) * 3;   // 第 N 页（1 起）的 Page 对象号
+      return t12.includes(`/Dest [${pageObj(2)} 0 R /Fit]`) && t12.includes(`/Dest [${pageObj(3)} 0 R /Fit]`);
+    })());
+    expect('带内链后对象偏移与 startxref 仍正确', (() => {
+      const xref = /xref\n0 \d+\n([\s\S]*?)trailer/.exec(t12);
+      if (!xref) return false;
+      const offs = xref[1].trim().split('\n').map((l) => Number(l.slice(0, 10)));
+      return offs.slice(1).every((off, i) => t12.startsWith(`${i + 1} 0 obj`, off)) && Number(/startxref\n(\d+)/.exec(t12)[1]) === t12.indexOf('xref');
+    })());
+    const noLinks = await studyMod.buildPdf([{ paper: {}, items: [{ kind: 'text', id: 'x', x: 0, y: 0, text: '第 1 页', size: 0.03 }] }], {
+      waitImages: false, links: false, render: () => ({ jpeg, w: 300, h: 300 }),
+    });
+    const tNo = Buffer.from(new Uint8Array(await noLinks.arrayBuffer())).toString('latin1');
+    expect('可以整体关掉内链', !tNo.includes('/Subtype /Link'));
+  }
+
+  // --- 录音转写（ASR） ---
+  const asrMod = await import(pathToFileURL(path.join(dir, 'asr.mjs')).href);
+  expect('转写端点与模型清单就绪', asrMod.ASR_ENDPOINT.includes('/audio/transcriptions') && asrMod.ASR_MODELS.length >= 2);
+  const form = asrMod.buildAsrForm(new Blob([new Uint8Array([1, 2])], { type: 'audio/webm' }), { model: 'm/test' });
+  expect('表单里带上 file / model / language', form && form.get('model') === 'm/test' && form.get('language') === 'zh' && !!form.get('file'));
+  expect('响应解析：text / results 两种都认', asrMod.parseAsrResponse({ text: '你好' }) === '你好' && asrMod.parseAsrResponse({ results: [{ text: 'A' }, { text: 'B' }] }) === 'A\nB');
+  expect('响应为空时明确报错', (() => { try { asrMod.parseAsrResponse({}); return false; } catch (e) { return /没有返回/.test(e.message); } })());
+  expect('录音真的没声音时返回空串（不报错，交给界面提示）', asrMod.parseAsrResponse({ text: '' }) === '');
+  expect('错误提示接地气（余额 / 密钥 / 超时）', /充值/.test(asrMod.asrErrorHint(402, {})) && /密钥/.test(asrMod.asrErrorHint(401, {})) && /重复制|太大|故障|频繁/.test(asrMod.asrErrorHint(500, {})));
+  expect('没填 Key 时给的是可操作提示', await asrMod.transcribeAudio(new Blob([new Uint8Array([1])]), { apiKey: '' }).then(() => false, (e) => /API Key/.test(e.message)));
+  {
+    const calls = [];
+    const fakeFetch = async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ text: '这节课讲了马尔可夫链' }) };
+    };
+    const text = await asrMod.transcribeAudio(new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/webm' }), { apiKey: 'sk-test', fetchImpl: fakeFetch });
+    expect('转写请求走对端点、带 Bearer、body 是 multipart', calls.length === 1 && calls[0].url === asrMod.ASR_ENDPOINT && /^Bearer sk-/.test(calls[0].init.headers.Authorization) && calls[0].init.body instanceof FormData);
+    expect('转写结果落成文字', text === '这节课讲了马尔可夫链');
+    const bad = await asrMod.transcribeAudio(new Blob([new Uint8Array([1])]), {
+      apiKey: 'sk', fetchImpl: async () => ({ ok: false, status: 402, json: async () => ({}) }),
+    }).then(() => '', (e) => e.message);
+    expect('余额不足时报中文原因', /充值/.test(bad));
+  }
+  expect('转写 Key 的读写（存储桩）', (() => {
+    const mem = storeMod.memoryStorage();
+    asrMod.setAsrKey(mem, ' sk-asr ');
+    const got = asrMod.getAsrKey(mem);
+    asrMod.setAsrKey(mem, '');
+    return got === 'sk-asr' && asrMod.getAsrKey(mem) === '';
+  })());
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

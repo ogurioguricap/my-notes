@@ -328,6 +328,22 @@ export function pinchScale(startDist, nowDist, startScale, { min = 0.4, max = 4 
   return Math.max(min, Math.min(max, s0 * (b / a)));
 }
 
+/**
+ * 捏合时「手指按住的那一点」保持不动 —— 算出新的平移量
+ * 画布用 transform: translate(x,y) scale(s)（origin 0 0），所以某个归一化位置 n 的屏幕位置是
+ *   layoutLeft + x + n * layoutW * s
+ * 让它在缩放前后不变，就得到 x' = x + n * rectW * (1 - k)，k = s'/s
+ */
+export function pinchAnchor({ n = 0.5, m = 0.5, rectW = 0, rectH = 0, x0 = 0, y0 = 0, k = 1 } = {}) {
+  const cx = Math.min(1, Math.max(0, Number(n) || 0));
+  const cy = Math.min(1, Math.max(0, Number(m) || 0));
+  const kk = Number(k) || 1;
+  return {
+    x: Number(x0) + cx * Number(rectW) * (1 - kk),
+    y: Number(y0) + cy * Number(rectH) * (1 - kk),
+  };
+}
+
 export function cropPixels(item, rel = { x: 0, y: 0, w: 1, h: 1 }, { pageW = 800, pageH = 1000, natural = null } = {}) {
   const x = Math.min(1, Math.max(0, Number(rel.x) || 0));
   const y = Math.min(1, Math.max(0, Number(rel.y) || 0));
@@ -1015,8 +1031,22 @@ export class PageEditor {
       if (e.pointerType === 'touch') {
         touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (touches.size >= 2) {
-          // 双指：进入捏合缩放（并放弃正在画的那一笔）
-          this._pinch = { dist: pinchState(), scale: this.view.scale };
+          // 双指：进入捏合缩放（并放弃正在画的那一笔）；记下手指中点，缩放时让它保持不动
+          const list = [...touches.values()];
+          const mid = { x: (list[0].x + list[1].x) / 2, y: (list[0].y + list[1].y) / 2 };
+          const rect = this.canvas && this.canvas.getBoundingClientRect
+            ? this.canvas.getBoundingClientRect()
+            : { left: 0, top: 0, width: this.cssW || 800, height: this.cssH || 1000 };
+          this._pinch = {
+            dist: pinchState(),
+            scale: this.view.scale,
+            x0: this.view.x,
+            y0: this.view.y,
+            rectW: rect.width,
+            rectH: rect.height,
+            n: rect.width ? Math.min(1, Math.max(0, (mid.x - rect.left) / rect.width)) : 0.5,
+            m: rect.height ? Math.min(1, Math.max(0, (mid.y - rect.top) / rect.height)) : 0.5,
+          };
           this.abortGesture();
           return;
         }
@@ -1047,7 +1077,16 @@ export class PageEditor {
         if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (this._pinch && touches.size >= 2) {
           const s = pinchScale(this._pinch.dist, pinchState(), this._pinch.scale);
-          if (Math.abs(s - this.view.scale) > 0.01) this.setViewScale(s);
+          if (Math.abs(s - this.view.scale) > 0.004) {
+            const k = this._pinch.scale ? s / this._pinch.scale : 1;
+            const at = pinchAnchor({
+              n: this._pinch.n, m: this._pinch.m,
+              rectW: this._pinch.rectW, rectH: this._pinch.rectH,
+              x0: this._pinch.x0, y0: this._pinch.y0, k,
+            });
+            this.setViewScale(s);
+            this.setViewPan(at.x, at.y);   // 手指中点保持不动
+          }
           return;   // 捏合时不落笔
         }
       }

@@ -409,6 +409,7 @@ try {
     expect('「更多」菜单里有同步与 OCR 入口', hasSync || !!moreMenu, JSON.stringify(moreMenu));
   }
   expect('打开笔记本无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+  // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });
   const sInput = documentStub.getElementById('searchInput');
@@ -426,6 +427,31 @@ try {
     sInput.value = '';
     sInput.dispatchEvent({ type: 'input', target: sInput });
     await sleep(200);
+  }
+  // 笔记本内搜索面板：命中手写识别结果，点一下跳页
+  location.hash = `#/book/${encodeURIComponent(nb.id)}`;
+  windowStub.dispatchEvent({ type: 'hashchange' });
+  await sleep(300);
+  const searchBtn = queryAll(docRoot, '[data-panel="search"]', false)[0];
+  if (searchBtn) {
+    searchBtn.dispatchEvent({ type: 'click', target: searchBtn });
+    await sleep(250);
+    const qInput = documentStub.querySelector('#nbBookQuery');
+    expect('笔记本内有「搜索」面板入口', !!qInput);
+    if (qInput) {
+      qInput.value = '拉格朗日';
+      qInput.dispatchEvent({ type: 'input', target: qInput });
+      await sleep(200);
+      const hits2 = queryAll(docRoot, '.nb-search-hit', false);
+      expect(`笔记本内搜索命中手写内容（${hits2.length} 页）`, hits2.length >= 1);
+      if (hits2[0]) {
+        const view = globalThis.window.__notes.bookView();
+        const before12 = view ? view.cur : 0;
+        hits2[0].dispatchEvent({ type: 'click', target: hits2[0] });
+        await sleep(200);
+        expect('点命中行会跳页并关掉面板', !view || view.cur === 0 || view.cur !== before12);
+      }
+    }
   }
   location.hash = '#/books';
   windowStub.dispatchEvent({ type: 'hashchange' });

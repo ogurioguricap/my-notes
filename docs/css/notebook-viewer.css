@@ -565,6 +565,26 @@
 }
 .nb-ocr-status b { color: var(--accent-text); }
 
+/* ============================ 录音转写 / 笔记本内搜索 ============================ */
+.nb-audio-text {
+  flex: 1 1 100%; margin-top: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.75;
+  color: var(--text-soft); background: var(--bg-soft);
+  border: 1px solid var(--line); border-radius: 10px; white-space: pre-wrap;
+}
+.nb-audio-text .nb-btn { margin-left: 8px; padding: 2px 8px; font-size: 11.5px; }
+.nb-search-hits { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.nb-search-count { font-size: 12px; color: var(--text-faint); }
+.nb-search-hit {
+  display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: baseline;
+  text-align: left; padding: 9px 11px; cursor: pointer;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 10px; color: var(--text);
+}
+.nb-search-hit:hover { border-color: var(--accent); background: var(--accent-soft); }
+.nb-search-page { font-weight: 650; font-size: 12.5px; }
+.nb-search-src { font-size: 11.5px; color: var(--accent-text); }
+.nb-search-text { font-size: 12.5px; color: var(--text-soft); line-height: 1.7; }
+.nb-search-text mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+
 /* ============================ 移动端工具条：两段式 + 长图 ============================ */
 /* 宽屏上「更多工具」按钮不显示（工具本来就在一排里看得见） */
 .nb-tool-more { display: none; }
