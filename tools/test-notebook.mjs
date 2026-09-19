@@ -535,5 +535,181 @@ expect('summarizePage 从页面文本对象里取文', studyMod.summarizePage([{
 const stats = studyMod.deckStats(store, nb.id);
 expect('学习集统计（总数/到期/掌握）', stats.total >= 3 && typeof stats.due === 'number' && typeof stats.mastered === 'number');
 
+/* ============================ 5. 手写识别（OCR） ============================ */
+head('手写识别（OCR）：让手写也能被搜到');
+const ocrMod = await import(pathToFileURL(path.join(dir, 'ocr.mjs')).href);
+{
+  const body = ocrMod.buildOcrBody('data:image/jpeg;base64,AAA', { model: ocrMod.OCR_MODELS[1].id });
+  expect('请求体是 OpenAI 兼容格式（文本 + 图片两部分）',
+    body.model === ocrMod.OCR_MODELS[1].id && body.messages[0].content.length === 2
+    && body.messages[0].content[1].image_url.url.startsWith('data:image/jpeg'));
+  expect('识别提示词要求保留排版 / 表格 / 公式', /表格/.test(ocrMod.OCR_PROMPT) && /公式/.test(ocrMod.OCR_PROMPT));
+  expect('响应解析：取出正文并去掉代码围栏', ocrMod.parseOcrResponse({ choices: [{ message: { content: '```\n导数定义\n```' } }] }) === '导数定义');
+  expect('响应解析：数组形式的内容也能读', ocrMod.parseOcrResponse({ choices: [{ message: { content: [{ text: 'A' }, { text: 'B' }] } }] }) === 'A\nB');
+  expect('空结果会明确报错', (() => { try { ocrMod.parseOcrResponse({}); return false; } catch (e) { return /空结果/.test(e.message); } })());
+  expect('余额不足给的是「去充值」而不是一串英文', /余额不足/.test(ocrMod.ocrErrorHint(402, {})) && /余额不足/.test(ocrMod.ocrErrorHint(200, { error: { code: 30001 } })));
+  expect('密钥无效 / 限流 / 服务故障都有中文提示',
+    /密钥无效/.test(ocrMod.ocrErrorHint(401, {})) && /太频繁/.test(ocrMod.ocrErrorHint(429, {})) && /故障/.test(ocrMod.ocrErrorHint(500, {})));
+  expect('文本清洗：压掉多余空行并限长', ocrMod.normalizeOcrText('a\n\n\n\nb') === 'a\n\nb' && ocrMod.normalizeOcrText('x'.repeat(20000)).length <= ocrMod.MAX_OCR_CHARS + 1);
+  expect('渲染倍率落在 1~2.4 之间', (() => { const s = ocrMod.ocrRenderScale({ w: 794, h: 1123 }); return s >= 1 && s <= 2.4; })());
+  expect('模型清单含 8B（快）与 32B（准）', ocrMod.OCR_MODELS.some((m) => m.id.includes('8B')) && ocrMod.OCR_MODELS.some((m) => m.id.includes('32B')));
+  expect('没填密钥时给的是可操作提示', await ocrMod.ocrImageDataUrl('data:image/jpeg;base64,AA', { apiKey: '' }).then(() => false, (e) => /API Key/.test(e.message)));
+  expect('密钥读写（存储桩）', (() => {
+    const mem = storeMod.memoryStorage();
+    ocrMod.setOcrKey(mem, ' sk-abc ');
+    const got = ocrMod.getOcrKey(mem);
+    ocrMod.setOcrKey(mem, '');
+    return got === 'sk-abc' && ocrMod.getOcrKey(mem) === '' && ocrMod.hasOcrKey(mem) === false;
+  })());
+  const pool = await ocrMod.runPool([1, 2, 3, 4, 5], async (n) => n * 2, { concurrency: 2 });
+  expect('并发池：结果保序且统计正确', pool.results.map((r) => r.value).join(',') === '2,4,6,8,10' && pool.done === 5 && pool.failed === 0);
+  const pool2 = await ocrMod.runPool([1, 2], async () => { throw new Error('boom'); }, { concurrency: 2 });
+  expect('并发池：失败被捕获并计数', pool2.failed === 2 && pool2.results[0].ok === false);
+  expect('进度文案含百分比', /50%/.test(ocrMod.progressText(1, 2, 0)));
+
+  // 假 fetch 跑通「识别 → 落回页面 → 可被搜到」这条链
+  const s5 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b5 = s5.create({ title: '手写识别本' });
+  s5.addPage(b5.id, { count: 1 });
+  s5.setItems(b5.id, s5.get(b5.id).pages[0].id, [{ kind: 'stroke', id: 'k', tool: 'pen', pen: 'fountain', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.3, 0.3]] }]);
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '拉格朗日中值定理 f(ξ)=0' } }] }) };
+  };
+  const fakeRender = (canvas) => { if (canvas) canvas.toDataURL = () => 'data:image/jpeg;base64,QQ=='; return { w: 794, h: 1123 }; };
+  const withInk = s5.get(b5.id).pages.findIndex((p) => (p.items || []).length);
+  const res5 = await ocrMod.ocrNotebook(s5, b5.id, { apiKey: 'sk-test', onlyMissing: true, renderPage: fakeRender, fetchImpl: fakeFetch, onProgress: () => {} });
+  expect('识别流程跑通并写回页面', res5.done === 1 && !!s5.get(b5.id).pages[withInk].ocr);
+  expect('请求发往 SiliconFlow 且带 Bearer 头', calls.length === 1 && calls[0].url === ocrMod.OCR_ENDPOINT && /^Bearer sk-/.test(calls[0].init.headers.Authorization));
+  expect('识别结果进了页内搜索（来源标「手写识别」）', s5.searchText(b5.id, '拉格朗日').length === 1 && s5.searchText(b5.id, '拉格朗日')[0].source.includes('手写识别'));
+  expect('跨笔记本搜索也能搜到手写', s5.searchAll('ξ').length === 1 && s5.searchAll('ξ')[0].bookId === b5.id);
+  expect('资料库搜索能命中手写内容', s5.notebooks({ q: '拉格朗日' }).length === 1);
+  expect('OCR 统计（页数 / 已识别 / 字数）', (() => { const st = s5.ocrStats(b5.id); return st.pages === 2 && st.done === 1 && st.chars > 5; })());
+  expect('空白页不会被白花钱识别', ocrMod.pickPagesToOcr(s5.get(b5.id), { onlyMissing: true }).length === 0);
+  expect('清掉识别结果后搜索就搜不到了', (() => {
+    s5.clearPageOcr(b5.id, s5.get(b5.id).pages[withInk].id);
+    return s5.searchText(b5.id, '拉格朗日').length === 0;
+  })());
+}
+
+/* ============================ 6. 与仓库同步 ============================ */
+head('与仓库同步（笔记本也交给 git 管）');
+{
+  const sync = await import(pathToFileURL(path.join(dir, 'sync.mjs')).href);
+  expect('落点路径符合站点约定', sync.notebookPath('bk1') === 'content/notebooks/bk1.json' && sync.publicPath('bk1') === 'docs/notebooks/bk1.json' && sync.PUBLIC_INDEX === 'docs/notebooks/index.json');
+  const s6 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b6 = s6.create({ title: '同步本' });
+  const packed = sync.serializeNotebook(s6.get(b6.id));
+  expect('序列化能解析回来', /GoodNotes|我的笔记/.test(JSON.parse(packed).app) && sync.parseNotebookJson(packed).title === '同步本');
+  expect('录音只留元数据（音频本体留在本机）', Array.isArray(JSON.parse(packed).notebook.audio));
+  expect('导入非法 JSON 会报错', (() => { try { sync.parseNotebookJson('{"nope":1}'); return false; } catch (e) { return /不是本站的笔记本/.test(e.message); } })());
+  const local = { id: 'a', title: '本地', pages: [], updatedAt: 5000 };
+  const remoteNew = { id: 'a', title: '远端', pages: [], updatedAt: 9000 };
+  const remoteOld = { id: 'a', title: '远端旧', pages: [], updatedAt: 1000 };
+  expect('冲突判定：远端更新 → 拉取', sync.decisionFor(local, remoteNew) === 'pull');
+  expect('冲突判定：本地更新 → 推送', sync.decisionFor(local, remoteOld) === 'push');
+  expect('冲突判定：时间几乎一样 → 不动（避免来回横跳）', sync.decisionFor({ updatedAt: 5000 }, { updatedAt: 5200 }) === 'same');
+  expect('冲突判定：一边没有 → 新建', sync.decisionFor(null, remoteNew) === 'create-local' && sync.decisionFor(local, null) === 'create-remote');
+  const plan = sync.planSync([{ id: 'a', title: '本地', updatedAt: 2000 }, { id: 'c', title: '只在本地', updatedAt: 1 }], [remoteNew, { id: 'b', title: '只在远端', updatedAt: 300 }]);
+  expect('同步计划：该拉的拉、该推的推', plan.some((p) => p.id === 'a' && p.action === 'pull') && plan.some((p) => p.id === 'b' && p.action === 'create-local') && plan.some((p) => p.id === 'c' && p.action === 'create-remote'));
+  const idx = JSON.parse(sync.buildRemoteIndex([s6.get(b6.id)]));
+  expect('线上目录含标题 / 页数 / 识别进度', idx.notebooks.length === 1 && idx.notebooks[0].pages === 1 && idx.notebooks[0].ocr === 0);
+  expect('线上目录能解析回来（坏数据不炸）', sync.parseRemoteIndex(JSON.stringify(idx)).length === 1 && sync.parseRemoteIndex('坏数据').length === 0);
+
+  const files = new Map();
+  let shaN = 0;
+  const fakeGh = {
+    configured: () => true,
+    getFile: async (p) => (files.has(p) ? { sha: String(++shaN), text: files.get(p) } : null),
+    putFile: async (p, text) => { files.set(p, text); return { ok: true }; },
+  };
+  const pushRes = await sync.pushNotebook(fakeGh, s6, b6.id, { alsoIndex: true });
+  expect('推送：正文 + 线上副本 + 目录三处都写了',
+    files.has(`content/notebooks/${b6.id}.json`) && files.has(`docs/notebooks/${b6.id}.json`) && files.has('docs/notebooks/index.json'));
+  expect('推送返回体积与索引状态', pushRes.ok && pushRes.bytes > 100 && pushRes.indexOk === true);
+  const allRes = await sync.pushAll(fakeGh, s6, {});
+  expect('整库推送：数量对得上', allRes.total === 1 && allRes.ok === 1 && allRes.failed === 0);
+  const remoteVer = JSON.parse(files.get(`content/notebooks/${b6.id}.json`));
+  remoteVer.notebook.title = '远端改过的标题';
+  remoteVer.notebook.updatedAt = Date.now() + 60000;
+  files.set(`content/notebooks/${b6.id}.json`, JSON.stringify(remoteVer));
+  const pullRes = await sync.pullNotebook(fakeGh, s6, b6.id, {});
+  expect('拉取：远端更新时覆盖本地', pullRes.action === 'pull' && s6.get(b6.id).title === '远端改过的标题');
+  expect('拉取前把本地存成本机备份（不丢东西）', !!pullRes.backup && s6.get(pullRes.backup).title.includes('本机备份'));
+  expect('两边一样时不折腾', (await sync.pullNotebook(fakeGh, s6, b6.id, {})).action === 'same');
+  const fakeFetch2 = async (url) => ({ ok: true, status: 200, text: async () => (String(url).includes('index.json') ? files.get('docs/notebooks/index.json') : files.get(`docs/notebooks/${b6.id}.json`)) });
+  const remoteIdx = await sync.fetchPublicIndex(fakeFetch2, '');
+  expect('免令牌读线上目录', remoteIdx.length === 1 && remoteIdx[0].id === b6.id && remoteIdx[0].pages === 1);
+  const imported = await sync.pullFromPublicSite(s6, b6.id, fakeFetch2, '');
+  expect('免令牌导入线上笔记本（本地已有则存副本）', imported.renamed === true && s6.stats().notebooks >= 3);
+  expect('线上没有时安静返回空列表', (await sync.fetchPublicIndex(async () => ({ ok: false, status: 404 }), '')).length === 0);
+}
+
+/* ============================ 7. 图片裁剪 & 手写笔双击 ============================ */
+head('图片裁剪 / 手写笔双击');
+{
+  const img = { kind: 'image', id: 'im1', x: 0.2, y: 0.2, w: 0.4, h: 0.4, src: 'data:image/png;base64,AA' };
+  const px = pageMod.cropPixels(img, { x: 0.25, y: 0, w: 0.5, h: 1 }, { pageW: 800, pageH: 1000, natural: { w: 400, h: 400 } });
+  expect('裁剪换算：源矩形按原图像素算', px.src.x === 100 && px.src.w === 200 && px.src.h === 400);
+  expect('裁剪换算：新的页面几何对得上', Math.abs(px.next.x - 0.3) < 1e-9 && Math.abs(px.next.w - 0.2) < 1e-9);
+  expect('裁剪框不会拖到图外面', (() => {
+    const r = pageMod.dragCrop(img, { x: 0.1, y: 0.1, w: 0.5, h: 0.5 }, 'move', 9999, 9999, { pageW: 800, pageH: 1000 });
+    return Math.abs(r.x - 0.5) < 1e-9 && Math.abs(r.y - 0.5) < 1e-9;
+  })());
+  expect('拖角点缩到最小尺寸就不再缩了', (() => {
+    const r = pageMod.dragCrop(img, { x: 0, y: 0, w: 1, h: 1 }, 'se', -9999, -9999, { pageW: 800, pageH: 1000 });
+    return r.w >= 0.05 && r.h >= 0.05;
+  })());
+  expect('八个控制点都在框上', (() => {
+    const hs = pageMod.cropHandles(img, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }, { pageW: 800, pageH: 1000 });
+    return hs.length === 8 && hs.some((h) => h.id === 'nw') && hs.some((h) => h.id === 'se');
+  })());
+  expect('手写笔双击：同位置快速两下算双击', pageMod.isPenDoubleTap({ x: 100, y: 100, t: 1000 }, { x: 104, y: 103, t: 1250 }) === true);
+  expect('手写笔双击：太慢 / 太远都不算', pageMod.isPenDoubleTap({ x: 100, y: 100, t: 1000 }, { x: 104, y: 103, t: 2000 }) === false
+    && pageMod.isPenDoubleTap({ x: 100, y: 100, t: 1000 }, { x: 400, y: 400, t: 1100 }) === false);
+
+  const ed7 = new pageMod.PageEditor({
+    canvas: makeStub('canvas'), host: makeStub('host'),
+    getPage: () => ({ pageId: 'pc', pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: [] }),
+    setItems: () => {}, onToast: () => {},
+  });
+  ed7.setPage(0);
+  ed7.items = [{ ...img }];
+  ed7.selection = new Set(['im1']);
+  expect('选中一张图才能开始裁剪', ed7.beginCrop() === true && !!ed7.crop);
+  ed7.cropPointerDown([0.6, 0.6]);           // 右下角控制点（图占 0.2~0.6）
+  ed7.cropPointerMove([0.5, 0.5]);
+  ed7.onUp();
+  expect('裁剪框能被拖动（缩小了一圈）', ed7.crop.rel.w < 1 && ed7.crop.rel.h < 1);
+  expect('取消裁剪', ed7.cancelCrop() === true && !ed7.crop);
+  expect('图没加载好时应用裁剪会提示而不是静默失败', ed7.beginCrop() && ed7.applyCrop() === false);
+  ed7.cancelCrop();
+  ed7.setTool('pen');
+  ed7.onPenDoubleTap();
+  expect('手写笔双击 → 切到橡皮', ed7.tool === 'eraser');
+  ed7.setPenDoubleTap('cycle');
+  ed7.setTool('pen');
+  ed7.onPenDoubleTap();
+  expect('可以切成「轮换工具」', ed7.tool !== 'pen');
+  ed7.setPenDoubleTap('off');
+  ed7.setTool('lasso');
+  ed7.onPenDoubleTap();
+  expect('关掉后双击不改工具', ed7.tool === 'lasso');
+  ed7.setPenDoubleTap('eraser');
+  expect('状态里带上裁剪与手写笔设置', 'crop' in ed7.info() && ed7.info().penDoubleTap === 'eraser');
+  // 真实指针链路：pen 快速双击应被拦下，不留半截笔画
+  ed7.setTool('pen');
+  const H7 = ed7._canvasHandlers;
+  const penEv = (x, y) => ({ pointerId: 1, pointerType: 'pen', clientX: x, clientY: y, pressure: 0.5, preventDefault() {} });
+  H7.pointerdown(penEv(100, 100));
+  H7.pointerup(penEv(100, 100));
+  ed7.items = [];
+  H7.pointerdown(penEv(102, 101));
+  expect('手写笔快速双击不留半截笔画', ed7.tool === 'eraser' && ed7.drawing === null);
+  H7.pointerup(penEv(102, 101));
+  expect('双击那一笔没有被记进内容', ed7.items.length === 0);
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

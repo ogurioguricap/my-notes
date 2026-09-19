@@ -95,11 +95,21 @@
 - **撤销 / 重做**：不限次，**跨页可用**（撤销会带着你回到那一页），按钮 + Ctrl/Cmd+Z、Shift+Z、Ctrl+Y
 - **学习与输出**：**学习集闪卡**（Leitner 盒子的间隔重复：1/2/4/8/16/32 天，记住 → 盒子 +1，忘了 → 10 分钟后重来）、**录音并与笔记时间点同步**（录到某处时你在写第几笔，回放到那里就跳回那一页）、**演示模式**（全屏、隐藏 UI、激光笔、左右翻页）、**导出真 PDF**（自写 PDF 写出器，逐页 JPEG 嵌入）/ 当前页 PNG / 笔记本 JSON / 打印
 
+### 手写能搜了：OCR、同步到仓库、图片裁剪
+
+| 能力 | 怎么用 |
+| --- | --- |
+| **手写识别（OCR）→ 可搜索** | 笔记本右上「更多 → 识别手写文字（OCR）…」→ 填一次 SiliconFlow API Key（cloud.siliconflow.cn 免费申请）→ 「识别未识别的页」。页面图交给 **Qwen3-VL**（8B 快 / 32B 准），文字存回这一页；之后**资料库搜索**和笔记本搜索都能搜到手写，还能点「识别结果转成文本框」把手写变成可编辑文本。密钥只存本机浏览器、请求直连 `api.siliconflow.cn`；默认只跑没识别过的非空白页，并发 3 |
+| **笔记本进 git（同步）** | 资料库「⋯ → 全部同步到仓库」或单本「同步到仓库 / 从仓库拉取」：笔记本会提交到 `content/notebooks/<id>.json`（真身）+ `docs/notebooks/`（线上副本）+ 线上目录 `index.json`。冲突规则：远端更新→拉取（覆盖前先存一份「本机备份」副本）、本地更新→推送、时间相近→不动。另有**免令牌**的「看线上笔记本」只读列表，点一下就能导入到本地 |
+| **图片裁剪** | 套索选中一张图 → 「裁剪图片」→ 拖控制点（带三分线）→ Enter 或再点一次确认；可撤销 |
+| **手写笔双击切工具** | 「更多 → 手写笔双击」可在 切橡皮 / 切画笔 / 切荧光笔 / 轮换 / 关闭 之间循环。说明：真正的 Apple Pencil 双击 API 浏览器不暴露，这里用「手写笔快速双击（340ms / 12px）」等效 |
+
 ### 做不到的（诚实说明 + 替代方案）
 
-无后端、无 OCR、无大模型，所以这几条只给了替代路径：**实时协作与分享链接**（→ GitHub Pages 上的只读数据 + 导出 JSON 互传）、
-**iCloud / Drive / Dropbox 自动备份**（→ 导出备份文件 + 可选提交到本仓库）、**手写内容 OCR 搜索**（→ 搜文字对象 + 书签 + 大纲 + 标签）、
-**Goodnotes AI（总结 / 转写 / 出题 / 润色）**（→ 本地抽取式摘要 `summarizeText`）、**Math Assist 手写公式识别**（→ 用文本 + 公式语法写）。
+无后端、无语音模型、无大模型对话，所以这几条只给了替代路径：**实时协作与分享链接**（→ GitHub Pages 上的只读数据 + 导出 JSON 互传）、
+**iCloud / Drive / Dropbox 自动备份**（→ 导出备份文件 + `sync.mjs` 提交到本仓库，带冲突判定与本机备份）、
+**音频转写与 AI 润色/出题**（→ 本地抽取式摘要 `summarizeText` + 从文本生成闪卡）、
+**手写内容搜索**（→ 已用视觉模型 OCR 解决，见上表；需自备 API Key）、**Math Assist 判对错**（→ OCR 能读出手写公式，但不做正确性判断）。
 
 > 这一层的底线由 **127 项断言**守着（`tools/test-notebook.mjs`）：数据层（页面管理 / 垃圾桶 / 闪卡间隔 / 录音锚点 / 备份导入导出 / 老数据迁移）、
 > 14 种纸张与 6 种封面真画一遍、四种笔的速度与压感笔宽、尺子吸附、放大窗映射、PageEditor 端到端（含跨页撤销）、
@@ -180,14 +190,14 @@ notes-site/
 │   ├── test-modules.mjs        模块链接测试（import/export 对账 + 真实加载启动）
 │   ├── test-search.mjs         检索功能实测（28 项断言）
 │   ├── test-ink-editing.mjs    标注编辑实测（撤销 / 套索 / 双橡皮 / 形状识别 / Canvas 契约，101 项断言）
-│   ├── test-notebook.mjs       GoodNotes 模式实测（笔记本 / 页面 / 四种笔 / 闪卡 / 录音 / PDF，127 项断言）
+│   ├── test-notebook.mjs       GoodNotes 模式实测（笔记本 / 页面 / 四种笔 / 闪卡 / 录音 / PDF / OCR / 同步，187 项断言）
 │   └── test-ui-lib.mjs         资料库界面数据契约（23 项断言）
 │
 ├── docs/                       ← 构建产物，GitHub Pages 直接托管这一层
 │   ├── index.html
 │   ├── css/{style,notebook-base,notebook-library,notebook-viewer}.css
 │   ├── js/{app,editor,search,graph,highlight,ink,rte,install}.mjs
-│   ├── js/notebook/{store,paper,page,study,library,viewer}.mjs  ← GoodNotes 模式（数据 / 纸张 / 引擎 / 学习输出 / 资料库 UI / 笔记本视图）
+│   ├── js/notebook/{store,paper,page,study,ocr,sync,library,viewer}.mjs  ← GoodNotes 模式（数据 / 纸张 / 引擎 / 学习输出 / 手写识别 / 仓库同步 / 资料库 UI / 笔记本视图）
 │   ├── data/index.json         所有笔记的 HTML + 目录 + 搜索索引
 │   ├── assets/                 附件副本（自动复制）
 │   ├── sw.js                   离线缓存
@@ -228,7 +238,7 @@ node tools/update.mjs
 | 8 | 运行时冒烟测试（真跑一遍：资料库 → 打开笔记 → 标注层 → 编辑器 → **笔记本模式** → 搜索） | **中止** |
 | 9 | 标注编辑实测 101 项断言（撤销 / 套索 / 橡皮 / 形状 / Canvas 契约） | **中止** |
 | 10 | PWA 自检（manifest / 图标 / Service Worker 49 项） | **中止** |
-| 11 | GoodNotes 模式实测 127 项断言（笔记本 / 页面 / 四种笔 / 闪卡 / 录音 / PDF 字节流） | **中止** |
+| 11 | GoodNotes 模式实测 187 项断言（笔记本 / 页面 / 四种笔 / 闪卡 / 录音 / PDF / **OCR** / **仓库同步** / 裁剪） | **中止** |
 | 12 | 桌面脚本自检 + 离线便携版重建 | **中止** |
 | 13 | `git add` + `git commit` | 报错退出 |
 | 14 | `git push` | 给出三种认证方案的可复制命令，本地提交保留 |

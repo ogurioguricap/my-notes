@@ -1021,3 +1021,9 @@
 @media print {
   .bk-select-bar, .lib-menu, .lib-sheet-mask, .lib-tools { display: none !important; }
 }
+
+/* 「线上笔记本」面板里每条的小字（页数 / 已识别页数 / 时间） */
+.lib-pick-meta {
+  display: block; margin-top: 2px; font-style: normal;
+  font-size: 11.5px; color: var(--text-faint);
+}

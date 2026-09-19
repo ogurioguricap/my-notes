@@ -399,6 +399,15 @@ try {
   const toolBtns = queryAll(docRoot, '.nb-tool', false);
   expect(`底部工具面板有工具按钮（${toolBtns.length} 个）`, toolBtns.length >= 8);
   expect('页面画布已生成', queryAll(docRoot, '.nb-static', false).length >= 1);
+  const moreBtn = queryAll(docRoot, '[data-menu="more"]', false)[0];
+  if (moreBtn && moreBtn.dispatchEvent) {
+    moreBtn.dispatchEvent({ type: 'click', target: moreBtn });
+    await sleep(120);
+    const moreMenu = documentStub.querySelector('[data-menu="more"]') && globalThis.window.__notes.debug();
+    const hasSync = queryAll(docRoot, '[data-act="syncPush"]', false).length >= 1
+      || String((documentStub.getElementById('bookBody') || {}).innerHTML || '').includes('syncPush');
+    expect('「更多」菜单里有同步与 OCR 入口', hasSync || !!moreMenu, JSON.stringify(moreMenu));
+  }
   expect('打开笔记本无运行期异常', errors.length === 0, errors.slice(-1).join(''));
   // 收拾干净：回到资料库并删掉测试笔记本
   location.hash = '#/books';

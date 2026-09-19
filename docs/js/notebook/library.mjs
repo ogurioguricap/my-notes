@@ -30,6 +30,8 @@ import {
   COVER_PATTERNS,
   templateGroups,
 } from './paper.mjs';
+import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
+import { gh } from '../editor.mjs';
 
 /* ============================ 常量 ============================ */
 
@@ -395,7 +397,7 @@ export class LibraryUI {
     this.el.tools.innerHTML = `
       <label class="lib-search">
         <span class="lib-search-icon">⌕</span>
-        <input type="search" data-act="query" placeholder="搜索标题、标签、文字摘要" value="${bkEsc(this.state.query)}" aria-label="搜索笔记本">
+        <input type="search" data-act="query" placeholder="搜索标题、标签、文字摘要（含已 OCR 的手写）" value="${bkEsc(this.state.query)}" aria-label="搜索笔记本">
       </label>
       <select class="lib-select" data-act="sort" aria-label="排序方式">
         ${SORTS.map((o) => `<option value="${o.id}"${o.id === this.state.sort ? ' selected' : ''}>${o.label}</option>`).join('')}
@@ -626,7 +628,14 @@ export class LibraryUI {
   _renderLayer() {
     const layer = this.el.layer;
     if (!layer) return;
-    layer.innerHTML = `${this._sheetHTML()}${this._menuHTML()}${this._selectbarHTML()}`;
+    layer.innerHTML = `${this._sheetHTML()}${this._panelHTML()}${this._menuHTML()}${this._selectbarHTML()}`;
+  }
+
+  /** 附加面板（目前只有「线上笔记本」） */
+  _panelHTML() {
+    if (!this._panel) return '';
+    if (this._panel.kind === 'remote') return this.remoteHTML();
+    return '';
   }
 
   _sheetHTML() {
@@ -675,6 +684,8 @@ export class LibraryUI {
       { run: 'tag', label: '加标签' },
       { run: 'folder', label: '移入文件夹' },
       { run: 'duplicate', label: '复制一本' },
+      { run: 'sync-push', label: '同步到仓库' },
+      { run: 'sync-pull', label: '从仓库拉取' },
       '-',
       { run: 'trash', label: '移到回收站', danger: true },
     ];
@@ -959,6 +970,8 @@ export class LibraryUI {
       case 'go-md': if (this.onGoMarkdown) this.onGoMarkdown(); break;
       case 'export': this.exportBackup(); break;
       case 'import': this.importBackup(); break;
+      case 'panel-close': this._panel = null; this._renderLayer(); break;
+      case 'remote-import': e.stopPropagation(); this.importRemote(rowId); break;
 
       /* 卡片与行 */
       case 'open': if (!this.selecting && this.state.scope !== 'trash') this.openBook(rowId); break;
@@ -1166,6 +1179,9 @@ export class LibraryUI {
     const items = [
       { run: 'export', label: '导出备份（下载 JSON）' },
       { run: 'import', label: '导入备份（选择文件）' },
+      { run: 'sync-all', label: '全部同步到仓库' },
+      { run: 'sync-pull-all', label: '从仓库拉取线上更新' },
+      { run: 'remote', label: '看线上笔记本（免令牌）' },
     ];
     if (this.onGoMarkdown) items.push('-', { run: 'go-md', label: '切回 Markdown 资料库' });
     return items;
@@ -1177,11 +1193,16 @@ export class LibraryUI {
     if (id === '__top') {
       if (run === 'export') this.exportBackup();
       else if (run === 'import') this.importBackup();
+      else if (run === 'sync-all') this.syncAll();
+      else if (run === 'sync-pull-all') this.syncPullAll();
+      else if (run === 'remote') this.openRemote();
       else if (run === 'go-md' && this.onGoMarkdown) this.onGoMarkdown();
       return;
     }
     if (!id) return;
     if (run === 'open') this.openBook(id);
+    if (run === 'sync-push') this.syncOne(id);
+    if (run === 'sync-pull') this.syncPullOne(id);
     else if (run === 'fav') this._toggleFav(id);
     else if (run === 'rename') this._renameBook(id);
     else if (run === 'cover') this.openCoverSheet(id);
@@ -1474,6 +1495,105 @@ export class LibraryUI {
     this.render();
     this.toast(`已创建：${nb.title}`);
     this.openBook(nb.id);
+  }
+
+  /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */
+
+  async syncOne(id) {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次'); return; }
+    try {
+      this.toast('正在推送…');
+      const res = await pushNotebook(gh, this.store, id, { alsoIndex: true });
+      this.toast(`已推送（${Math.max(1, Math.round(res.bytes / 1024))} KB）`);
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncAll() {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次'); return; }
+    try {
+      const total = this.getStats().notebooks;
+      if (!total) { this.toast('还没有笔记本可以同步'); return; }
+      this.toast(`开始推送 ${total} 本…`);
+      const res = await pushAll(gh, this.store, {
+        onProgress: ({ done, total: tt }) => this.toast(`推送中 ${done}/${tt}…`),
+      });
+      this.toast(`完成：${res.ok} 本成功${res.failed ? ` · ${res.failed} 本失败` : ''}（含线上目录）`);
+      if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncPullOne(id) {
+    if (!gh.configured()) { this.toast('拉取需要 GitHub 令牌'); return; }
+    try {
+      const res = await pullNotebook(gh, this.store, id, {});
+      if (res.action === 'pull') { this.toast(`已用仓库版本覆盖本地${res.backup ? '（旧的存成本机备份）' : ''}`); this.render(); }
+      else this.toast('两边一样，或本地更新：先同步到仓库');
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncPullAll() {
+    try {
+      const remote = await fetchPublicIndex(null, this._base());
+      if (!remote.length) { this.toast('线上目录是空的：先在笔记本里点「同步到仓库」'); return; }
+      let pulled = 0, skipped = 0;
+      for (const r of remote) {
+        const local = this.store.get(r.id);
+        if (!gh.configured() || !local) { skipped++; continue; }
+        try {
+          const res = await pullNotebook(gh, this.store, r.id, {});
+          if (res.action === 'pull') pulled++;
+          else skipped++;
+        } catch (e) { skipped++; }
+      }
+      this.toast(`拉取完成：更新 ${pulled} 本${skipped ? ` · 跳过 ${skipped} 本` : ''}`);
+      if (!gh.configured()) this.toast('线上目录已读到，但要真正拉取需要令牌；也可以用「看线上笔记本」只读导入');
+      this.render();
+    } catch (e) { this._fail(e); }
+  }
+
+  /** 免令牌：列出线上笔记本（读 docs/notebooks/index.json），可一键导入到本地 */
+  async openRemote() {
+    const remote = await fetchPublicIndex(null, this._base());
+    if (!remote.length) { this.toast('线上还没有笔记本（先在笔记本里点「同步到仓库」，约 1 分钟后线上可见）'); return; }
+    this._remote = remote;
+    this._panel = { kind: 'remote' };
+    this._renderLayer();
+  }
+
+  async importRemote(id) {
+    try {
+      const res = await pullFromPublicSite(this.store, id, null, this._base());
+      this._panel = null;
+      this._renderLayer();
+      this.render();
+      this.toast(`已导入「${res.notebook.title}」${res.renamed ? '（本地已有同名，存成副本）' : ''}`);
+    } catch (e) { this._fail(e); }
+  }
+
+  remoteHTML() {
+    const list = this._remote || [];
+    return `<div class="lib-sheet-mask" data-act="panel-close">
+      <div class="lib-sheet" data-stop="1">
+        <div class="lib-sheet-head"><h3>线上笔记本（免令牌只读）</h3><button class="lib-btn ghost" type="button" data-act="panel-close">✕</button></div>
+        <div class="lib-sheet-body">
+          <p class="lib-hint">这些是仓库 docs/notebooks/ 里已发布的笔记本，任何设备打开这个网页都能看到。点「导入到本地」会复制一份到这台设备（不会覆盖本地已有的）。</p>
+          ${list.map((r) => `<div class="lib-pick-row" data-id="${bkEsc(r.id)}">
+            <span class="bk-row-cover" style="--bk:${bkEsc((r.cover && r.cover.color) || '#5A6B8C')}" data-pattern="${bkEsc((r.cover && r.cover.pattern) || 'plain')}" aria-hidden="true"></span>
+            <span class="lib-pick-name">${bkEsc(r.title)}<i class="lib-pick-meta">${r.pages} 页 · ${r.ocr || 0} 页已识别 · ${relTime(r.updatedAt)}</i></span>
+            <button class="lib-btn primary" type="button" data-act="remote-import" data-id="${bkEsc(r.id)}">导入到本地</button>
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /** 线上资源基地址（Pages 下 docs/ 就是站点根） */
+  _base() {
+    try {
+      if (typeof location === 'undefined') return '';
+      const p = location.pathname || '/';
+      return p.endsWith('/') ? p : p.slice(0, p.lastIndexOf('/') + 1);
+    } catch (e) { return ''; }
   }
 
   /* ---------- 备份 ---------- */

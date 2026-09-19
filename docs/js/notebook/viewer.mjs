@@ -27,6 +27,11 @@ import {
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
 import { buildPdf, downloadBlob, pageToPng, summarizeText } from './study.mjs';
+import {
+  OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT,
+} from './ocr.mjs';
+import { pushNotebook, pullNotebook, pushAll, fetchPublicIndex, pullFromPublicSite, PUBLIC_INDEX } from './sync.mjs';
+import { gh } from '../editor.mjs';
 
 /* ============================ 小工具（纯函数，加载期不碰 DOM） ============================ */
 
@@ -105,7 +110,10 @@ export class NotebookView {
     this.status = {};
     this.toolsOpen = false;
 
-    this.panelKind = '';       // pages / outline / study / audio / paper
+    this.panelKind = '';       // pages / outline / study / audio / paper / ocr
+    this.ocrModel = OCR_MODELS[0].id;
+    this.ocrRunning = false;
+    this.ocrStatusText = '';
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -163,7 +171,12 @@ export class NotebookView {
       <button class="nb-btn" type="button" data-act="menu" data-menu="more">更多 ▾</button>
       <div class="nb-menu" data-menu="more" hidden>
         <button type="button" data-act="panel" data-panel="paper">改纸张 / 尺寸</button>
+        <button type="button" data-act="panel" data-panel="ocr">识别手写文字（OCR）…</button>
+        <button type="button" data-act="syncPush">同步到仓库（推送）</button>
+        <button type="button" data-act="syncPull">从仓库拉取这本</button>
+        <hr>
         <button type="button" data-act="scrollToggle">切换竖排 / 横排滚动</button>
+        <button type="button" data-act="penDoubleTapCycle">手写笔双击：切换动作</button>
         <button type="button" data-act="summary">总结当前页文字</button>
         <hr>
         <button type="button" data-act="clearPage">清空此页</button>
@@ -314,6 +327,9 @@ export class NotebookView {
   onInput(e) {
     const t = e.target;
     if (!t || !t.closest) return;
+    // OCR 密钥：失焦或回车时存下来
+    const ocrKeyEl = t.closest('[data-act="ocrKey"]');
+    if (ocrKeyEl) { setOcrKey(null, ocrKeyEl.value); return; }
     const el = t.closest('[data-x]');
     if (!el) return;
     const key = el.dataset.x;
@@ -395,6 +411,32 @@ export class NotebookView {
       return true;
     }
     if (act === 'summary') { this.summaryToPage(); return true; }
+    if (act === 'cropImage') {
+      const e = ed();
+      if (e) { e.setTool('lasso'); e.beginCrop(); this.setStatus(e.info()); }
+      return true;
+    }
+    if (act === 'penDoubleTapCycle') {
+      const e = ed();
+      if (!e) return true;
+      const order = ['eraser', 'pen', 'highlighter', 'cycle', 'off'];
+      const next = order[(order.indexOf(e.penDoubleTap || 'eraser') + 1) % order.length];
+      e.setPenDoubleTap(next);
+      return true;
+    }
+    if (act === 'syncPush') { this.syncPush(); return true; }
+    if (act === 'syncPull') { this.syncPull(); return true; }
+    if (act === 'ocrModel') { this.ocrModel = note; this.renderPanel(); return true; }
+    if (act === 'ocrRun') { this.runOcr({}); return true; }
+    if (act === 'ocrRunPage') { this.runOcr({ indices: [this.cur] }); return true; }
+    if (act === 'ocrRunAll') { this.runOcr({ all: true, indices: (this.nb.pages || []).map((_, i) => i) }); return true; }
+    if (act === 'ocrClearPage') {
+      this.store.clearPageOcr(this.bookId, this.nb.pages[this.cur].id);
+      this.toast('已清掉本页的识别结果');
+      this.renderPanel();
+      return true;
+    }
+    if (act === 'ocrToText') { this.ocrToText(); return true; }
     if (act === 'clearPage') {
       const e = ed();
       if (!e) return true;
@@ -1372,6 +1414,7 @@ export class NotebookView {
           <button class="nb-btn danger" type="button" data-act="lassoOp" data-note="delete">删除</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="front">置顶</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="back">置底</button>
+          <button class="nb-btn" type="button" data-act="cropImage">裁剪图片</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="peel">撕胶带</button>
         </div>
       </div>
@@ -1577,9 +1620,150 @@ export class NotebookView {
     else if (k === 'study') this.panelEl.innerHTML = this.markupStudyPanel();
     else if (k === 'audio') this.panelEl.innerHTML = this.markupAudioPanel();
     else if (k === 'paper') this.panelEl.innerHTML = this.markupPaperPanel();
+    else if (k === 'ocr') this.panelEl.innerHTML = this.markupOcrPanel();
     if (k === 'study') { this.paintStudy(); this.renderStudyCard(); }
     if (k === 'audio') this.renderAudioLists();
     if (k === 'pages') this.paintPanelThumbs();
+    if (k === 'ocr') this.renderOcrStatus();
+  }
+
+  /* ---------- 手写识别（OCR）面板 ---------- */
+
+  markupOcrPanel() {
+    const nb = this.nb;
+    const st = this.store.ocrStats(nb.id);
+    const key = getOcrKey();
+    const model = this.ocrModel || OCR_MODELS[0].id;
+    return `${this.panelHead('识别手写文字（OCR）')}
+      <div class="nb-panel-body">
+        <div class="nb-hint">
+          把页面图交给视觉模型识别，结果存进这一页；之后<b>资料库搜索</b>和「本笔记本搜索」都能搜到手写内容。<br>
+          密钥只存在你这台设备的浏览器，请求直接从浏览器发往 api.siliconflow.cn（本站之外的第三方服务）——介意的话就别开。
+        </div>
+        <div class="nb-field">
+          <span>SiliconFlow API Key（cloud.siliconflow.cn 免费申请，填一次即可）</span>
+          <input class="nb-input" type="password" data-act="ocrKey" value="${nbEsc(key)}" placeholder="sk-...">
+        </div>
+        <div class="nb-field">
+          <span>模型</span>
+          <div class="nb-row">
+            ${OCR_MODELS.map((m) => `<button class="nb-chip${model === m.id ? ' on' : ''}" type="button" data-act="ocrModel" data-note="${nbEsc(m.id)}" title="${nbEsc(m.hint)}">${nbEsc(m.label)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="nb-row">
+          <button class="nb-btn primary" type="button" data-act="ocrRun" ${key ? '' : 'disabled'}>识别未识别的页（${st.pending} 页）</button>
+          <button class="nb-btn" type="button" data-act="ocrRunPage" ${key ? '' : 'disabled'}>只识别当前页</button>
+          <button class="nb-btn" type="button" data-act="ocrRunAll" ${key ? '' : 'disabled'}>全部重识别</button>
+          <button class="nb-btn danger" type="button" data-act="ocrClearPage">清掉本页识别结果</button>
+          <button class="nb-btn" type="button" data-act="ocrToText" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr) ? '' : 'disabled'} title="把手写识别结果变成可编辑的文本框">识别结果转成文本框</button>
+        </div>
+        <div class="nb-field">
+          <span>进度</span>
+          <div class="nb-ocr-status" id="nbOcrStatus">共 ${st.pages} 页 · 已识别 ${st.done} 页 · 已入库 ${st.chars} 字</div>
+        </div>
+        ${nb.pages && nb.pages[this.cur] && nb.pages[this.cur].ocr ? `
+        <div class="nb-field">
+          <span>本页识别结果（${(nb.pages[this.cur].ocr.text || '').length} 字）</span>
+          <textarea class="nb-textarea" readonly>${nbEsc((nb.pages[this.cur].ocr.text || '').slice(0, 4000))}</textarea>
+        </div>` : ''}
+        <div class="nb-hint">提示：8B 模型快（约 15~25 秒/页），公式与表格多的页建议切 32B 复核。识别要花钱，所以默认只跑没识别过的页。</div>
+      </div>`;
+  }
+
+  renderOcrStatus() {
+    const el = q(this.panelEl, '#nbOcrStatus');
+    if (el) el.textContent = this.ocrStatusText || (() => {
+      const st = this.store.ocrStats(this.bookId);
+      return `共 ${st.pages} 页 · 已识别 ${st.done} 页 · 已入库 ${st.chars} 字`;
+    })();
+  }
+
+  async runOcr(opts = {}) {
+    const key = getOcrKey();
+    if (!key) { this.toast('先把 API Key 填上'); return; }
+    const model = this.ocrModel || OCR_MODELS[0].id;
+    this.ocrRunning = true;
+    const total = opts.indices ? opts.indices.length : this.store.ocrStats(this.bookId).pending;
+    this.ocrStatusText = progressText(0, total || 1, 0);
+    this.renderOcrStatus();
+    try {
+      const res = await ocrNotebook(this.store, this.bookId, {
+        apiKey: key,
+        model,
+        onlyMissing: !opts.all,
+        indices: opts.indices || null,
+        concurrency: opts.concurrency || 3,
+        renderPage,
+        onProgress: ({ done, total: tt, failed }) => {
+          this.ocrStatusText = progressText(done, tt, failed);
+          this.renderOcrStatus();
+        },
+      });
+      const st = this.store.ocrStats(this.bookId);
+      this.ocrStatusText = `识别完成：${res.done} 页成功${res.failed ? ` · ${res.failed} 页失败` : ''} · 已入库 ${st.chars} 字`;
+      this.toast(`OCR：${res.done} 页成功${res.failed ? `，${res.failed} 页失败` : ''}`);
+      if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
+      this.refresh();
+      this.renderOcrStatus();
+    } catch (e) {
+      this.ocrStatusText = '识别失败：' + ((e && e.message) || '未知错误');
+      this.toast(this.ocrStatusText);
+      this.renderOcrStatus();
+    } finally {
+      this.ocrRunning = false;
+    }
+  }
+
+  /** 把识别结果变成文本框（手写 → 可编辑文本：Scribble 的等效实现） */
+  ocrToText() {
+    const page = this.nb.pages[this.cur];
+    const ed = this.editor;
+    if (!page || !page.ocr || !page.ocr.text) { this.toast('这一页还没识别过'); return; }
+    if (!ed) return;
+    ed.snapshot('识别结果转文本');
+    ed.items.push({
+      kind: 'text',
+      id: 'ocr' + Date.now().toString(36),
+      x: 0.06, y: 0.06,
+      text: page.ocr.text.slice(0, 1200),
+      size: 0.018,
+      color: '#2B2723',
+      font: 'sans',
+      bold: false, italic: false, align: 'left', rot: 0,
+    });
+    ed.commit('识别结果转文本');
+    ed.redraw();
+    this.setStatus(ed.info());
+    this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
+  }
+
+  /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */
+  async syncPush() {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次，再来同步'); return; }
+    try {
+      this.toast('正在推送到仓库…');
+      const res = await pushNotebook(gh, this.store, this.bookId, { alsoIndex: true });
+      this.toast(`已推送（${Math.max(1, Math.round(res.bytes / 1024))} KB，含线上目录）`);
+      try { this.onChanged(); } catch (e) {}
+    } catch (e) {
+      this.toast('推送失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  async syncPull() {
+    if (!gh.configured()) { this.toast('拉取需要 GitHub 令牌（只想看线上内容：资料库里有「线上笔记本」入口）'); return; }
+    try {
+      const res = await pullNotebook(gh, this.store, this.bookId, { force: false });
+      if (res.action === 'pull') {
+        this.toast(`已用仓库版本覆盖本地${res.backup ? '（旧版本存成了本机备份副本）' : ''}`);
+        this.open(this.bookId);
+        try { this.onChanged(); } catch (e) {}
+      } else {
+        this.toast('两边一样，或本地更新：先「同步到仓库」再拉');
+      }
+    } catch (e) {
+      this.toast('拉取失败：' + ((e && e.message) || '未知错误'));
+    }
   }
 
   panelHead(title) {

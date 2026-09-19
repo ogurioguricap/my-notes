@@ -2214,6 +2214,12 @@ body.inking .article-body { user-select: none; }
   .bk-select-bar, .lib-menu, .lib-sheet-mask, .lib-tools { display: none !important; }
 }
 
+/* 「线上笔记本」面板里每条的小字（页数 / 已识别页数 / 时间） */
+.lib-pick-meta {
+  display: block; margin-top: 2px; font-style: normal;
+  font-size: 11.5px; color: var(--text-faint);
+}
+
 </style>
 <style>
 /* notebook-viewer.css */
@@ -2778,6 +2784,13 @@ body.inking .article-body { user-select: none; }
   .nb-thumbs, .nb-props, .nb-card-box, .nb-face { transition: none !important; animation: none !important; }
 }
 
+/* ============================ 手写识别（OCR）面板 ============================ */
+.nb-ocr-status {
+  font-size: 12.5px; line-height: 1.7; color: var(--text-soft);
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+}
+.nb-ocr-status b { color: var(--accent-text); }
+
 </style>
 <script>
   // 提前应用主题 / 排版 / 列表布局，避免闪烁
@@ -2795,7 +2808,7 @@ body.inking .article-body { user-select: none; }
 </script>
 
 <script>
-window.__NOTES_DATA__ = {"generatedAt":"2026-09-19T11:50:10.032Z","stats":{"notes":5,"words":8362,"tags":20,"categories":4,"assets":3,"extracted":3},"categories":["关于本站","写作规范","数学建模","工具链"],"tags":{"使用说明":1,"工作流":1,"置顶":1,"Markdown":1,"排版":1,"公式":1,"代码":1,"随机过程":1,"马尔可夫链":1,"数值计算":1,"图表":1,"方法选型":1,"优化":1,"预测":1,"评价":1,"决策树":1,"GitHub":1,"部署":1,"命令":1,"踩坑":1},"notes":[{"slug":"home","title":"开始使用 · 这套笔记怎么用","date":"2026-02-18","category":"关于本站","tags":["使用说明","工作流","置顶"],"related":[],"links":[],"pinned":true,"status":"","source":"home.md","excerpt":"这套笔记站的用法说明：内容放哪、怎么更新、怎么换排版、怎么把图片里的文字也搜出来。","html":"<h1 id=\"开始使用-这套笔记怎么用\">开始使用 · 这套笔记怎么用<a class=\"md-anchor\" href=\"#开始使用-这套笔记怎么用\" aria-label=\"锚点\">#</a></h1>\n<p>这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：<strong>内容永远是 Markdown 文件，网页由构建脚本自动生成</strong>。你不需要写一行 HTML。</p>\n<h2 id=\"三条命令搞定一切\">三条命令搞定一切<a class=\"md-anchor\" href=\"#三条命令搞定一切\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\"># 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A &amp;&amp; git commit -m &quot;update notes&quot; &amp;&amp; git push</code></pre></figure></p>\n<p>推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"最省事的用法\"><p class=\"md-callout-title\">最省事的用法</p><p>你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 <code class=\"md-inline-code\">.md</code>、跑构建、推送 GitHub。你要的就是一个网址。</p></div>\n<h2 id=\"目录结构\">目录结构<a class=\"md-anchor\" href=\"#目录结构\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"text\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">text</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-text\">notes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md</code></pre></figure></p>\n<h2 id=\"每一篇笔记的头部frontmatter\">每一篇笔记的头部（frontmatter）<a class=\"md-anchor\" href=\"#每一篇笔记的头部frontmatter\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"yaml\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">yaml</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-yaml\">---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---</code></pre></figure></p>\n<h2 id=\"这篇笔记能干什么\">这篇笔记能干什么<a class=\"md-anchor\" href=\"#这篇笔记能干什么\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li><strong>搜索</strong>：左上角搜索框支持标题、正文、标签、分类，<strong>连图片里的文字和 PDF 正文也能搜到</strong>（见下面那张演示图）</li><li><strong>目录</strong>：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉</li><li><strong>知识图谱</strong>：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理</li><li><strong>时间线</strong>：顶栏 🕒 按时间倒序翻</li><li><strong>排版切换</strong>：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住</li><li><strong>深浅色</strong>：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住</li><li><strong>双链</strong>：正文里写 <code class=\"md-inline-code\">[[数模方法速查卡]]</code> 就能互链，反向链接自动出现在文末</li></ul>\n<h2 id=\"演示图片文字也能进检索\">演示：图片文字也能进检索<a class=\"md-anchor\" href=\"#演示图片文字也能进检索\" aria-label=\"锚点\">#</a></h2>\n<p>下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 <strong>马尔可夫链演示图</strong> 或 <strong>收敛曲线</strong>，这篇笔记会被搜出来。</p>\n<p><figure class=\"md-figure\"><img src=\"assets/demo-convergence.png\" alt=\"模型收敛示意图（演示图片文字检索）\" loading=\"lazy\" decoding=\"async\" data-zoom-src=\"assets/demo-convergence.png\"><figcaption>模型收敛示意图（演示图片文字检索）</figcaption></figure></p>\n<h2 id=\"把外部内容也变成可搜索的笔记\">把外部内容也变成可搜索的笔记<a class=\"md-anchor\" href=\"#把外部内容也变成可搜索的笔记\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>你手上的东西</th><th>怎么处理</th><th>搜索效果</th></tr></thead><tbody><tr><td>Word / Markdown 笔记</td><td>复制进 <code class=\"md-inline-code\">content/xxx.md</code></td><td>标题、正文、标签全可搜</td></tr><tr><td>论文 PDF</td><td>放 <code class=\"md-inline-code\">content/assets/</code>，正文里 <code class=\"md-inline-code\">[附件](assets/xx.pdf)</code></td><td>提取的正文文字进检索</td></tr><tr><td>截图 / 拍照笔记</td><td>放 <code class=\"md-inline-code\">content/assets/</code>，正文里 <code class=\"md-inline-code\">![说明](assets/xx.png)</code></td><td>OCR 出的文字进检索</td></tr><tr><td>微信/网页剪藏</td><td>贴给我，我整理成结构化 Markdown</td><td>同第一行</td></tr></tbody></table></div>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"关于图片 OCR 的现状\"><p class=\"md-callout-title\">关于图片 OCR 的现状</p><p>构建脚本本身零依赖、离线可跑；附件文字提取走 <code class=\"md-inline-code\">tools/extract-attachments.mjs</code>（按需执行一次，结果写入 <code class=\"md-inline-code\">content/_extracted.json</code> 并被构建脚本读取）。<br>执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。</p></div>\n<h2 id=\"下一步\">下一步<a class=\"md-anchor\" href=\"#下一步\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>把这篇的 frontmatter 当作模板，开始写你的第一篇</li><li>想换配色/版式，改 <code class=\"md-inline-code\">docs/css/style.css</code> 顶部的变量即可（一处改，全站变）</li><li>想加功能（标签云、代码高亮主题、批注…）随时说</li></ol>\n<section class=\"md-attach-text\" data-file=\"demo-convergence.png\"><h4>附件文字 · demo-convergence.png</h4><pre>模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。</pre></section>","headings":[{"level":1,"text":"开始使用 · 这套笔记怎么用","id":"开始使用-这套笔记怎么用"},{"level":2,"text":"三条命令搞定一切","id":"三条命令搞定一切"},{"level":2,"text":"目录结构","id":"目录结构"},{"level":2,"text":"每一篇笔记的头部（frontmatter）","id":"每一篇笔记的头部frontmatter"},{"level":2,"text":"这篇笔记能干什么","id":"这篇笔记能干什么"},{"level":2,"text":"演示：图片文字也能进检索","id":"演示图片文字也能进检索"},{"level":2,"text":"把外部内容也变成可搜索的笔记","id":"把外部内容也变成可搜索的笔记"},{"level":2,"text":"下一步","id":"下一步"}],"raw":"\n# 开始使用 · 这套笔记怎么用\n\n这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：**内容永远是 Markdown 文件，网页由构建脚本自动生成**。你不需要写一行 HTML。\n\n## 三条命令搞定一切\n\n```bash\n# 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A && git commit -m \"update notes\" && git push\n```\n\n推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。\n\n> [!TIP] 最省事的用法\n> 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 `.md`、跑构建、推送 GitHub。你要的就是一个网址。\n\n## 目录结构\n\n```text\nnotes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md\n```\n\n## 每一篇笔记的头部（frontmatter）\n\n```yaml\n---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---\n```\n\n## 这篇笔记能干什么\n\n- **搜索**：左上角搜索框支持标题、正文、标签、分类，**连图片里的文字和 PDF 正文也能搜到**（见下面那张演示图）\n- **目录**：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉\n- **知识图谱**：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理\n- **时间线**：顶栏 🕒 按时间倒序翻\n- **排版切换**：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住\n- **深浅色**：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住\n- **双链**：正文里写 `[[数模方法速查卡]]` 就能互链，反向链接自动出现在文末\n\n## 演示：图片文字也能进检索\n\n下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 **马尔可夫链演示图** 或 **收敛曲线**，这篇笔记会被搜出来。\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n## 把外部内容也变成可搜索的笔记\n\n| 你手上的东西 | 怎么处理 | 搜索效果 |\n| --- | --- | --- |\n| Word / Markdown 笔记 | 复制进 `content/xxx.md` | 标题、正文、标签全可搜 |\n| 论文 PDF | 放 `content/assets/`，正文里 `[附件](assets/xx.pdf)` | 提取的正文文字进检索 |\n| 截图 / 拍照笔记 | 放 `content/assets/`，正文里 `![说明](assets/xx.png)` | OCR 出的文字进检索 |\n| 微信/网页剪藏 | 贴给我，我整理成结构化 Markdown | 同第一行 |\n\n> [!IMPORTANT] 关于图片 OCR 的现状\n> 构建脚本本身零依赖、离线可跑；附件文字提取走 `tools/extract-attachments.mjs`（按需执行一次，结果写入 `content/_extracted.json` 并被构建脚本读取）。\n> 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。\n\n## 下一步\n\n1. 把这篇的 frontmatter 当作模板，开始写你的第一篇\n2. 想换配色/版式，改 `docs/css/style.css` 顶部的变量即可（一处改，全站变）\n3. 想加功能（标签云、代码高亮主题、批注…）随时说\n","rawFull":"---\ntitle: 开始使用 · 这套笔记怎么用\nslug: home\ncategory: 关于本站\ntags: [使用说明, 工作流, 置顶]\ndate: 2026-02-18\npinned: true\nsummary: 这套笔记站的用法说明：内容放哪、怎么更新、怎么换排版、怎么把图片里的文字也搜出来。\n---\n\n# 开始使用 · 这套笔记怎么用\n\n这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：**内容永远是 Markdown 文件，网页由构建脚本自动生成**。你不需要写一行 HTML。\n\n## 三条命令搞定一切\n\n```bash\n# 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A && git commit -m \"update notes\" && git push\n```\n\n推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。\n\n> [!TIP] 最省事的用法\n> 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 `.md`、跑构建、推送 GitHub。你要的就是一个网址。\n\n## 目录结构\n\n```text\nnotes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md\n```\n\n## 每一篇笔记的头部（frontmatter）\n\n```yaml\n---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---\n```\n\n## 这篇笔记能干什么\n\n- **搜索**：左上角搜索框支持标题、正文、标签、分类，**连图片里的文字和 PDF 正文也能搜到**（见下面那张演示图）\n- **目录**：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉\n- **知识图谱**：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理\n- **时间线**：顶栏 🕒 按时间倒序翻\n- **排版切换**：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住\n- **深浅色**：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住\n- **双链**：正文里写 `[[数模方法速查卡]]` 就能互链，反向链接自动出现在文末\n\n## 演示：图片文字也能进检索\n\n下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 **马尔可夫链演示图** 或 **收敛曲线**，这篇笔记会被搜出来。\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n## 把外部内容也变成可搜索的笔记\n\n| 你手上的东西 | 怎么处理 | 搜索效果 |\n| --- | --- | --- |\n| Word / Markdown 笔记 | 复制进 `content/xxx.md` | 标题、正文、标签全可搜 |\n| 论文 PDF | 放 `content/assets/`，正文里 `[附件](assets/xx.pdf)` | 提取的正文文字进检索 |\n| 截图 / 拍照笔记 | 放 `content/assets/`，正文里 `![说明](assets/xx.png)` | OCR 出的文字进检索 |\n| 微信/网页剪藏 | 贴给我，我整理成结构化 Markdown | 同第一行 |\n\n> [!IMPORTANT] 关于图片 OCR 的现状\n> 构建脚本本身零依赖、离线可跑；附件文字提取走 `tools/extract-attachments.mjs`（按需执行一次，结果写入 `content/_extracted.json` 并被构建脚本读取）。\n> 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。\n\n## 下一步\n\n1. 把这篇的 frontmatter 当作模板，开始写你的第一篇\n2. 想换配色/版式，改 `docs/css/style.css` 顶部的变量即可（一处改，全站变）\n3. 想加功能（标签云、代码高亮主题、批注…）随时说\n","search":"开始使用 · 这套笔记怎么用 \u0001 开始使用 · 这套笔记怎么用 # 这是你的笔记站首页推荐入口。整套系统只有一件事需要记住： 内容永远是 Markdown 文件，网页由构建脚本自动生成 。你不需要写一行 HTML。 三条命令搞定一切 # 推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。 最省事的用法 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 .md 、跑构建、推送 GitHub。你要的就是一个网址。 目录结构 # 每一篇笔记的头部（frontmatter） # 这篇笔记能干什么 # 搜索 ：左上角搜索框支持标题、正文、标签、分类， 连图片里的文字和 PDF 正文也能搜到 （见下面那张演示图） 目录 ：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉 知识图谱 ：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理 时间线 ：顶栏 🕒 按时间倒序翻 排版切换 ：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住 深浅色 ：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住 双链 ：正文里写 [[数模方法速查卡]] 就能互链，反向链接自动出现在文末 演示：图片文字也能进检索 # 下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 马尔可夫链演示图 或 收敛曲线 ，这篇笔记会被搜出来。 模型收敛示意图（演示图片文字检索） 把外部内容也变成可搜索的笔记 # 你手上的东西 怎么处理 搜索效果 Word / Markdown 笔记 复制进 content/xxx.md 标题、正文、标签全可搜 论文 PDF 放 content/assets/ ，正文里 [附件](assets/xx.pdf) 提取的正文文字进检索 截图 / 拍照笔记 放 content/assets/ ，正文里 ![说明](assets/xx.png) OCR 出的文字进检索 微信/网页剪藏 贴给我，我整理成结构化 Markdown 同第一行 关于图片 OCR 的现状 构建脚本本身零依赖、离线可跑；附件文字提取走 tools/extract-attachments.mjs （按需执行一次，结果写入 content/_extracted.json 并被构建脚本读取）。 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。 下一步 # 把这篇的 frontmatter 当作模板，开始写你的第一篇 想换配色/版式，改 docs/css/style.css 顶部的变量即可（一处改，全站变） 想加功能（标签云、代码高亮主题、批注…）随时说 # 1. 内容放进来 # 把写好的 .md 丢进 content/ 目录（图片放 content/assets/） # 2. 生成网页数据 node tools/build.mjs # 3. 发布上线 git add -A && git commit -m \"update notes\" && git push notes-site/ ├── content/ ← 你只需要动这里 │ ├── home.md 首页/置顶说明 │ ├── 01-markdown-语法速查.md │ ├── 02-随机过程-马尔可夫链建模.md │ ├── 03-数模方法速查卡.md │ ├── assets/ 图片、PDF、附件 │ └── _extracted.json 附件文字提取结果（图片 OCR / PDF 文本） ├── tools/build.mjs 构建脚本（零依赖，Node 18+） ├── docs/ 构建产物（GitHub Pages 直接托管） │ ├── index.html │ ├── css/ js/ data/ assets/ └── README.md --- title: 标题，会显示在卡片和侧边栏 category: 分类，用于侧边栏分组和图谱配色 tags: [标签一, 标签二] date: 2026-02-18 pinned: true # 可选：置顶到首页 summary: 一句话摘要，显示在卡片上（不写则自动截取正文开头） related: [home] # 可选：关联笔记 --- \u0001 使用说明 工作流 置顶 \u0001 关于本站 \u0001 模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。","attachments":["demo-convergence.png"],"cover":{"ink":"#0E9F8C","soft":"#E3F6F3","glyph":"开"},"backlinks":[],"missingLinks":[],"resolvedLinks":[]},{"slug":"markdown-syntax","title":"Markdown 语法速查","date":"2026-02-16","category":"写作规范","tags":["Markdown","排版","公式","代码"],"related":[],"links":["数模方法速查卡"],"pinned":false,"status":"","source":"01-markdown-语法速查.md","excerpt":"本站支持的全部写法：标题、列表、待办、表格、代码块、公式、引用提示框、双链、图片与附件。","html":"<h1 id=\"markdown-语法速查\">Markdown 语法速查<a class=\"md-anchor\" href=\"#markdown-语法速查\" aria-label=\"锚点\">#</a></h1>\n<p>写笔记时对照这一页，够用了。所有写法都已在本站实测通过。</p>\n<h2 id=\"标题与分级\">标题与分级<a class=\"md-anchor\" href=\"#标题与分级\" aria-label=\"锚点\">#</a></h2>\n<p><code class=\"md-inline-code\">#</code> 到 <code class=\"md-inline-code\">######</code> 六级标题。<strong>本页右侧目录只收录二到四级</strong>，所以正文里请用 <code class=\"md-inline-code\">##</code> 起头，<code class=\"md-inline-code\">#</code> 留给标题本身。</p>\n<h2 id=\"强调删除线与高亮\">强调、删除线与高亮<a class=\"md-anchor\" href=\"#强调删除线与高亮\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>写法</th><th>效果</th></tr></thead><tbody><tr><td><code class=\"md-inline-code\">**粗体**</code></td><td><strong>粗体</strong></td></tr><tr><td><code class=\"md-inline-code\">*斜体*</code></td><td><em>斜体</em></td></tr><tr><td><code class=\"md-inline-code\">~~删除线~~</code></td><td><del>删除线</del></td></tr><tr><td><code class=\"md-inline-code\">==高亮==</code></td><td><mark>高亮</mark></td></tr><tr><td><code class=\"md-inline-code\">`行内代码`</code></td><td><code class=\"md-inline-code\">行内代码</code></td></tr></tbody></table></div>\n<h2 id=\"列表与待办\">列表与待办<a class=\"md-anchor\" href=\"#列表与待办\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li>无序列表用 <code class=\"md-inline-code\">-</code></li><li>缩进两个空格可以嵌套</li><li>就像这样</li><li>数字列表用 <code class=\"md-inline-code\">1. 2. 3.</code></li></ul>\n<p>待办清单（方括号里打 x 表示完成）：</p>\n<ul class=\"md-list\"><li><span class=\"md-todo done\"></span>已经做完的事</li><li><span class=\"md-todo \"></span>还没做的事</li><li><span class=\"md-todo \"></span>记得给自己留 deadline</li></ul>\n<h2 id=\"表格\">表格<a class=\"md-anchor\" href=\"#表格\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>字段</th><th>类型</th><th style=\"text-align:center\">必填</th><th>说明</th></tr></thead><tbody><tr><td>title</td><td>文本</td><td style=\"text-align:center\">是</td><td>标题</td></tr><tr><td>category</td><td>文本</td><td style=\"text-align:center\">否</td><td>分类，默认取文件夹名</td></tr><tr><td>tags</td><td>列表</td><td style=\"text-align:center\">否</td><td>标签</td></tr><tr><td>date</td><td>日期</td><td style=\"text-align:center\">否</td><td>不写取文件修改时间</td></tr><tr><td>pinned</td><td>布尔</td><td style=\"text-align:center\">否</td><td><code class=\"md-inline-code\">true</code> 置顶首页</td></tr></tbody></table></div>\n<h2 id=\"代码块\">代码块<a class=\"md-anchor\" href=\"#代码块\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    &quot;&quot;&quot;构造一个随机矩阵并求平稳分布&quot;&quot;&quot;\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(&quot;平稳分布:&quot;, np.round(pi, 4))</code></pre></figure></p>\n<p><figure class=\"md-code\" data-lang=\"javascript\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">javascript</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-javascript\">// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) =&gt; r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);</code></pre></figure></p>\n<h2 id=\"公式\">公式<a class=\"md-anchor\" href=\"#公式\" aria-label=\"锚点\">#</a></h2>\n<p>行内公式用单个美元符号：总体期望 <span class=\"md-math-inline\" data-tex=\"\\mathbb{E}[X]=\\sum_{i} x_i p_i\"></span> 可以直接嵌在句子里。</p>\n<p>块级公式用两个美元符号独占一段：</p>\n<p><div class=\"md-math-block\" data-tex=\"P(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\"></div></p>\n<p><div class=\"md-math-block\" data-tex=\"\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\"></div></p>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"公式渲染原理\"><p class=\"md-callout-title\">公式渲染原理</p><p>页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。</p></div>\n<h2 id=\"引用与提示框\">引用与提示框<a class=\"md-anchor\" href=\"#引用与提示框\" aria-label=\"锚点\">#</a></h2>\n<p>普通引用：</p>\n<blockquote><p>引用别人一句话，用 <code class=\"md-inline-code\">&gt;</code> 开头。<br>可以多行。</p></blockquote>\n<p>提示框（GitHub 风格，本站支持 6 种）：</p>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"信息\"><p class=\"md-callout-title\">信息</p><p>用来补充背景。</p>\n<p>[!TIP] 技巧<br>省时间的小办法放这里。</p>\n<p>[!IMPORTANT] 重要<br>必须记住的结论。</p>\n<p>[!WARNING] 注意<br>容易踩的坑。</p>\n<p>[!CAUTION] 危险<br>会造成损失的操作。</p>\n<p>[!TODO] 待办<br>下一篇要补的内容。</p></div>\n<h2 id=\"自动目录块\">自动目录块<a class=\"md-anchor\" href=\"#自动目录块\" aria-label=\"锚点\">#</a></h2>\n<p>在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：</p>\n<ul class=\"md-index-list\"><li><span>情报检索三件套</span></li><li><span>数据清洗清单</span></li><li><span>模型选型决策点</span></li></ul>\n<h2 id=\"双链与反向链接\">双链与反向链接<a class=\"md-anchor\" href=\"#双链与反向链接\" aria-label=\"锚点\">#</a></h2>\n<p>写 <code class=\"md-inline-code\">[[数模方法速查卡]]</code> 会渲染成站内跳转链接：<a class=\"md-wikilink\" data-wikilink=\"数模方法速查卡\" href=\"#/note/%E6%95%B0%E6%A8%A1%E6%96%B9%E6%B3%95%E9%80%9F%E6%9F%A5%E5%8D%A1\">数模方法速查卡</a>。被引用的那篇笔记底部会自动出现「被这些笔记引用」。</p>\n<h2 id=\"图片与附件\">图片与附件<a class=\"md-anchor\" href=\"#图片与附件\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"markdown\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">markdown</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-markdown\">![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)</code></pre></figure></p>\n<p>图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"图片文字检索\"><p class=\"md-callout-title\">图片文字检索</p><p>图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。</p></div>\n<h2 id=\"分隔线\">分隔线<a class=\"md-anchor\" href=\"#分隔线\" aria-label=\"锚点\">#</a></h2>\n<p>三个短横线：</p>\n<hr>\n<p>以上就是全部写法。够用、不啰嗦。</p>","headings":[{"level":1,"text":"Markdown 语法速查","id":"markdown-语法速查"},{"level":2,"text":"标题与分级","id":"标题与分级"},{"level":2,"text":"强调、删除线与高亮","id":"强调删除线与高亮"},{"level":2,"text":"列表与待办","id":"列表与待办"},{"level":2,"text":"表格","id":"表格"},{"level":2,"text":"代码块","id":"代码块"},{"level":2,"text":"公式","id":"公式"},{"level":2,"text":"引用与提示框","id":"引用与提示框"},{"level":2,"text":"自动目录块","id":"自动目录块"},{"level":2,"text":"双链与反向链接","id":"双链与反向链接"},{"level":2,"text":"图片与附件","id":"图片与附件"},{"level":2,"text":"分隔线","id":"分隔线"}],"raw":"\n# Markdown 语法速查\n\n写笔记时对照这一页，够用了。所有写法都已在本站实测通过。\n\n## 标题与分级\n\n`#` 到 `######` 六级标题。**本页右侧目录只收录二到四级**，所以正文里请用 `##` 起头，`#` 留给标题本身。\n\n## 强调、删除线与高亮\n\n| 写法 | 效果 |\n| --- | --- |\n| `**粗体**` | **粗体** |\n| `*斜体*` | *斜体* |\n| `~~删除线~~` | ~~删除线~~ |\n| `==高亮==` | ==高亮== |\n| `` `行内代码` `` | `行内代码` |\n\n## 列表与待办\n\n- 无序列表用 `-`\n- 缩进两个空格可以嵌套\n  - 就像这样\n- 数字列表用 `1. 2. 3.`\n\n待办清单（方括号里打 x 表示完成）：\n\n- [x] 已经做完的事\n- [ ] 还没做的事\n- [ ] 记得给自己留 deadline\n\n## 表格\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | :---: | --- |\n| title | 文本 | 是 | 标题 |\n| category | 文本 | 否 | 分类，默认取文件夹名 |\n| tags | 列表 | 否 | 标签 |\n| date | 日期 | 否 | 不写取文件修改时间 |\n| pinned | 布尔 | 否 | `true` 置顶首页 |\n\n## 代码块\n\n```python\nimport numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    \"\"\"构造一个随机矩阵并求平稳分布\"\"\"\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(\"平稳分布:\", np.round(pi, 4))\n```\n\n```javascript\n// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) => r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);\n```\n\n## 公式\n\n行内公式用单个美元符号：总体期望 $\\mathbb{E}[X]=\\sum_{i} x_i p_i$ 可以直接嵌在句子里。\n\n块级公式用两个美元符号独占一段：\n\n$\nP(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\n$\n\n$\n\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\n$\n\n> [!NOTE] 公式渲染原理\n> 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。\n\n## 引用与提示框\n\n普通引用：\n\n> 引用别人一句话，用 `>` 开头。\n> 可以多行。\n\n提示框（GitHub 风格，本站支持 6 种）：\n\n> [!NOTE] 信息\n> 用来补充背景。\n\n> [!TIP] 技巧\n> 省时间的小办法放这里。\n\n> [!IMPORTANT] 重要\n> 必须记住的结论。\n\n> [!WARNING] 注意\n> 容易踩的坑。\n\n> [!CAUTION] 危险\n> 会造成损失的操作。\n\n> [!TODO] 待办\n> 下一篇要补的内容。\n\n## 自动目录块\n\n在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：\n\n## 目录\n\n- 情报检索三件套\n- 数据清洗清单\n- 模型选型决策点\n\n## 双链与反向链接\n\n写 `[[数模方法速查卡]]` 会渲染成站内跳转链接：[[数模方法速查卡]]。被引用的那篇笔记底部会自动出现「被这些笔记引用」。\n\n## 图片与附件\n\n```markdown\n![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)\n```\n\n图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。\n\n> [!TIP] 图片文字检索\n> 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。\n\n## 分隔线\n\n三个短横线：\n\n---\n\n以上就是全部写法。够用、不啰嗦。\n","rawFull":"---\ntitle: Markdown 语法速查\nslug: markdown-syntax\ncategory: 写作规范\ntags: [Markdown, 排版, 公式, 代码]\ndate: 2026-02-16\nsummary: 本站支持的全部写法：标题、列表、待办、表格、代码块、公式、引用提示框、双链、图片与附件。\n---\n\n# Markdown 语法速查\n\n写笔记时对照这一页，够用了。所有写法都已在本站实测通过。\n\n## 标题与分级\n\n`#` 到 `######` 六级标题。**本页右侧目录只收录二到四级**，所以正文里请用 `##` 起头，`#` 留给标题本身。\n\n## 强调、删除线与高亮\n\n| 写法 | 效果 |\n| --- | --- |\n| `**粗体**` | **粗体** |\n| `*斜体*` | *斜体* |\n| `~~删除线~~` | ~~删除线~~ |\n| `==高亮==` | ==高亮== |\n| `` `行内代码` `` | `行内代码` |\n\n## 列表与待办\n\n- 无序列表用 `-`\n- 缩进两个空格可以嵌套\n  - 就像这样\n- 数字列表用 `1. 2. 3.`\n\n待办清单（方括号里打 x 表示完成）：\n\n- [x] 已经做完的事\n- [ ] 还没做的事\n- [ ] 记得给自己留 deadline\n\n## 表格\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | :---: | --- |\n| title | 文本 | 是 | 标题 |\n| category | 文本 | 否 | 分类，默认取文件夹名 |\n| tags | 列表 | 否 | 标签 |\n| date | 日期 | 否 | 不写取文件修改时间 |\n| pinned | 布尔 | 否 | `true` 置顶首页 |\n\n## 代码块\n\n```python\nimport numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    \"\"\"构造一个随机矩阵并求平稳分布\"\"\"\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(\"平稳分布:\", np.round(pi, 4))\n```\n\n```javascript\n// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) => r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);\n```\n\n## 公式\n\n行内公式用单个美元符号：总体期望 $\\mathbb{E}[X]=\\sum_{i} x_i p_i$ 可以直接嵌在句子里。\n\n块级公式用两个美元符号独占一段：\n\n$\nP(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\n$\n\n$\n\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\n$\n\n> [!NOTE] 公式渲染原理\n> 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。\n\n## 引用与提示框\n\n普通引用：\n\n> 引用别人一句话，用 `>` 开头。\n> 可以多行。\n\n提示框（GitHub 风格，本站支持 6 种）：\n\n> [!NOTE] 信息\n> 用来补充背景。\n\n> [!TIP] 技巧\n> 省时间的小办法放这里。\n\n> [!IMPORTANT] 重要\n> 必须记住的结论。\n\n> [!WARNING] 注意\n> 容易踩的坑。\n\n> [!CAUTION] 危险\n> 会造成损失的操作。\n\n> [!TODO] 待办\n> 下一篇要补的内容。\n\n## 自动目录块\n\n在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：\n\n## 目录\n\n- 情报检索三件套\n- 数据清洗清单\n- 模型选型决策点\n\n## 双链与反向链接\n\n写 `[[数模方法速查卡]]` 会渲染成站内跳转链接：[[数模方法速查卡]]。被引用的那篇笔记底部会自动出现「被这些笔记引用」。\n\n## 图片与附件\n\n```markdown\n![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)\n```\n\n图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。\n\n> [!TIP] 图片文字检索\n> 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。\n\n## 分隔线\n\n三个短横线：\n\n---\n\n以上就是全部写法。够用、不啰嗦。\n","search":"Markdown 语法速查 \u0001 Markdown 语法速查 # 写笔记时对照这一页，够用了。所有写法都已在本站实测通过。 标题与分级 # # 到 ###### 六级标题。 本页右侧目录只收录二到四级 ，所以正文里请用 ## 起头， # 留给标题本身。 强调、删除线与高亮 # 写法 效果 **粗体** 粗体 *斜体* 斜体 ~~删除线~~ 删除线 ==高亮== 高亮 `行内代码` 行内代码 列表与待办 # 无序列表用 - 缩进两个空格可以嵌套 就像这样 数字列表用 1. 2. 3. 待办清单（方括号里打 x 表示完成）： 已经做完的事 还没做的事 记得给自己留 deadline 表格 # 字段 类型 必填 说明 title 文本 是 标题 category 文本 否 分类，默认取文件夹名 tags 列表 否 标签 date 日期 否 不写取文件修改时间 pinned 布尔 否 true 置顶首页 代码块 # 公式 # 行内公式用单个美元符号：总体期望 可以直接嵌在句子里。 块级公式用两个美元符号独占一段： 公式渲染原理 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。 引用与提示框 # 普通引用： 引用别人一句话，用 &gt; 开头。 可以多行。 提示框（GitHub 风格，本站支持 6 种）： 信息 用来补充背景。 [!TIP] 技巧 省时间的小办法放这里。 [!IMPORTANT] 重要 必须记住的结论。 [!WARNING] 注意 容易踩的坑。 [!CAUTION] 危险 会造成损失的操作。 [!TODO] 待办 下一篇要补的内容。 自动目录块 # 在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引： 情报检索三件套 数据清洗清单 模型选型决策点 双链与反向链接 # 写 [[数模方法速查卡]] 会渲染成站内跳转链接： 数模方法速查卡 。被引用的那篇笔记底部会自动出现「被这些笔记引用」。 图片与附件 # 图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。 图片文字检索 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。 分隔线 # 三个短横线： 以上就是全部写法。够用、不啰嗦。 import numpy as np def stationary_matrix(n=3, seed=42): \"\"\"构造一个随机矩阵并求平稳分布\"\"\" rng = np.random.default_rng(seed) P = rng.random((n, n)) P = P / P.sum(axis=1, keepdims=True) # 每行归一化 w, v = np.linalg.eig(P.T) i = np.argmin(np.abs(w - 1.0)) pi = np.real(v[:, i]) return P, pi / pi.sum() P, pi = stationary_matrix() print(\"平稳分布:\", np.round(pi, 4)) // 前端也一样能高亮 const notes = await fetch('data/index.json').then((r) => r.json()); console.log(`共 ${notes.notes.length} 篇笔记`); ![图片说明](assets/图片文件名.png) [论文附件](assets/paper.pdf) \u0001 Markdown 排版 公式 代码 \u0001 写作规范 \u0001 ","attachments":[],"cover":{"ink":"#E0913A","soft":"#FBF0E0","glyph":"MA"},"backlinks":[],"missingLinks":[],"resolvedLinks":["mm-methods"]},{"slug":"markov-chain","title":"随机过程 · 马尔可夫链建模笔记","date":"2026-02-14","category":"数学建模","tags":["随机过程","马尔可夫链","数值计算","图表"],"related":["数模方法速查卡"],"links":["数模方法速查卡"],"pinned":false,"status":"","source":"02-随机过程-马尔可夫链建模.md","excerpt":"从状态划分到平稳分布求解再到结论表达，一条链走完马尔可夫链类赛题；含代码与收敛图。","html":"<h1 id=\"随机过程-马尔可夫链建模笔记\">随机过程 · 马尔可夫链建模笔记<a class=\"md-anchor\" href=\"#随机过程-马尔可夫链建模笔记\" aria-label=\"锚点\">#</a></h1>\n<p>这类题的共同骨架是：<strong>把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题</strong>。下面按这四步记录。</p>\n<h2 id=\"第一步状态划分\">第一步：状态划分<a class=\"md-anchor\" href=\"#第一步状态划分\" aria-label=\"锚点\">#</a></h2>\n<p>状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。</p>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"状态数经验值\"><p class=\"md-callout-title\">状态数经验值</p><p>一般取 <strong>3～6 个状态</strong>。样本量 <span class=\"md-math-inline\" data-tex=\"n\"></span> 时，转移矩阵有 <span class=\"md-math-inline\" data-tex=\"k(k-1)\"></span> 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。</p></div>\n<h2 id=\"第二步估计转移矩阵\">第二步：估计转移矩阵<a class=\"md-anchor\" href=\"#第二步估计转移矩阵\" aria-label=\"锚点\">#</a></h2>\n<p>设样本中从状态 <span class=\"md-math-inline\" data-tex=\"i\"></span> 转移到状态 <span class=\"md-math-inline\" data-tex=\"j\"></span> 的频数为 <span class=\"md-math-inline\" data-tex=\"n_{ij}\"></span>，则</p>\n<p><div class=\"md-math-block\" data-tex=\"\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\"></div></p>\n<p>若某些 <span class=\"md-math-inline\" data-tex=\"n_{ij}=0\"></span> 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：</p>\n<p><div class=\"md-math-block\" data-tex=\"\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\"></div></p>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    &quot;&quot;&quot;seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵&quot;&quot;&quot;\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    &quot;&quot;&quot;求平稳分布：解 pi P = pi, sum(pi)=1&quot;&quot;&quot;\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(&quot;平稳分布 π =&quot;, np.round(stationary(P), 4))</code></pre></figure></p>\n<h2 id=\"第三步长期行为\">第三步：长期行为<a class=\"md-anchor\" href=\"#第三步长期行为\" aria-label=\"锚点\">#</a></h2>\n<p>若链不可约且非周期，则 <span class=\"md-math-inline\" data-tex=\"\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}\"></span>，与初始分布无关。验证收敛可以画幂次迭代曲线：</p>\n<p><div class=\"md-math-block\" data-tex=\"\\pi^{(n+1)} = \\pi^{(n)} P\"></div></p>\n<p><figure class=\"md-figure\"><img src=\"assets/demo-convergence.png\" alt=\"模型收敛示意图（演示图片文字检索）\" loading=\"lazy\" decoding=\"async\" data-zoom-src=\"assets/demo-convergence.png\"><figcaption>模型收敛示意图（演示图片文字检索）</figcaption></figure></p>\n<div class=\"md-callout md-callout-warn\" data-callout=\"WARNING\" data-callout-title=\"常见失分点\"><p class=\"md-callout-title\">常见失分点</p><p>直接说「所以最终会收敛到平稳分布」而不验证<strong>不可约 + 非周期</strong>。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。</p></div>\n<h2 id=\"第四步结论表达\">第四步：结论表达<a class=\"md-anchor\" href=\"#第四步结论表达\" aria-label=\"锚点\">#</a></h2>\n<p>答题句式和数字要给全，避免「大约会趋于稳定」这类空话：</p>\n<div class=\"md-table-wrap\"><table><thead><tr><th>初始状态</th><th>5 步后处于状态 A 的概率</th><th>长期概率 π(A)</th><th>收敛所需步数</th></tr></thead><tbody><tr><td>状态 0</td><td>0.4521</td><td>0.3846</td><td>11</td></tr><tr><td>状态 1</td><td>0.3987</td><td>0.3846</td><td>8</td></tr><tr><td>状态 2</td><td>0.3312</td><td>0.3846</td><td>9</td></tr></tbody></table></div>\n<p>结论写法：<em>\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 <span class=\"md-math-inline\" data-tex=\"10^{-3}\"></span>。\"</em></p>\n<h2 id=\"灵敏度转移概率估错会怎样\">灵敏度：转移概率估错会怎样<a class=\"md-anchor\" href=\"#灵敏度转移概率估错会怎样\" aria-label=\"锚点\">#</a></h2>\n<p>把转移矩阵每一行扰动 <span class=\"md-math-inline\" data-tex=\"\\pm 5\\%\"></span>（重新归一化），观察 <span class=\"md-math-inline\" data-tex=\"\\pi\"></span> 的变化幅度：</p>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">def perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(&quot;π 均值:&quot;, np.round(mean_pi, 4))\nprint(&quot;π 标准差:&quot;, np.round(sd_pi, 4))</code></pre></figure></p>\n<p>若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。</p>\n<h2 id=\"一句话总结\">一句话总结<a class=\"md-anchor\" href=\"#一句话总结\" aria-label=\"锚点\">#</a></h2>\n<p>马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是<strong>状态怎么划、参数怎么估、结论怎么写数字</strong>。</p>\n<p>相关：<a class=\"md-wikilink\" data-wikilink=\"数模方法速查卡\" href=\"#/note/%E6%95%B0%E6%A8%A1%E6%96%B9%E6%B3%95%E9%80%9F%E6%9F%A5%E5%8D%A1\">数模方法速查卡</a></p>\n<section class=\"md-attach-text\" data-file=\"demo-convergence.png\"><h4>附件文字 · demo-convergence.png</h4><pre>模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。</pre></section>","headings":[{"level":1,"text":"随机过程 · 马尔可夫链建模笔记","id":"随机过程-马尔可夫链建模笔记"},{"level":2,"text":"第一步：状态划分","id":"第一步状态划分"},{"level":2,"text":"第二步：估计转移矩阵","id":"第二步估计转移矩阵"},{"level":2,"text":"第三步：长期行为","id":"第三步长期行为"},{"level":2,"text":"第四步：结论表达","id":"第四步结论表达"},{"level":2,"text":"灵敏度：转移概率估错会怎样","id":"灵敏度转移概率估错会怎样"},{"level":2,"text":"一句话总结","id":"一句话总结"}],"raw":"\n# 随机过程 · 马尔可夫链建模笔记\n\n这类题的共同骨架是：**把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题**。下面按这四步记录。\n\n## 第一步：状态划分\n\n状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。\n\n> [!IMPORTANT] 状态数经验值\n> 一般取 **3～6 个状态**。样本量 $n$ 时，转移矩阵有 $k(k-1)$ 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。\n\n## 第二步：估计转移矩阵\n\n设样本中从状态 $i$ 转移到状态 $j$ 的频数为 $n_{ij}$，则\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\n$\n\n若某些 $n_{ij}=0$ 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\n$\n\n```python\nimport numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\"\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\"\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(\"平稳分布 π =\", np.round(stationary(P), 4))\n```\n\n## 第三步：长期行为\n\n若链不可约且非周期，则 $\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}$，与初始分布无关。验证收敛可以画幂次迭代曲线：\n\n$\n\\pi^{(n+1)} = \\pi^{(n)} P\n$\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n> [!WARNING] 常见失分点\n> 直接说「所以最终会收敛到平稳分布」而不验证**不可约 + 非周期**。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。\n\n## 第四步：结论表达\n\n答题句式和数字要给全，避免「大约会趋于稳定」这类空话：\n\n| 初始状态 | 5 步后处于状态 A 的概率 | 长期概率 π(A) | 收敛所需步数 |\n| --- | --- | --- | --- |\n| 状态 0 | 0.4521 | 0.3846 | 11 |\n| 状态 1 | 0.3987 | 0.3846 | 8 |\n| 状态 2 | 0.3312 | 0.3846 | 9 |\n\n结论写法：*\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 $10^{-3}$。\"*\n\n## 灵敏度：转移概率估错会怎样\n\n把转移矩阵每一行扰动 $\\pm 5\\%$（重新归一化），观察 $\\pi$ 的变化幅度：\n\n```python\ndef perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(\"π 均值:\", np.round(mean_pi, 4))\nprint(\"π 标准差:\", np.round(sd_pi, 4))\n```\n\n若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。\n\n## 一句话总结\n\n马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是**状态怎么划、参数怎么估、结论怎么写数字**。\n\n相关：[[数模方法速查卡]]\n","rawFull":"---\ntitle: 随机过程 · 马尔可夫链建模笔记\nslug: markov-chain\ncategory: 数学建模\ntags: [随机过程, 马尔可夫链, 数值计算, 图表]\ndate: 2026-02-14\nsummary: 从状态划分到平稳分布求解再到结论表达，一条链走完马尔可夫链类赛题；含代码与收敛图。\nrelated: [数模方法速查卡]\n---\n\n# 随机过程 · 马尔可夫链建模笔记\n\n这类题的共同骨架是：**把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题**。下面按这四步记录。\n\n## 第一步：状态划分\n\n状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。\n\n> [!IMPORTANT] 状态数经验值\n> 一般取 **3～6 个状态**。样本量 $n$ 时，转移矩阵有 $k(k-1)$ 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。\n\n## 第二步：估计转移矩阵\n\n设样本中从状态 $i$ 转移到状态 $j$ 的频数为 $n_{ij}$，则\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\n$\n\n若某些 $n_{ij}=0$ 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\n$\n\n```python\nimport numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\"\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\"\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(\"平稳分布 π =\", np.round(stationary(P), 4))\n```\n\n## 第三步：长期行为\n\n若链不可约且非周期，则 $\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}$，与初始分布无关。验证收敛可以画幂次迭代曲线：\n\n$\n\\pi^{(n+1)} = \\pi^{(n)} P\n$\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n> [!WARNING] 常见失分点\n> 直接说「所以最终会收敛到平稳分布」而不验证**不可约 + 非周期**。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。\n\n## 第四步：结论表达\n\n答题句式和数字要给全，避免「大约会趋于稳定」这类空话：\n\n| 初始状态 | 5 步后处于状态 A 的概率 | 长期概率 π(A) | 收敛所需步数 |\n| --- | --- | --- | --- |\n| 状态 0 | 0.4521 | 0.3846 | 11 |\n| 状态 1 | 0.3987 | 0.3846 | 8 |\n| 状态 2 | 0.3312 | 0.3846 | 9 |\n\n结论写法：*\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 $10^{-3}$。\"*\n\n## 灵敏度：转移概率估错会怎样\n\n把转移矩阵每一行扰动 $\\pm 5\\%$（重新归一化），观察 $\\pi$ 的变化幅度：\n\n```python\ndef perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(\"π 均值:\", np.round(mean_pi, 4))\nprint(\"π 标准差:\", np.round(sd_pi, 4))\n```\n\n若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。\n\n## 一句话总结\n\n马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是**状态怎么划、参数怎么估、结论怎么写数字**。\n\n相关：[[数模方法速查卡]]\n","search":"随机过程 · 马尔可夫链建模笔记 \u0001 随机过程 · 马尔可夫链建模笔记 # 这类题的共同骨架是： 把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题 。下面按这四步记录。 第一步：状态划分 # 状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。 状态数经验值 一般取 3～6 个状态 。样本量 时，转移矩阵有 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。 第二步：估计转移矩阵 # 设样本中从状态 转移到状态 的频数为 ，则 若某些 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）： 第三步：长期行为 # 若链不可约且非周期，则 ，与初始分布无关。验证收敛可以画幂次迭代曲线： 模型收敛示意图（演示图片文字检索） 常见失分点 直接说「所以最终会收敛到平稳分布」而不验证 不可约 + 非周期 。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。 第四步：结论表达 # 答题句式和数字要给全，避免「大约会趋于稳定」这类空话： 初始状态 5 步后处于状态 A 的概率 长期概率 π(A) 收敛所需步数 状态 0 0.4521 0.3846 11 状态 1 0.3987 0.3846 8 状态 2 0.3312 0.3846 9 结论写法： \"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 。\" 灵敏度：转移概率估错会怎样 # 把转移矩阵每一行扰动 （重新归一化），观察 的变化幅度： 若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。 一句话总结 # 马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是 状态怎么划、参数怎么估、结论怎么写数字 。 相关： 数模方法速查卡 import numpy as np def estimate_transition(seq, k, alpha=1.0): \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\" counts = np.zeros((k, k)) for a, b in zip(seq[:-1], seq[1:]): counts[a, b] += 1 return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha) def stationary(P): \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\" k = P.shape[0] A = np.vstack([P.T - np.eye(k), np.ones(k)]) b = np.append(np.zeros(k), 1.0) pi, *_ = np.linalg.lstsq(A, b, rcond=None) # 最小二乘更稳 return pi / pi.sum() rng = np.random.default_rng(42) P = estimate_transition(rng.integers(0, 3, size=2000), k=3) print(\"平稳分布 π =\", np.round(stationary(P), 4)) def perturb(P, eps=0.05, n=300, seed=7): rng = np.random.default_rng(seed) res = [] for _ in range(n): Q = P * (1 + rng.uniform(-eps, eps, P.shape)) Q = Q / Q.sum(axis=1, keepdims=True) res.append(stationary(Q)) res = np.array(res) return res.mean(axis=0), res.std(axis=0) mean_pi, sd_pi = perturb(P) print(\"π 均值:\", np.round(mean_pi, 4)) print(\"π 标准差:\", np.round(sd_pi, 4)) \u0001 随机过程 马尔可夫链 数值计算 图表 \u0001 数学建模 \u0001 模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。","attachments":["demo-convergence.png"],"cover":{"ink":"#EA5A47","soft":"#FDEBE7","glyph":"随"},"backlinks":["mm-methods"],"missingLinks":[],"resolvedLinks":["mm-methods"]},{"slug":"mm-methods","title":"数模方法速查卡","date":"2026-02-12","category":"数学建模","tags":["方法选型","优化","预测","评价","决策树"],"related":["markov-chain"],"links":["随机过程 · 马尔可夫链建模笔记"],"pinned":false,"status":"","source":"03-数模方法速查卡.md","excerpt":"按赛题类型直接定位方法：优化、预测、评价、机理、统计，一张决策表 + 每类首选两三个模型。","html":"<h1 id=\"数模方法速查卡\">数模方法速查卡<a class=\"md-anchor\" href=\"#数模方法速查卡\" aria-label=\"锚点\">#</a></h1>\n<p>拿到题先判类型，再选方法。<strong>选错类型比选错模型致命得多。</strong></p>\n<h2 id=\"一眼定类型\">一眼定类型<a class=\"md-anchor\" href=\"#一眼定类型\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>题目关键词</th><th>类型</th><th>首选方法</th><th>备选</th></tr></thead><tbody><tr><td>最小成本、最大化收益、排班、路径</td><td>优化</td><td>整数规划（MILP）</td><td>遗传/模拟退火、贪心+局部搜索</td></tr><tr><td>预测未来、趋势、走势</td><td>预测</td><td>ARIMA / 指数平滑</td><td>LSTM、灰色 GM(1,1)、随机森林</td></tr><tr><td>排名、打分、优劣、综合</td><td>评价</td><td>熵权法 + TOPSIS</td><td>AHP、主成分分析、DEA</td></tr><tr><td>机理、物理过程、传染、扩散</td><td>机理</td><td>微分方程组</td><td>元胞自动机、蒙特卡洛</td></tr><tr><td>关系、影响因素、相关性</td><td>统计</td><td>多元回归</td><td>岭回归/Lasso、结构方程</td></tr><tr><td>策略、博弈、多主体</td><td>决策</td><td>博弈论 / 多目标优化</td><td>强化学习、仿真</td></tr></tbody></table></div>\n<h2 id=\"优化类建模顺序\">优化类：建模顺序<a class=\"md-anchor\" href=\"#优化类建模顺序\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li><strong>决策变量</strong>是什么（连续/整数/0-1）</li><li><strong>目标函数</strong>（单目标先写清，多目标再加权或 ε-约束）</li><li><strong>约束</strong>逐个列（容量、平衡、逻辑、非负）</li><li>检查<strong>规模</strong>：变量数 > 10⁴ 就上启发式，否则精确解</li></ol>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\"># 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)</code></pre></figure></p>\n<p>多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。</p>\n<h2 id=\"预测类数据先说话\">预测类：数据先说话<a class=\"md-anchor\" href=\"#预测类数据先说话\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"先看数据，再选模型\"><p class=\"md-callout-title\">先看数据，再选模型</p><p>少于 30 个点：指数平滑或灰色预测；<br>有明显季节：SARIMA 或 分解后建模；<br>有外部变量：回归类（含岭/Lasso）；<br>非线性强且样本多：机器学习模型 + 交叉验证。</p></div>\n<p>评价指标统一用 <strong>MAPE</strong> 或 <strong>RMSE</strong>，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。</p>\n<h2 id=\"评价类三件套\">评价类：三件套<a class=\"md-anchor\" href=\"#评价类三件套\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>指标标准化（正向/负向/区间型处理）</li><li>权重确定（熵权法客观 / AHP 主观，常用组合赋权）</li><li>排序（TOPSIS 贴近度，或灰色关联度）</li></ol>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\ndef entropy_weight(X):\n    &quot;&quot;&quot;X: n×m 正向化后的矩阵 → 客观权重&quot;&quot;&quot;\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()</code></pre></figure></p>\n<h2 id=\"检验与灵敏度评委最爱看\">检验与灵敏度（评委最爱看）<a class=\"md-anchor\" href=\"#检验与灵敏度评委最爱看\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li>拟合优度 <span class=\"md-math-inline\" data-tex=\"R^2\"></span>、残差正态性、多重共线性（VIF）</li><li><strong>灵敏度分析</strong>：关键参数 ±10% 扫描，看结论是否翻转</li><li><strong>稳健性</strong>：换一组随机种子/换一种距离度量，排名是否一致</li></ul>\n<h2 id=\"论文里必须出现的四句话\">论文里必须出现的四句话<a class=\"md-anchor\" href=\"#论文里必须出现的四句话\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>为什么选这个模型（而不是隔壁那个）</li><li>模型假设是什么（每条标注强弱）</li><li>结果的具体数字（不是「显著提高」）</li><li>结果的不确定性（区间、误差、灵敏度）</li></ol>\n<p>相关：<a class=\"md-wikilink\" data-wikilink=\"随机过程 · 马尔可夫链建模笔记\" href=\"#/note/%E9%9A%8F%E6%9C%BA%E8%BF%87%E7%A8%8B%20%C2%B7%20%E9%A9%AC%E5%B0%94%E5%8F%AF%E5%A4%AB%E9%93%BE%E5%BB%BA%E6%A8%A1%E7%AC%94%E8%AE%B0\">随机过程 · 马尔可夫链建模笔记</a></p>","headings":[{"level":1,"text":"数模方法速查卡","id":"数模方法速查卡"},{"level":2,"text":"一眼定类型","id":"一眼定类型"},{"level":2,"text":"优化类：建模顺序","id":"优化类建模顺序"},{"level":2,"text":"预测类：数据先说话","id":"预测类数据先说话"},{"level":2,"text":"评价类：三件套","id":"评价类三件套"},{"level":2,"text":"检验与灵敏度（评委最爱看）","id":"检验与灵敏度评委最爱看"},{"level":2,"text":"论文里必须出现的四句话","id":"论文里必须出现的四句话"}],"raw":"\n# 数模方法速查卡\n\n拿到题先判类型，再选方法。**选错类型比选错模型致命得多。**\n\n## 一眼定类型\n\n| 题目关键词 | 类型 | 首选方法 | 备选 |\n| --- | --- | --- | --- |\n| 最小成本、最大化收益、排班、路径 | 优化 | 整数规划（MILP） | 遗传/模拟退火、贪心+局部搜索 |\n| 预测未来、趋势、走势 | 预测 | ARIMA / 指数平滑 | LSTM、灰色 GM(1,1)、随机森林 |\n| 排名、打分、优劣、综合 | 评价 | 熵权法 + TOPSIS | AHP、主成分分析、DEA |\n| 机理、物理过程、传染、扩散 | 机理 | 微分方程组 | 元胞自动机、蒙特卡洛 |\n| 关系、影响因素、相关性 | 统计 | 多元回归 | 岭回归/Lasso、结构方程 |\n| 策略、博弈、多主体 | 决策 | 博弈论 / 多目标优化 | 强化学习、仿真 |\n\n## 优化类：建模顺序\n\n1. **决策变量**是什么（连续/整数/0-1）\n2. **目标函数**（单目标先写清，多目标再加权或 ε-约束）\n3. **约束**逐个列（容量、平衡、逻辑、非负）\n4. 检查**规模**：变量数 > 10⁴ 就上启发式，否则精确解\n\n```python\n# 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)\n```\n\n多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。\n\n## 预测类：数据先说话\n\n> [!IMPORTANT] 先看数据，再选模型\n> 少于 30 个点：指数平滑或灰色预测；\n> 有明显季节：SARIMA 或 分解后建模；\n> 有外部变量：回归类（含岭/Lasso）；\n> 非线性强且样本多：机器学习模型 + 交叉验证。\n\n评价指标统一用 **MAPE** 或 **RMSE**，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。\n\n## 评价类：三件套\n\n1. 指标标准化（正向/负向/区间型处理）\n2. 权重确定（熵权法客观 / AHP 主观，常用组合赋权）\n3. 排序（TOPSIS 贴近度，或灰色关联度）\n\n```python\nimport numpy as np\ndef entropy_weight(X):\n    \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\"\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()\n```\n\n## 检验与灵敏度（评委最爱看）\n\n- 拟合优度 $R^2$、残差正态性、多重共线性（VIF）\n- **灵敏度分析**：关键参数 ±10% 扫描，看结论是否翻转\n- **稳健性**：换一组随机种子/换一种距离度量，排名是否一致\n\n## 论文里必须出现的四句话\n\n1. 为什么选这个模型（而不是隔壁那个）\n2. 模型假设是什么（每条标注强弱）\n3. 结果的具体数字（不是「显著提高」）\n4. 结果的不确定性（区间、误差、灵敏度）\n\n相关：[[随机过程 · 马尔可夫链建模笔记]]\n","rawFull":"---\ntitle: 数模方法速查卡\nslug: mm-methods\ncategory: 数学建模\ntags: [方法选型, 优化, 预测, 评价, 决策树]\ndate: 2026-02-12\nsummary: 按赛题类型直接定位方法：优化、预测、评价、机理、统计，一张决策表 + 每类首选两三个模型。\nrelated: [markov-chain]\n---\n\n# 数模方法速查卡\n\n拿到题先判类型，再选方法。**选错类型比选错模型致命得多。**\n\n## 一眼定类型\n\n| 题目关键词 | 类型 | 首选方法 | 备选 |\n| --- | --- | --- | --- |\n| 最小成本、最大化收益、排班、路径 | 优化 | 整数规划（MILP） | 遗传/模拟退火、贪心+局部搜索 |\n| 预测未来、趋势、走势 | 预测 | ARIMA / 指数平滑 | LSTM、灰色 GM(1,1)、随机森林 |\n| 排名、打分、优劣、综合 | 评价 | 熵权法 + TOPSIS | AHP、主成分分析、DEA |\n| 机理、物理过程、传染、扩散 | 机理 | 微分方程组 | 元胞自动机、蒙特卡洛 |\n| 关系、影响因素、相关性 | 统计 | 多元回归 | 岭回归/Lasso、结构方程 |\n| 策略、博弈、多主体 | 决策 | 博弈论 / 多目标优化 | 强化学习、仿真 |\n\n## 优化类：建模顺序\n\n1. **决策变量**是什么（连续/整数/0-1）\n2. **目标函数**（单目标先写清，多目标再加权或 ε-约束）\n3. **约束**逐个列（容量、平衡、逻辑、非负）\n4. 检查**规模**：变量数 > 10⁴ 就上启发式，否则精确解\n\n```python\n# 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)\n```\n\n多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。\n\n## 预测类：数据先说话\n\n> [!IMPORTANT] 先看数据，再选模型\n> 少于 30 个点：指数平滑或灰色预测；\n> 有明显季节：SARIMA 或 分解后建模；\n> 有外部变量：回归类（含岭/Lasso）；\n> 非线性强且样本多：机器学习模型 + 交叉验证。\n\n评价指标统一用 **MAPE** 或 **RMSE**，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。\n\n## 评价类：三件套\n\n1. 指标标准化（正向/负向/区间型处理）\n2. 权重确定（熵权法客观 / AHP 主观，常用组合赋权）\n3. 排序（TOPSIS 贴近度，或灰色关联度）\n\n```python\nimport numpy as np\ndef entropy_weight(X):\n    \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\"\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()\n```\n\n## 检验与灵敏度（评委最爱看）\n\n- 拟合优度 $R^2$、残差正态性、多重共线性（VIF）\n- **灵敏度分析**：关键参数 ±10% 扫描，看结论是否翻转\n- **稳健性**：换一组随机种子/换一种距离度量，排名是否一致\n\n## 论文里必须出现的四句话\n\n1. 为什么选这个模型（而不是隔壁那个）\n2. 模型假设是什么（每条标注强弱）\n3. 结果的具体数字（不是「显著提高」）\n4. 结果的不确定性（区间、误差、灵敏度）\n\n相关：[[随机过程 · 马尔可夫链建模笔记]]\n","search":"数模方法速查卡 \u0001 数模方法速查卡 # 拿到题先判类型，再选方法。 选错类型比选错模型致命得多。 一眼定类型 # 题目关键词 类型 首选方法 备选 最小成本、最大化收益、排班、路径 优化 整数规划（MILP） 遗传/模拟退火、贪心+局部搜索 预测未来、趋势、走势 预测 ARIMA / 指数平滑 LSTM、灰色 GM(1,1)、随机森林 排名、打分、优劣、综合 评价 熵权法 + TOPSIS AHP、主成分分析、DEA 机理、物理过程、传染、扩散 机理 微分方程组 元胞自动机、蒙特卡洛 关系、影响因素、相关性 统计 多元回归 岭回归/Lasso、结构方程 策略、博弈、多主体 决策 博弈论 / 多目标优化 强化学习、仿真 优化类：建模顺序 # 决策变量 是什么（连续/整数/0-1） 目标函数 （单目标先写清，多目标再加权或 ε-约束） 约束 逐个列（容量、平衡、逻辑、非负） 检查 规模 ：变量数 > 10⁴ 就上启发式，否则精确解 多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。 预测类：数据先说话 # 先看数据，再选模型 少于 30 个点：指数平滑或灰色预测； 有明显季节：SARIMA 或 分解后建模； 有外部变量：回归类（含岭/Lasso）； 非线性强且样本多：机器学习模型 + 交叉验证。 评价指标统一用 MAPE 或 RMSE ，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。 评价类：三件套 # 指标标准化（正向/负向/区间型处理） 权重确定（熵权法客观 / AHP 主观，常用组合赋权） 排序（TOPSIS 贴近度，或灰色关联度） 检验与灵敏度（评委最爱看） # 拟合优度 、残差正态性、多重共线性（VIF） 灵敏度分析 ：关键参数 ±10% 扫描，看结论是否翻转 稳健性 ：换一组随机种子/换一种距离度量，排名是否一致 论文里必须出现的四句话 # 为什么选这个模型（而不是隔壁那个） 模型假设是什么（每条标注强弱） 结果的具体数字（不是「显著提高」） 结果的不确定性（区间、误差、灵敏度） 相关： 随机过程 · 马尔可夫链建模笔记 # 线性规划模板（scipy） from scipy.optimize import linprog c = [-3, -5] # 最大化 3x+5y → 取负 A = [[1, 0], [0, 2], [3, 2]] b = [4, 12, 18] res = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs') print(res.fun * -1, res.x) import numpy as np def entropy_weight(X): \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\" P = X / X.sum(axis=0, keepdims=True) P = np.clip(P, 1e-12, None) e = -(P * np.log(P)).sum(axis=0) / np.log(len(X)) g = 1 - e return g / g.sum() \u0001 方法选型 优化 预测 评价 决策树 \u0001 数学建模 \u0001 ","attachments":[],"cover":{"ink":"#EA5A47","soft":"#FDEBE7","glyph":"数"},"backlinks":["markdown-syntax","markov-chain"],"missingLinks":[],"resolvedLinks":["markov-chain"]},{"slug":"deploy","title":"GitHub Pages 部署与更新笔记","date":"2026-02-10","category":"工具链","tags":["GitHub","部署","命令","踩坑"],"related":[],"links":[],"pinned":false,"status":"","source":"04-GitHub-Pages部署与更新.md","excerpt":"从零把站点推上 GitHub Pages，以及每次更新笔记要做的三条命令和常见坑。","html":"<h1 id=\"github-pages-部署与更新笔记\">GitHub Pages 部署与更新笔记<a class=\"md-anchor\" href=\"#github-pages-部署与更新笔记\" aria-label=\"锚点\">#</a></h1>\n<h2 id=\"一次性配置只做一次\">一次性配置（只做一次）<a class=\"md-anchor\" href=\"#一次性配置只做一次\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">git init\ngit add -A\ngit commit -m &quot;init: 个人笔记站&quot;\ngit branch -M main\ngit remote add origin https://github.com/&lt;你的用户名&gt;/&lt;仓库名&gt;.git\ngit push -u origin main</code></pre></figure></p>\n<p>然后在 GitHub 网页端：<strong>Settings → Pages → Source 选 <code class=\"md-inline-code\">Deploy from a branch</code> → 分支 <code class=\"md-inline-code\">main</code>、目录 <code class=\"md-inline-code\">/site</code></strong> → Save。</p>\n<p>一分钟左右，访问：</p>\n<p><figure class=\"md-code\" data-lang=\"text\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">text</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-text\">https://&lt;你的用户名&gt;.github.io/&lt;仓库名&gt;/</code></pre></figure></p>\n<div class=\"md-callout md-callout-warn\" data-callout=\"WARNING\" data-callout-title=\"目录必须选 /site\"><p class=\"md-callout-title\">目录必须选 /site</p><p>网站文件在 <code class=\"md-inline-code\">docs/</code> 子目录里，Pages 的目录选成 <code class=\"md-inline-code\">/root</code> 会显示 404。</p></div>\n<h2 id=\"每次更新笔记三条命令\">每次更新笔记（三条命令）<a class=\"md-anchor\" href=\"#每次更新笔记三条命令\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">node tools/build.mjs\ngit add -A &amp;&amp; git commit -m &quot;notes: 新增 xxx&quot;\ngit push</code></pre></figure></p>\n<p><code class=\"md-inline-code\">build.mjs</code> 会把 <code class=\"md-inline-code\">content/*.md</code> 重新生成到 <code class=\"md-inline-code\">docs/data/index.json</code>，Pages 收到推送后自动重新发布。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"只改文字不用重新构建？\"><p class=\"md-callout-title\">只改文字不用重新构建？</p><p>不行。正文渲染在构建时完成，改了 <code class=\"md-inline-code\">.md</code> 必须重跑 <code class=\"md-inline-code\">node tools/build.mjs</code>，否则网页还是旧的。</p></div>\n<h2 id=\"本地预览改样式时必用\">本地预览（改样式时必用）<a class=\"md-anchor\" href=\"#本地预览改样式时必用\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">cd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080</code></pre></figure></p>\n<p>或者：</p>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">npx serve site</code></pre></figure></p>\n<div class=\"md-callout md-callout-danger\" data-callout=\"CAUTION\" data-callout-title=\"不要直接双击 index.html\"><p class=\"md-callout-title\">不要直接双击 index.html</p><p>浏览器对 <code class=\"md-inline-code\">file://</code> 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。</p></div>\n<h2 id=\"常见坑速查\">常见坑速查<a class=\"md-anchor\" href=\"#常见坑速查\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>现象</th><th>原因</th><th>解决</th></tr></thead><tbody><tr><td>打开是 404</td><td>Pages 目录选了 <code class=\"md-inline-code\">/root</code></td><td>改成 <code class=\"md-inline-code\">/site</code></td></tr><tr><td>页面样式全丢</td><td>仓库名与路径层级不符</td><td>本站全部用相对路径，正常不会有；若自行加了绝对路径 <code class=\"md-inline-code\">/css/...</code> 必须去掉前导斜杠</td></tr><tr><td>数据不更新</td><td>忘了跑构建</td><td><code class=\"md-inline-code\">node tools/build.mjs</code> 后重新推送</td></tr><tr><td>中文文件名乱码</td><td>系统编码</td><td>文件名尽量用英文或加 <code class=\"md-inline-code\">slug</code> 字段</td></tr><tr><td>图片 404</td><td>图片没放 <code class=\"md-inline-code\">content/assets/</code></td><td>图片统一放该目录，正文写 <code class=\"md-inline-code\">assets/xxx.png</code></td></tr><tr><td>推送要密码</td><td>GitHub 已停用密码认证</td><td>用 Personal Access Token 或 <code class=\"md-inline-code\">gh auth login</code></td></tr></tbody></table></div>\n<h2 id=\"想用自定义域名\">想用自定义域名<a class=\"md-anchor\" href=\"#想用自定义域名\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>域名 DNS 加一条 CNAME 指向 <code class=\"md-inline-code\">&lt;用户名&gt;.github.io</code></li><li>仓库 Settings → Pages → Custom domain 填入域名</li><li>勾选 Enforce HTTPS</li></ol>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"免费额度的边界\"><p class=\"md-callout-title\">免费额度的边界</p><p>公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 <code class=\"md-inline-code\">assets/</code>。</p></div>","headings":[{"level":1,"text":"GitHub Pages 部署与更新笔记","id":"github-pages-部署与更新笔记"},{"level":2,"text":"一次性配置（只做一次）","id":"一次性配置只做一次"},{"level":2,"text":"每次更新笔记（三条命令）","id":"每次更新笔记三条命令"},{"level":2,"text":"本地预览（改样式时必用）","id":"本地预览改样式时必用"},{"level":2,"text":"常见坑速查","id":"常见坑速查"},{"level":2,"text":"想用自定义域名","id":"想用自定义域名"}],"raw":"\n# GitHub Pages 部署与更新笔记\n\n## 一次性配置（只做一次）\n\n```bash\ngit init\ngit add -A\ngit commit -m \"init: 个人笔记站\"\ngit branch -M main\ngit remote add origin https://github.com/<你的用户名>/<仓库名>.git\ngit push -u origin main\n```\n\n然后在 GitHub 网页端：**Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/site`** → Save。\n\n一分钟左右，访问：\n\n```text\nhttps://<你的用户名>.github.io/<仓库名>/\n```\n\n> [!WARNING] 目录必须选 /site\n> 网站文件在 `docs/` 子目录里，Pages 的目录选成 `/root` 会显示 404。\n\n## 每次更新笔记（三条命令）\n\n```bash\nnode tools/build.mjs\ngit add -A && git commit -m \"notes: 新增 xxx\"\ngit push\n```\n\n`build.mjs` 会把 `content/*.md` 重新生成到 `docs/data/index.json`，Pages 收到推送后自动重新发布。\n\n> [!TIP] 只改文字不用重新构建？\n> 不行。正文渲染在构建时完成，改了 `.md` 必须重跑 `node tools/build.mjs`，否则网页还是旧的。\n\n## 本地预览（改样式时必用）\n\n```bash\ncd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080\n```\n\n或者：\n\n```bash\nnpx serve site\n```\n\n> [!CAUTION] 不要直接双击 index.html\n> 浏览器对 `file://` 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。\n\n## 常见坑速查\n\n| 现象 | 原因 | 解决 |\n| --- | --- | --- |\n| 打开是 404 | Pages 目录选了 `/root` | 改成 `/site` |\n| 页面样式全丢 | 仓库名与路径层级不符 | 本站全部用相对路径，正常不会有；若自行加了绝对路径 `/css/...` 必须去掉前导斜杠 |\n| 数据不更新 | 忘了跑构建 | `node tools/build.mjs` 后重新推送 |\n| 中文文件名乱码 | 系统编码 | 文件名尽量用英文或加 `slug` 字段 |\n| 图片 404 | 图片没放 `content/assets/` | 图片统一放该目录，正文写 `assets/xxx.png` |\n| 推送要密码 | GitHub 已停用密码认证 | 用 Personal Access Token 或 `gh auth login` |\n\n## 想用自定义域名\n\n1. 域名 DNS 加一条 CNAME 指向 `<用户名>.github.io`\n2. 仓库 Settings → Pages → Custom domain 填入域名\n3. 勾选 Enforce HTTPS\n\n> [!NOTE] 免费额度的边界\n> 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 `assets/`。\n","rawFull":"---\ntitle: GitHub Pages 部署与更新笔记\nslug: deploy\ncategory: 工具链\ntags: [GitHub, 部署, 命令, 踩坑]\ndate: 2026-02-10\nsummary: 从零把站点推上 GitHub Pages，以及每次更新笔记要做的三条命令和常见坑。\n---\n\n# GitHub Pages 部署与更新笔记\n\n## 一次性配置（只做一次）\n\n```bash\ngit init\ngit add -A\ngit commit -m \"init: 个人笔记站\"\ngit branch -M main\ngit remote add origin https://github.com/<你的用户名>/<仓库名>.git\ngit push -u origin main\n```\n\n然后在 GitHub 网页端：**Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/site`** → Save。\n\n一分钟左右，访问：\n\n```text\nhttps://<你的用户名>.github.io/<仓库名>/\n```\n\n> [!WARNING] 目录必须选 /site\n> 网站文件在 `docs/` 子目录里，Pages 的目录选成 `/root` 会显示 404。\n\n## 每次更新笔记（三条命令）\n\n```bash\nnode tools/build.mjs\ngit add -A && git commit -m \"notes: 新增 xxx\"\ngit push\n```\n\n`build.mjs` 会把 `content/*.md` 重新生成到 `docs/data/index.json`，Pages 收到推送后自动重新发布。\n\n> [!TIP] 只改文字不用重新构建？\n> 不行。正文渲染在构建时完成，改了 `.md` 必须重跑 `node tools/build.mjs`，否则网页还是旧的。\n\n## 本地预览（改样式时必用）\n\n```bash\ncd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080\n```\n\n或者：\n\n```bash\nnpx serve site\n```\n\n> [!CAUTION] 不要直接双击 index.html\n> 浏览器对 `file://` 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。\n\n## 常见坑速查\n\n| 现象 | 原因 | 解决 |\n| --- | --- | --- |\n| 打开是 404 | Pages 目录选了 `/root` | 改成 `/site` |\n| 页面样式全丢 | 仓库名与路径层级不符 | 本站全部用相对路径，正常不会有；若自行加了绝对路径 `/css/...` 必须去掉前导斜杠 |\n| 数据不更新 | 忘了跑构建 | `node tools/build.mjs` 后重新推送 |\n| 中文文件名乱码 | 系统编码 | 文件名尽量用英文或加 `slug` 字段 |\n| 图片 404 | 图片没放 `content/assets/` | 图片统一放该目录，正文写 `assets/xxx.png` |\n| 推送要密码 | GitHub 已停用密码认证 | 用 Personal Access Token 或 `gh auth login` |\n\n## 想用自定义域名\n\n1. 域名 DNS 加一条 CNAME 指向 `<用户名>.github.io`\n2. 仓库 Settings → Pages → Custom domain 填入域名\n3. 勾选 Enforce HTTPS\n\n> [!NOTE] 免费额度的边界\n> 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 `assets/`。\n","search":"GitHub Pages 部署与更新笔记 \u0001 GitHub Pages 部署与更新笔记 # 一次性配置（只做一次） # 然后在 GitHub 网页端： Settings → Pages → Source 选 Deploy from a branch → 分支 main 、目录 /site → Save。 一分钟左右，访问： 目录必须选 /site 网站文件在 docs/ 子目录里，Pages 的目录选成 /root 会显示 404。 每次更新笔记（三条命令） # build.mjs 会把 content/*.md 重新生成到 docs/data/index.json ，Pages 收到推送后自动重新发布。 只改文字不用重新构建？ 不行。正文渲染在构建时完成，改了 .md 必须重跑 node tools/build.mjs ，否则网页还是旧的。 本地预览（改样式时必用） # 或者： 不要直接双击 index.html 浏览器对 file:// 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。 常见坑速查 # 现象 原因 解决 打开是 404 Pages 目录选了 /root 改成 /site 页面样式全丢 仓库名与路径层级不符 本站全部用相对路径，正常不会有；若自行加了绝对路径 /css/... 必须去掉前导斜杠 数据不更新 忘了跑构建 node tools/build.mjs 后重新推送 中文文件名乱码 系统编码 文件名尽量用英文或加 slug 字段 图片 404 图片没放 content/assets/ 图片统一放该目录，正文写 assets/xxx.png 推送要密码 GitHub 已停用密码认证 用 Personal Access Token 或 gh auth login 想用自定义域名 # 域名 DNS 加一条 CNAME 指向 &lt;用户名&gt;.github.io 仓库 Settings → Pages → Custom domain 填入域名 勾选 Enforce HTTPS 免费额度的边界 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 assets/ 。 git init git add -A git commit -m \"init: 个人笔记站\" git branch -M main git remote add origin https://github.com/<你的用户名>/<仓库名>.git git push -u origin main https://<你的用户名>.github.io/<仓库名>/ node tools/build.mjs git add -A && git commit -m \"notes: 新增 xxx\" git push cd site python -m http.server 8080 # 打开 http://127.0.0.1:8080 npx serve site \u0001 GitHub 部署 命令 踩坑 \u0001 工具链 \u0001 ","attachments":[],"cover":{"ink":"#4C7DF0","soft":"#E9EFFE","glyph":"GI"},"backlinks":[],"missingLinks":[],"resolvedLinks":[]}]};
+window.__NOTES_DATA__ = {"generatedAt":"2026-09-19T12:16:22.306Z","stats":{"notes":5,"words":8362,"tags":20,"categories":4,"assets":3,"extracted":3},"categories":["关于本站","写作规范","数学建模","工具链"],"tags":{"使用说明":1,"工作流":1,"置顶":1,"Markdown":1,"排版":1,"公式":1,"代码":1,"随机过程":1,"马尔可夫链":1,"数值计算":1,"图表":1,"方法选型":1,"优化":1,"预测":1,"评价":1,"决策树":1,"GitHub":1,"部署":1,"命令":1,"踩坑":1},"notes":[{"slug":"home","title":"开始使用 · 这套笔记怎么用","date":"2026-02-18","category":"关于本站","tags":["使用说明","工作流","置顶"],"related":[],"links":[],"pinned":true,"status":"","source":"home.md","excerpt":"这套笔记站的用法说明：内容放哪、怎么更新、怎么换排版、怎么把图片里的文字也搜出来。","html":"<h1 id=\"开始使用-这套笔记怎么用\">开始使用 · 这套笔记怎么用<a class=\"md-anchor\" href=\"#开始使用-这套笔记怎么用\" aria-label=\"锚点\">#</a></h1>\n<p>这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：<strong>内容永远是 Markdown 文件，网页由构建脚本自动生成</strong>。你不需要写一行 HTML。</p>\n<h2 id=\"三条命令搞定一切\">三条命令搞定一切<a class=\"md-anchor\" href=\"#三条命令搞定一切\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\"># 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A &amp;&amp; git commit -m &quot;update notes&quot; &amp;&amp; git push</code></pre></figure></p>\n<p>推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"最省事的用法\"><p class=\"md-callout-title\">最省事的用法</p><p>你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 <code class=\"md-inline-code\">.md</code>、跑构建、推送 GitHub。你要的就是一个网址。</p></div>\n<h2 id=\"目录结构\">目录结构<a class=\"md-anchor\" href=\"#目录结构\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"text\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">text</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-text\">notes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md</code></pre></figure></p>\n<h2 id=\"每一篇笔记的头部frontmatter\">每一篇笔记的头部（frontmatter）<a class=\"md-anchor\" href=\"#每一篇笔记的头部frontmatter\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"yaml\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">yaml</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-yaml\">---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---</code></pre></figure></p>\n<h2 id=\"这篇笔记能干什么\">这篇笔记能干什么<a class=\"md-anchor\" href=\"#这篇笔记能干什么\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li><strong>搜索</strong>：左上角搜索框支持标题、正文、标签、分类，<strong>连图片里的文字和 PDF 正文也能搜到</strong>（见下面那张演示图）</li><li><strong>目录</strong>：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉</li><li><strong>知识图谱</strong>：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理</li><li><strong>时间线</strong>：顶栏 🕒 按时间倒序翻</li><li><strong>排版切换</strong>：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住</li><li><strong>深浅色</strong>：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住</li><li><strong>双链</strong>：正文里写 <code class=\"md-inline-code\">[[数模方法速查卡]]</code> 就能互链，反向链接自动出现在文末</li></ul>\n<h2 id=\"演示图片文字也能进检索\">演示：图片文字也能进检索<a class=\"md-anchor\" href=\"#演示图片文字也能进检索\" aria-label=\"锚点\">#</a></h2>\n<p>下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 <strong>马尔可夫链演示图</strong> 或 <strong>收敛曲线</strong>，这篇笔记会被搜出来。</p>\n<p><figure class=\"md-figure\"><img src=\"assets/demo-convergence.png\" alt=\"模型收敛示意图（演示图片文字检索）\" loading=\"lazy\" decoding=\"async\" data-zoom-src=\"assets/demo-convergence.png\"><figcaption>模型收敛示意图（演示图片文字检索）</figcaption></figure></p>\n<h2 id=\"把外部内容也变成可搜索的笔记\">把外部内容也变成可搜索的笔记<a class=\"md-anchor\" href=\"#把外部内容也变成可搜索的笔记\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>你手上的东西</th><th>怎么处理</th><th>搜索效果</th></tr></thead><tbody><tr><td>Word / Markdown 笔记</td><td>复制进 <code class=\"md-inline-code\">content/xxx.md</code></td><td>标题、正文、标签全可搜</td></tr><tr><td>论文 PDF</td><td>放 <code class=\"md-inline-code\">content/assets/</code>，正文里 <code class=\"md-inline-code\">[附件](assets/xx.pdf)</code></td><td>提取的正文文字进检索</td></tr><tr><td>截图 / 拍照笔记</td><td>放 <code class=\"md-inline-code\">content/assets/</code>，正文里 <code class=\"md-inline-code\">![说明](assets/xx.png)</code></td><td>OCR 出的文字进检索</td></tr><tr><td>微信/网页剪藏</td><td>贴给我，我整理成结构化 Markdown</td><td>同第一行</td></tr></tbody></table></div>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"关于图片 OCR 的现状\"><p class=\"md-callout-title\">关于图片 OCR 的现状</p><p>构建脚本本身零依赖、离线可跑；附件文字提取走 <code class=\"md-inline-code\">tools/extract-attachments.mjs</code>（按需执行一次，结果写入 <code class=\"md-inline-code\">content/_extracted.json</code> 并被构建脚本读取）。<br>执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。</p></div>\n<h2 id=\"下一步\">下一步<a class=\"md-anchor\" href=\"#下一步\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>把这篇的 frontmatter 当作模板，开始写你的第一篇</li><li>想换配色/版式，改 <code class=\"md-inline-code\">docs/css/style.css</code> 顶部的变量即可（一处改，全站变）</li><li>想加功能（标签云、代码高亮主题、批注…）随时说</li></ol>\n<section class=\"md-attach-text\" data-file=\"demo-convergence.png\"><h4>附件文字 · demo-convergence.png</h4><pre>模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。</pre></section>","headings":[{"level":1,"text":"开始使用 · 这套笔记怎么用","id":"开始使用-这套笔记怎么用"},{"level":2,"text":"三条命令搞定一切","id":"三条命令搞定一切"},{"level":2,"text":"目录结构","id":"目录结构"},{"level":2,"text":"每一篇笔记的头部（frontmatter）","id":"每一篇笔记的头部frontmatter"},{"level":2,"text":"这篇笔记能干什么","id":"这篇笔记能干什么"},{"level":2,"text":"演示：图片文字也能进检索","id":"演示图片文字也能进检索"},{"level":2,"text":"把外部内容也变成可搜索的笔记","id":"把外部内容也变成可搜索的笔记"},{"level":2,"text":"下一步","id":"下一步"}],"raw":"\n# 开始使用 · 这套笔记怎么用\n\n这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：**内容永远是 Markdown 文件，网页由构建脚本自动生成**。你不需要写一行 HTML。\n\n## 三条命令搞定一切\n\n```bash\n# 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A && git commit -m \"update notes\" && git push\n```\n\n推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。\n\n> [!TIP] 最省事的用法\n> 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 `.md`、跑构建、推送 GitHub。你要的就是一个网址。\n\n## 目录结构\n\n```text\nnotes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md\n```\n\n## 每一篇笔记的头部（frontmatter）\n\n```yaml\n---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---\n```\n\n## 这篇笔记能干什么\n\n- **搜索**：左上角搜索框支持标题、正文、标签、分类，**连图片里的文字和 PDF 正文也能搜到**（见下面那张演示图）\n- **目录**：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉\n- **知识图谱**：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理\n- **时间线**：顶栏 🕒 按时间倒序翻\n- **排版切换**：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住\n- **深浅色**：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住\n- **双链**：正文里写 `[[数模方法速查卡]]` 就能互链，反向链接自动出现在文末\n\n## 演示：图片文字也能进检索\n\n下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 **马尔可夫链演示图** 或 **收敛曲线**，这篇笔记会被搜出来。\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n## 把外部内容也变成可搜索的笔记\n\n| 你手上的东西 | 怎么处理 | 搜索效果 |\n| --- | --- | --- |\n| Word / Markdown 笔记 | 复制进 `content/xxx.md` | 标题、正文、标签全可搜 |\n| 论文 PDF | 放 `content/assets/`，正文里 `[附件](assets/xx.pdf)` | 提取的正文文字进检索 |\n| 截图 / 拍照笔记 | 放 `content/assets/`，正文里 `![说明](assets/xx.png)` | OCR 出的文字进检索 |\n| 微信/网页剪藏 | 贴给我，我整理成结构化 Markdown | 同第一行 |\n\n> [!IMPORTANT] 关于图片 OCR 的现状\n> 构建脚本本身零依赖、离线可跑；附件文字提取走 `tools/extract-attachments.mjs`（按需执行一次，结果写入 `content/_extracted.json` 并被构建脚本读取）。\n> 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。\n\n## 下一步\n\n1. 把这篇的 frontmatter 当作模板，开始写你的第一篇\n2. 想换配色/版式，改 `docs/css/style.css` 顶部的变量即可（一处改，全站变）\n3. 想加功能（标签云、代码高亮主题、批注…）随时说\n","rawFull":"---\ntitle: 开始使用 · 这套笔记怎么用\nslug: home\ncategory: 关于本站\ntags: [使用说明, 工作流, 置顶]\ndate: 2026-02-18\npinned: true\nsummary: 这套笔记站的用法说明：内容放哪、怎么更新、怎么换排版、怎么把图片里的文字也搜出来。\n---\n\n# 开始使用 · 这套笔记怎么用\n\n这是你的笔记站首页推荐入口。整套系统只有一件事需要记住：**内容永远是 Markdown 文件，网页由构建脚本自动生成**。你不需要写一行 HTML。\n\n## 三条命令搞定一切\n\n```bash\n# 1. 内容放进来\n#    把写好的 .md 丢进 content/ 目录（图片放 content/assets/）\n\n# 2. 生成网页数据\nnode tools/build.mjs\n\n# 3. 发布上线\ngit add -A && git commit -m \"update notes\" && git push\n```\n\n推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。\n\n> [!TIP] 最省事的用法\n> 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 `.md`、跑构建、推送 GitHub。你要的就是一个网址。\n\n## 目录结构\n\n```text\nnotes-site/\n├── content/                  ← 你只需要动这里\n│   ├── home.md               首页/置顶说明\n│   ├── 01-markdown-语法速查.md\n│   ├── 02-随机过程-马尔可夫链建模.md\n│   ├── 03-数模方法速查卡.md\n│   ├── assets/               图片、PDF、附件\n│   └── _extracted.json       附件文字提取结果（图片 OCR / PDF 文本）\n├── tools/build.mjs           构建脚本（零依赖，Node 18+）\n├── docs/                     构建产物（GitHub Pages 直接托管）\n│   ├── index.html\n│   ├── css/  js/  data/  assets/\n└── README.md\n```\n\n## 每一篇笔记的头部（frontmatter）\n\n```yaml\n---\ntitle: 标题，会显示在卡片和侧边栏\ncategory: 分类，用于侧边栏分组和图谱配色\ntags: [标签一, 标签二]\ndate: 2026-02-18\npinned: true          # 可选：置顶到首页\nsummary: 一句话摘要，显示在卡片上（不写则自动截取正文开头）\nrelated: [home]       # 可选：关联笔记\n---\n```\n\n## 这篇笔记能干什么\n\n- **搜索**：左上角搜索框支持标题、正文、标签、分类，**连图片里的文字和 PDF 正文也能搜到**（见下面那张演示图）\n- **目录**：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉\n- **知识图谱**：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理\n- **时间线**：顶栏 🕒 按时间倒序翻\n- **排版切换**：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住\n- **深浅色**：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住\n- **双链**：正文里写 `[[数模方法速查卡]]` 就能互链，反向链接自动出现在文末\n\n## 演示：图片文字也能进检索\n\n下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 **马尔可夫链演示图** 或 **收敛曲线**，这篇笔记会被搜出来。\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n## 把外部内容也变成可搜索的笔记\n\n| 你手上的东西 | 怎么处理 | 搜索效果 |\n| --- | --- | --- |\n| Word / Markdown 笔记 | 复制进 `content/xxx.md` | 标题、正文、标签全可搜 |\n| 论文 PDF | 放 `content/assets/`，正文里 `[附件](assets/xx.pdf)` | 提取的正文文字进检索 |\n| 截图 / 拍照笔记 | 放 `content/assets/`，正文里 `![说明](assets/xx.png)` | OCR 出的文字进检索 |\n| 微信/网页剪藏 | 贴给我，我整理成结构化 Markdown | 同第一行 |\n\n> [!IMPORTANT] 关于图片 OCR 的现状\n> 构建脚本本身零依赖、离线可跑；附件文字提取走 `tools/extract-attachments.mjs`（按需执行一次，结果写入 `content/_extracted.json` 并被构建脚本读取）。\n> 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。\n\n## 下一步\n\n1. 把这篇的 frontmatter 当作模板，开始写你的第一篇\n2. 想换配色/版式，改 `docs/css/style.css` 顶部的变量即可（一处改，全站变）\n3. 想加功能（标签云、代码高亮主题、批注…）随时说\n","search":"开始使用 · 这套笔记怎么用 \u0001 开始使用 · 这套笔记怎么用 # 这是你的笔记站首页推荐入口。整套系统只有一件事需要记住： 内容永远是 Markdown 文件，网页由构建脚本自动生成 。你不需要写一行 HTML。 三条命令搞定一切 # 推上去大约一分钟后，GitHub Pages 就会自动更新，手机刷新即见。 最省事的用法 你甚至不用碰这些命令：直接把整理好的文章发给我，我来写 .md 、跑构建、推送 GitHub。你要的就是一个网址。 目录结构 # 每一篇笔记的头部（frontmatter） # 这篇笔记能干什么 # 搜索 ：左上角搜索框支持标题、正文、标签、分类， 连图片里的文字和 PDF 正文也能搜到 （见下面那张演示图） 目录 ：右侧「本页目录」跟着滚动高亮；手机上是顶栏 ☰ 抽屉 知识图谱 ：顶栏 🕸 看笔记之间的互链关系，节点可拖动整理 时间线 ：顶栏 🕒 按时间倒序翻 排版切换 ：顶栏 🎨 在「极简 / 技术 / 杂志」三套版式间切换，选择会记住 深浅色 ：顶栏 🌗 在「浅 / 深 / 跟随系统」间循环，选择会记住 双链 ：正文里写 [[数模方法速查卡]] 就能互链，反向链接自动出现在文末 演示：图片文字也能进检索 # 下面这张图是示意用的「模型收敛示意图」，它的文字已经预提取进索引。你在搜索框里输入 马尔可夫链演示图 或 收敛曲线 ，这篇笔记会被搜出来。 模型收敛示意图（演示图片文字检索） 把外部内容也变成可搜索的笔记 # 你手上的东西 怎么处理 搜索效果 Word / Markdown 笔记 复制进 content/xxx.md 标题、正文、标签全可搜 论文 PDF 放 content/assets/ ，正文里 [附件](assets/xx.pdf) 提取的正文文字进检索 截图 / 拍照笔记 放 content/assets/ ，正文里 ![说明](assets/xx.png) OCR 出的文字进检索 微信/网页剪藏 贴给我，我整理成结构化 Markdown 同第一行 关于图片 OCR 的现状 构建脚本本身零依赖、离线可跑；附件文字提取走 tools/extract-attachments.mjs （按需执行一次，结果写入 content/_extracted.json 并被构建脚本读取）。 执行过提取的附件，其文字会出现在笔记正文末尾的「附件文字」区块，并进入搜索索引——这就是为什么你能搜到图片里的字。 下一步 # 把这篇的 frontmatter 当作模板，开始写你的第一篇 想换配色/版式，改 docs/css/style.css 顶部的变量即可（一处改，全站变） 想加功能（标签云、代码高亮主题、批注…）随时说 # 1. 内容放进来 # 把写好的 .md 丢进 content/ 目录（图片放 content/assets/） # 2. 生成网页数据 node tools/build.mjs # 3. 发布上线 git add -A && git commit -m \"update notes\" && git push notes-site/ ├── content/ ← 你只需要动这里 │ ├── home.md 首页/置顶说明 │ ├── 01-markdown-语法速查.md │ ├── 02-随机过程-马尔可夫链建模.md │ ├── 03-数模方法速查卡.md │ ├── assets/ 图片、PDF、附件 │ └── _extracted.json 附件文字提取结果（图片 OCR / PDF 文本） ├── tools/build.mjs 构建脚本（零依赖，Node 18+） ├── docs/ 构建产物（GitHub Pages 直接托管） │ ├── index.html │ ├── css/ js/ data/ assets/ └── README.md --- title: 标题，会显示在卡片和侧边栏 category: 分类，用于侧边栏分组和图谱配色 tags: [标签一, 标签二] date: 2026-02-18 pinned: true # 可选：置顶到首页 summary: 一句话摘要，显示在卡片上（不写则自动截取正文开头） related: [home] # 可选：关联笔记 --- \u0001 使用说明 工作流 置顶 \u0001 关于本站 \u0001 模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。","attachments":["demo-convergence.png"],"cover":{"ink":"#0E9F8C","soft":"#E3F6F3","glyph":"开"},"backlinks":[],"missingLinks":[],"resolvedLinks":[]},{"slug":"markdown-syntax","title":"Markdown 语法速查","date":"2026-02-16","category":"写作规范","tags":["Markdown","排版","公式","代码"],"related":[],"links":["数模方法速查卡"],"pinned":false,"status":"","source":"01-markdown-语法速查.md","excerpt":"本站支持的全部写法：标题、列表、待办、表格、代码块、公式、引用提示框、双链、图片与附件。","html":"<h1 id=\"markdown-语法速查\">Markdown 语法速查<a class=\"md-anchor\" href=\"#markdown-语法速查\" aria-label=\"锚点\">#</a></h1>\n<p>写笔记时对照这一页，够用了。所有写法都已在本站实测通过。</p>\n<h2 id=\"标题与分级\">标题与分级<a class=\"md-anchor\" href=\"#标题与分级\" aria-label=\"锚点\">#</a></h2>\n<p><code class=\"md-inline-code\">#</code> 到 <code class=\"md-inline-code\">######</code> 六级标题。<strong>本页右侧目录只收录二到四级</strong>，所以正文里请用 <code class=\"md-inline-code\">##</code> 起头，<code class=\"md-inline-code\">#</code> 留给标题本身。</p>\n<h2 id=\"强调删除线与高亮\">强调、删除线与高亮<a class=\"md-anchor\" href=\"#强调删除线与高亮\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>写法</th><th>效果</th></tr></thead><tbody><tr><td><code class=\"md-inline-code\">**粗体**</code></td><td><strong>粗体</strong></td></tr><tr><td><code class=\"md-inline-code\">*斜体*</code></td><td><em>斜体</em></td></tr><tr><td><code class=\"md-inline-code\">~~删除线~~</code></td><td><del>删除线</del></td></tr><tr><td><code class=\"md-inline-code\">==高亮==</code></td><td><mark>高亮</mark></td></tr><tr><td><code class=\"md-inline-code\">`行内代码`</code></td><td><code class=\"md-inline-code\">行内代码</code></td></tr></tbody></table></div>\n<h2 id=\"列表与待办\">列表与待办<a class=\"md-anchor\" href=\"#列表与待办\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li>无序列表用 <code class=\"md-inline-code\">-</code></li><li>缩进两个空格可以嵌套</li><li>就像这样</li><li>数字列表用 <code class=\"md-inline-code\">1. 2. 3.</code></li></ul>\n<p>待办清单（方括号里打 x 表示完成）：</p>\n<ul class=\"md-list\"><li><span class=\"md-todo done\"></span>已经做完的事</li><li><span class=\"md-todo \"></span>还没做的事</li><li><span class=\"md-todo \"></span>记得给自己留 deadline</li></ul>\n<h2 id=\"表格\">表格<a class=\"md-anchor\" href=\"#表格\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>字段</th><th>类型</th><th style=\"text-align:center\">必填</th><th>说明</th></tr></thead><tbody><tr><td>title</td><td>文本</td><td style=\"text-align:center\">是</td><td>标题</td></tr><tr><td>category</td><td>文本</td><td style=\"text-align:center\">否</td><td>分类，默认取文件夹名</td></tr><tr><td>tags</td><td>列表</td><td style=\"text-align:center\">否</td><td>标签</td></tr><tr><td>date</td><td>日期</td><td style=\"text-align:center\">否</td><td>不写取文件修改时间</td></tr><tr><td>pinned</td><td>布尔</td><td style=\"text-align:center\">否</td><td><code class=\"md-inline-code\">true</code> 置顶首页</td></tr></tbody></table></div>\n<h2 id=\"代码块\">代码块<a class=\"md-anchor\" href=\"#代码块\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    &quot;&quot;&quot;构造一个随机矩阵并求平稳分布&quot;&quot;&quot;\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(&quot;平稳分布:&quot;, np.round(pi, 4))</code></pre></figure></p>\n<p><figure class=\"md-code\" data-lang=\"javascript\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">javascript</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-javascript\">// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) =&gt; r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);</code></pre></figure></p>\n<h2 id=\"公式\">公式<a class=\"md-anchor\" href=\"#公式\" aria-label=\"锚点\">#</a></h2>\n<p>行内公式用单个美元符号：总体期望 <span class=\"md-math-inline\" data-tex=\"\\mathbb{E}[X]=\\sum_{i} x_i p_i\"></span> 可以直接嵌在句子里。</p>\n<p>块级公式用两个美元符号独占一段：</p>\n<p><div class=\"md-math-block\" data-tex=\"P(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\"></div></p>\n<p><div class=\"md-math-block\" data-tex=\"\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\"></div></p>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"公式渲染原理\"><p class=\"md-callout-title\">公式渲染原理</p><p>页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。</p></div>\n<h2 id=\"引用与提示框\">引用与提示框<a class=\"md-anchor\" href=\"#引用与提示框\" aria-label=\"锚点\">#</a></h2>\n<p>普通引用：</p>\n<blockquote><p>引用别人一句话，用 <code class=\"md-inline-code\">&gt;</code> 开头。<br>可以多行。</p></blockquote>\n<p>提示框（GitHub 风格，本站支持 6 种）：</p>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"信息\"><p class=\"md-callout-title\">信息</p><p>用来补充背景。</p>\n<p>[!TIP] 技巧<br>省时间的小办法放这里。</p>\n<p>[!IMPORTANT] 重要<br>必须记住的结论。</p>\n<p>[!WARNING] 注意<br>容易踩的坑。</p>\n<p>[!CAUTION] 危险<br>会造成损失的操作。</p>\n<p>[!TODO] 待办<br>下一篇要补的内容。</p></div>\n<h2 id=\"自动目录块\">自动目录块<a class=\"md-anchor\" href=\"#自动目录块\" aria-label=\"锚点\">#</a></h2>\n<p>在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：</p>\n<ul class=\"md-index-list\"><li><span>情报检索三件套</span></li><li><span>数据清洗清单</span></li><li><span>模型选型决策点</span></li></ul>\n<h2 id=\"双链与反向链接\">双链与反向链接<a class=\"md-anchor\" href=\"#双链与反向链接\" aria-label=\"锚点\">#</a></h2>\n<p>写 <code class=\"md-inline-code\">[[数模方法速查卡]]</code> 会渲染成站内跳转链接：<a class=\"md-wikilink\" data-wikilink=\"数模方法速查卡\" href=\"#/note/%E6%95%B0%E6%A8%A1%E6%96%B9%E6%B3%95%E9%80%9F%E6%9F%A5%E5%8D%A1\">数模方法速查卡</a>。被引用的那篇笔记底部会自动出现「被这些笔记引用」。</p>\n<h2 id=\"图片与附件\">图片与附件<a class=\"md-anchor\" href=\"#图片与附件\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"markdown\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">markdown</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-markdown\">![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)</code></pre></figure></p>\n<p>图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"图片文字检索\"><p class=\"md-callout-title\">图片文字检索</p><p>图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。</p></div>\n<h2 id=\"分隔线\">分隔线<a class=\"md-anchor\" href=\"#分隔线\" aria-label=\"锚点\">#</a></h2>\n<p>三个短横线：</p>\n<hr>\n<p>以上就是全部写法。够用、不啰嗦。</p>","headings":[{"level":1,"text":"Markdown 语法速查","id":"markdown-语法速查"},{"level":2,"text":"标题与分级","id":"标题与分级"},{"level":2,"text":"强调、删除线与高亮","id":"强调删除线与高亮"},{"level":2,"text":"列表与待办","id":"列表与待办"},{"level":2,"text":"表格","id":"表格"},{"level":2,"text":"代码块","id":"代码块"},{"level":2,"text":"公式","id":"公式"},{"level":2,"text":"引用与提示框","id":"引用与提示框"},{"level":2,"text":"自动目录块","id":"自动目录块"},{"level":2,"text":"双链与反向链接","id":"双链与反向链接"},{"level":2,"text":"图片与附件","id":"图片与附件"},{"level":2,"text":"分隔线","id":"分隔线"}],"raw":"\n# Markdown 语法速查\n\n写笔记时对照这一页，够用了。所有写法都已在本站实测通过。\n\n## 标题与分级\n\n`#` 到 `######` 六级标题。**本页右侧目录只收录二到四级**，所以正文里请用 `##` 起头，`#` 留给标题本身。\n\n## 强调、删除线与高亮\n\n| 写法 | 效果 |\n| --- | --- |\n| `**粗体**` | **粗体** |\n| `*斜体*` | *斜体* |\n| `~~删除线~~` | ~~删除线~~ |\n| `==高亮==` | ==高亮== |\n| `` `行内代码` `` | `行内代码` |\n\n## 列表与待办\n\n- 无序列表用 `-`\n- 缩进两个空格可以嵌套\n  - 就像这样\n- 数字列表用 `1. 2. 3.`\n\n待办清单（方括号里打 x 表示完成）：\n\n- [x] 已经做完的事\n- [ ] 还没做的事\n- [ ] 记得给自己留 deadline\n\n## 表格\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | :---: | --- |\n| title | 文本 | 是 | 标题 |\n| category | 文本 | 否 | 分类，默认取文件夹名 |\n| tags | 列表 | 否 | 标签 |\n| date | 日期 | 否 | 不写取文件修改时间 |\n| pinned | 布尔 | 否 | `true` 置顶首页 |\n\n## 代码块\n\n```python\nimport numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    \"\"\"构造一个随机矩阵并求平稳分布\"\"\"\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(\"平稳分布:\", np.round(pi, 4))\n```\n\n```javascript\n// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) => r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);\n```\n\n## 公式\n\n行内公式用单个美元符号：总体期望 $\\mathbb{E}[X]=\\sum_{i} x_i p_i$ 可以直接嵌在句子里。\n\n块级公式用两个美元符号独占一段：\n\n$\nP(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\n$\n\n$\n\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\n$\n\n> [!NOTE] 公式渲染原理\n> 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。\n\n## 引用与提示框\n\n普通引用：\n\n> 引用别人一句话，用 `>` 开头。\n> 可以多行。\n\n提示框（GitHub 风格，本站支持 6 种）：\n\n> [!NOTE] 信息\n> 用来补充背景。\n\n> [!TIP] 技巧\n> 省时间的小办法放这里。\n\n> [!IMPORTANT] 重要\n> 必须记住的结论。\n\n> [!WARNING] 注意\n> 容易踩的坑。\n\n> [!CAUTION] 危险\n> 会造成损失的操作。\n\n> [!TODO] 待办\n> 下一篇要补的内容。\n\n## 自动目录块\n\n在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：\n\n## 目录\n\n- 情报检索三件套\n- 数据清洗清单\n- 模型选型决策点\n\n## 双链与反向链接\n\n写 `[[数模方法速查卡]]` 会渲染成站内跳转链接：[[数模方法速查卡]]。被引用的那篇笔记底部会自动出现「被这些笔记引用」。\n\n## 图片与附件\n\n```markdown\n![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)\n```\n\n图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。\n\n> [!TIP] 图片文字检索\n> 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。\n\n## 分隔线\n\n三个短横线：\n\n---\n\n以上就是全部写法。够用、不啰嗦。\n","rawFull":"---\ntitle: Markdown 语法速查\nslug: markdown-syntax\ncategory: 写作规范\ntags: [Markdown, 排版, 公式, 代码]\ndate: 2026-02-16\nsummary: 本站支持的全部写法：标题、列表、待办、表格、代码块、公式、引用提示框、双链、图片与附件。\n---\n\n# Markdown 语法速查\n\n写笔记时对照这一页，够用了。所有写法都已在本站实测通过。\n\n## 标题与分级\n\n`#` 到 `######` 六级标题。**本页右侧目录只收录二到四级**，所以正文里请用 `##` 起头，`#` 留给标题本身。\n\n## 强调、删除线与高亮\n\n| 写法 | 效果 |\n| --- | --- |\n| `**粗体**` | **粗体** |\n| `*斜体*` | *斜体* |\n| `~~删除线~~` | ~~删除线~~ |\n| `==高亮==` | ==高亮== |\n| `` `行内代码` `` | `行内代码` |\n\n## 列表与待办\n\n- 无序列表用 `-`\n- 缩进两个空格可以嵌套\n  - 就像这样\n- 数字列表用 `1. 2. 3.`\n\n待办清单（方括号里打 x 表示完成）：\n\n- [x] 已经做完的事\n- [ ] 还没做的事\n- [ ] 记得给自己留 deadline\n\n## 表格\n\n| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | :---: | --- |\n| title | 文本 | 是 | 标题 |\n| category | 文本 | 否 | 分类，默认取文件夹名 |\n| tags | 列表 | 否 | 标签 |\n| date | 日期 | 否 | 不写取文件修改时间 |\n| pinned | 布尔 | 否 | `true` 置顶首页 |\n\n## 代码块\n\n```python\nimport numpy as np\n\ndef stationary_matrix(n=3, seed=42):\n    \"\"\"构造一个随机矩阵并求平稳分布\"\"\"\n    rng = np.random.default_rng(seed)\n    P = rng.random((n, n))\n    P = P / P.sum(axis=1, keepdims=True)      # 每行归一化\n    w, v = np.linalg.eig(P.T)\n    i = np.argmin(np.abs(w - 1.0))\n    pi = np.real(v[:, i])\n    return P, pi / pi.sum()\n\nP, pi = stationary_matrix()\nprint(\"平稳分布:\", np.round(pi, 4))\n```\n\n```javascript\n// 前端也一样能高亮\nconst notes = await fetch('data/index.json').then((r) => r.json());\nconsole.log(`共 ${notes.notes.length} 篇笔记`);\n```\n\n## 公式\n\n行内公式用单个美元符号：总体期望 $\\mathbb{E}[X]=\\sum_{i} x_i p_i$ 可以直接嵌在句子里。\n\n块级公式用两个美元符号独占一段：\n\n$\nP(X_{n+1}=j \\mid X_n=i,\\; X_{n-1}=i_{n-1},\\dots) = P_{ij}\n$\n\n$\n\\pi P = \\pi,\\qquad \\sum_{j=1}^{N}\\pi_j = 1\n$\n\n> [!NOTE] 公式渲染原理\n> 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。\n\n## 引用与提示框\n\n普通引用：\n\n> 引用别人一句话，用 `>` 开头。\n> 可以多行。\n\n提示框（GitHub 风格，本站支持 6 种）：\n\n> [!NOTE] 信息\n> 用来补充背景。\n\n> [!TIP] 技巧\n> 省时间的小办法放这里。\n\n> [!IMPORTANT] 重要\n> 必须记住的结论。\n\n> [!WARNING] 注意\n> 容易踩的坑。\n\n> [!CAUTION] 危险\n> 会造成损失的操作。\n\n> [!TODO] 待办\n> 下一篇要补的内容。\n\n## 自动目录块\n\n在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引：\n\n## 目录\n\n- 情报检索三件套\n- 数据清洗清单\n- 模型选型决策点\n\n## 双链与反向链接\n\n写 `[[数模方法速查卡]]` 会渲染成站内跳转链接：[[数模方法速查卡]]。被引用的那篇笔记底部会自动出现「被这些笔记引用」。\n\n## 图片与附件\n\n```markdown\n![图片说明](assets/图片文件名.png)\n[论文附件](assets/paper.pdf)\n```\n\n图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。\n\n> [!TIP] 图片文字检索\n> 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。\n\n## 分隔线\n\n三个短横线：\n\n---\n\n以上就是全部写法。够用、不啰嗦。\n","search":"Markdown 语法速查 \u0001 Markdown 语法速查 # 写笔记时对照这一页，够用了。所有写法都已在本站实测通过。 标题与分级 # # 到 ###### 六级标题。 本页右侧目录只收录二到四级 ，所以正文里请用 ## 起头， # 留给标题本身。 强调、删除线与高亮 # 写法 效果 **粗体** 粗体 *斜体* 斜体 ~~删除线~~ 删除线 ==高亮== 高亮 `行内代码` 行内代码 列表与待办 # 无序列表用 - 缩进两个空格可以嵌套 就像这样 数字列表用 1. 2. 3. 待办清单（方括号里打 x 表示完成）： 已经做完的事 还没做的事 记得给自己留 deadline 表格 # 字段 类型 必填 说明 title 文本 是 标题 category 文本 否 分类，默认取文件夹名 tags 列表 否 标签 date 日期 否 不写取文件修改时间 pinned 布尔 否 true 置顶首页 代码块 # 公式 # 行内公式用单个美元符号：总体期望 可以直接嵌在句子里。 块级公式用两个美元符号独占一段： 公式渲染原理 页面通过 CDN 加载 KaTeX 完成渲染。断网时会自动降级成等宽文本，内容不会丢。 引用与提示框 # 普通引用： 引用别人一句话，用 &gt; 开头。 可以多行。 提示框（GitHub 风格，本站支持 6 种）： 信息 用来补充背景。 [!TIP] 技巧 省时间的小办法放这里。 [!IMPORTANT] 重要 必须记住的结论。 [!WARNING] 注意 容易踩的坑。 [!CAUTION] 危险 会造成损失的操作。 [!TODO] 待办 下一篇要补的内容。 自动目录块 # 在某处写一个二级标题叫「目录」，紧跟的列表会自动渲染成卡片式索引： 情报检索三件套 数据清洗清单 模型选型决策点 双链与反向链接 # 写 [[数模方法速查卡]] 会渲染成站内跳转链接： 数模方法速查卡 。被引用的那篇笔记底部会自动出现「被这些笔记引用」。 图片与附件 # 图片在正文里点一下会放大；PDF 附件点击后由浏览器直接打开。 图片文字检索 图片里的文字（截图、拍照笔记、表格扫描）只要跑过一次附件文字提取，就能被搜索框搜到——这是本站在「检索」上做的额外一步。 分隔线 # 三个短横线： 以上就是全部写法。够用、不啰嗦。 import numpy as np def stationary_matrix(n=3, seed=42): \"\"\"构造一个随机矩阵并求平稳分布\"\"\" rng = np.random.default_rng(seed) P = rng.random((n, n)) P = P / P.sum(axis=1, keepdims=True) # 每行归一化 w, v = np.linalg.eig(P.T) i = np.argmin(np.abs(w - 1.0)) pi = np.real(v[:, i]) return P, pi / pi.sum() P, pi = stationary_matrix() print(\"平稳分布:\", np.round(pi, 4)) // 前端也一样能高亮 const notes = await fetch('data/index.json').then((r) => r.json()); console.log(`共 ${notes.notes.length} 篇笔记`); ![图片说明](assets/图片文件名.png) [论文附件](assets/paper.pdf) \u0001 Markdown 排版 公式 代码 \u0001 写作规范 \u0001 ","attachments":[],"cover":{"ink":"#E0913A","soft":"#FBF0E0","glyph":"MA"},"backlinks":[],"missingLinks":[],"resolvedLinks":["mm-methods"]},{"slug":"markov-chain","title":"随机过程 · 马尔可夫链建模笔记","date":"2026-02-14","category":"数学建模","tags":["随机过程","马尔可夫链","数值计算","图表"],"related":["数模方法速查卡"],"links":["数模方法速查卡"],"pinned":false,"status":"","source":"02-随机过程-马尔可夫链建模.md","excerpt":"从状态划分到平稳分布求解再到结论表达，一条链走完马尔可夫链类赛题；含代码与收敛图。","html":"<h1 id=\"随机过程-马尔可夫链建模笔记\">随机过程 · 马尔可夫链建模笔记<a class=\"md-anchor\" href=\"#随机过程-马尔可夫链建模笔记\" aria-label=\"锚点\">#</a></h1>\n<p>这类题的共同骨架是：<strong>把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题</strong>。下面按这四步记录。</p>\n<h2 id=\"第一步状态划分\">第一步：状态划分<a class=\"md-anchor\" href=\"#第一步状态划分\" aria-label=\"锚点\">#</a></h2>\n<p>状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。</p>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"状态数经验值\"><p class=\"md-callout-title\">状态数经验值</p><p>一般取 <strong>3～6 个状态</strong>。样本量 <span class=\"md-math-inline\" data-tex=\"n\"></span> 时，转移矩阵有 <span class=\"md-math-inline\" data-tex=\"k(k-1)\"></span> 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。</p></div>\n<h2 id=\"第二步估计转移矩阵\">第二步：估计转移矩阵<a class=\"md-anchor\" href=\"#第二步估计转移矩阵\" aria-label=\"锚点\">#</a></h2>\n<p>设样本中从状态 <span class=\"md-math-inline\" data-tex=\"i\"></span> 转移到状态 <span class=\"md-math-inline\" data-tex=\"j\"></span> 的频数为 <span class=\"md-math-inline\" data-tex=\"n_{ij}\"></span>，则</p>\n<p><div class=\"md-math-block\" data-tex=\"\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\"></div></p>\n<p>若某些 <span class=\"md-math-inline\" data-tex=\"n_{ij}=0\"></span> 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：</p>\n<p><div class=\"md-math-block\" data-tex=\"\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\"></div></p>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    &quot;&quot;&quot;seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵&quot;&quot;&quot;\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    &quot;&quot;&quot;求平稳分布：解 pi P = pi, sum(pi)=1&quot;&quot;&quot;\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(&quot;平稳分布 π =&quot;, np.round(stationary(P), 4))</code></pre></figure></p>\n<h2 id=\"第三步长期行为\">第三步：长期行为<a class=\"md-anchor\" href=\"#第三步长期行为\" aria-label=\"锚点\">#</a></h2>\n<p>若链不可约且非周期，则 <span class=\"md-math-inline\" data-tex=\"\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}\"></span>，与初始分布无关。验证收敛可以画幂次迭代曲线：</p>\n<p><div class=\"md-math-block\" data-tex=\"\\pi^{(n+1)} = \\pi^{(n)} P\"></div></p>\n<p><figure class=\"md-figure\"><img src=\"assets/demo-convergence.png\" alt=\"模型收敛示意图（演示图片文字检索）\" loading=\"lazy\" decoding=\"async\" data-zoom-src=\"assets/demo-convergence.png\"><figcaption>模型收敛示意图（演示图片文字检索）</figcaption></figure></p>\n<div class=\"md-callout md-callout-warn\" data-callout=\"WARNING\" data-callout-title=\"常见失分点\"><p class=\"md-callout-title\">常见失分点</p><p>直接说「所以最终会收敛到平稳分布」而不验证<strong>不可约 + 非周期</strong>。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。</p></div>\n<h2 id=\"第四步结论表达\">第四步：结论表达<a class=\"md-anchor\" href=\"#第四步结论表达\" aria-label=\"锚点\">#</a></h2>\n<p>答题句式和数字要给全，避免「大约会趋于稳定」这类空话：</p>\n<div class=\"md-table-wrap\"><table><thead><tr><th>初始状态</th><th>5 步后处于状态 A 的概率</th><th>长期概率 π(A)</th><th>收敛所需步数</th></tr></thead><tbody><tr><td>状态 0</td><td>0.4521</td><td>0.3846</td><td>11</td></tr><tr><td>状态 1</td><td>0.3987</td><td>0.3846</td><td>8</td></tr><tr><td>状态 2</td><td>0.3312</td><td>0.3846</td><td>9</td></tr></tbody></table></div>\n<p>结论写法：<em>\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 <span class=\"md-math-inline\" data-tex=\"10^{-3}\"></span>。\"</em></p>\n<h2 id=\"灵敏度转移概率估错会怎样\">灵敏度：转移概率估错会怎样<a class=\"md-anchor\" href=\"#灵敏度转移概率估错会怎样\" aria-label=\"锚点\">#</a></h2>\n<p>把转移矩阵每一行扰动 <span class=\"md-math-inline\" data-tex=\"\\pm 5\\%\"></span>（重新归一化），观察 <span class=\"md-math-inline\" data-tex=\"\\pi\"></span> 的变化幅度：</p>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">def perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(&quot;π 均值:&quot;, np.round(mean_pi, 4))\nprint(&quot;π 标准差:&quot;, np.round(sd_pi, 4))</code></pre></figure></p>\n<p>若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。</p>\n<h2 id=\"一句话总结\">一句话总结<a class=\"md-anchor\" href=\"#一句话总结\" aria-label=\"锚点\">#</a></h2>\n<p>马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是<strong>状态怎么划、参数怎么估、结论怎么写数字</strong>。</p>\n<p>相关：<a class=\"md-wikilink\" data-wikilink=\"数模方法速查卡\" href=\"#/note/%E6%95%B0%E6%A8%A1%E6%96%B9%E6%B3%95%E9%80%9F%E6%9F%A5%E5%8D%A1\">数模方法速查卡</a></p>\n<section class=\"md-attach-text\" data-file=\"demo-convergence.png\"><h4>附件文字 · demo-convergence.png</h4><pre>模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。</pre></section>","headings":[{"level":1,"text":"随机过程 · 马尔可夫链建模笔记","id":"随机过程-马尔可夫链建模笔记"},{"level":2,"text":"第一步：状态划分","id":"第一步状态划分"},{"level":2,"text":"第二步：估计转移矩阵","id":"第二步估计转移矩阵"},{"level":2,"text":"第三步：长期行为","id":"第三步长期行为"},{"level":2,"text":"第四步：结论表达","id":"第四步结论表达"},{"level":2,"text":"灵敏度：转移概率估错会怎样","id":"灵敏度转移概率估错会怎样"},{"level":2,"text":"一句话总结","id":"一句话总结"}],"raw":"\n# 随机过程 · 马尔可夫链建模笔记\n\n这类题的共同骨架是：**把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题**。下面按这四步记录。\n\n## 第一步：状态划分\n\n状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。\n\n> [!IMPORTANT] 状态数经验值\n> 一般取 **3～6 个状态**。样本量 $n$ 时，转移矩阵有 $k(k-1)$ 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。\n\n## 第二步：估计转移矩阵\n\n设样本中从状态 $i$ 转移到状态 $j$ 的频数为 $n_{ij}$，则\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\n$\n\n若某些 $n_{ij}=0$ 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\n$\n\n```python\nimport numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\"\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\"\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(\"平稳分布 π =\", np.round(stationary(P), 4))\n```\n\n## 第三步：长期行为\n\n若链不可约且非周期，则 $\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}$，与初始分布无关。验证收敛可以画幂次迭代曲线：\n\n$\n\\pi^{(n+1)} = \\pi^{(n)} P\n$\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n> [!WARNING] 常见失分点\n> 直接说「所以最终会收敛到平稳分布」而不验证**不可约 + 非周期**。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。\n\n## 第四步：结论表达\n\n答题句式和数字要给全，避免「大约会趋于稳定」这类空话：\n\n| 初始状态 | 5 步后处于状态 A 的概率 | 长期概率 π(A) | 收敛所需步数 |\n| --- | --- | --- | --- |\n| 状态 0 | 0.4521 | 0.3846 | 11 |\n| 状态 1 | 0.3987 | 0.3846 | 8 |\n| 状态 2 | 0.3312 | 0.3846 | 9 |\n\n结论写法：*\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 $10^{-3}$。\"*\n\n## 灵敏度：转移概率估错会怎样\n\n把转移矩阵每一行扰动 $\\pm 5\\%$（重新归一化），观察 $\\pi$ 的变化幅度：\n\n```python\ndef perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(\"π 均值:\", np.round(mean_pi, 4))\nprint(\"π 标准差:\", np.round(sd_pi, 4))\n```\n\n若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。\n\n## 一句话总结\n\n马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是**状态怎么划、参数怎么估、结论怎么写数字**。\n\n相关：[[数模方法速查卡]]\n","rawFull":"---\ntitle: 随机过程 · 马尔可夫链建模笔记\nslug: markov-chain\ncategory: 数学建模\ntags: [随机过程, 马尔可夫链, 数值计算, 图表]\ndate: 2026-02-14\nsummary: 从状态划分到平稳分布求解再到结论表达，一条链走完马尔可夫链类赛题；含代码与收敛图。\nrelated: [数模方法速查卡]\n---\n\n# 随机过程 · 马尔可夫链建模笔记\n\n这类题的共同骨架是：**把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题**。下面按这四步记录。\n\n## 第一步：状态划分\n\n状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。\n\n> [!IMPORTANT] 状态数经验值\n> 一般取 **3～6 个状态**。样本量 $n$ 时，转移矩阵有 $k(k-1)$ 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。\n\n## 第二步：估计转移矩阵\n\n设样本中从状态 $i$ 转移到状态 $j$ 的频数为 $n_{ij}$，则\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}}{\\sum_{j=1}^{k} n_{ij}},\\qquad i,j=1,\\dots,k\n$\n\n若某些 $n_{ij}=0$ 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）：\n\n$\n\\hat{P}_{ij}=\\frac{n_{ij}+\\alpha}{n_i + k\\alpha},\\qquad \\alpha \\in [0.1,\\,1]\n$\n\n```python\nimport numpy as np\n\ndef estimate_transition(seq, k, alpha=1.0):\n    \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\"\n    counts = np.zeros((k, k))\n    for a, b in zip(seq[:-1], seq[1:]):\n        counts[a, b] += 1\n    return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha)\n\ndef stationary(P):\n    \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\"\n    k = P.shape[0]\n    A = np.vstack([P.T - np.eye(k), np.ones(k)])\n    b = np.append(np.zeros(k), 1.0)\n    pi, *_ = np.linalg.lstsq(A, b, rcond=None)   # 最小二乘更稳\n    return pi / pi.sum()\n\nrng = np.random.default_rng(42)\nP = estimate_transition(rng.integers(0, 3, size=2000), k=3)\nprint(\"平稳分布 π =\", np.round(stationary(P), 4))\n```\n\n## 第三步：长期行为\n\n若链不可约且非周期，则 $\\pi = \\lim_{n\\to\\infty} \\pi^{(n)}$，与初始分布无关。验证收敛可以画幂次迭代曲线：\n\n$\n\\pi^{(n+1)} = \\pi^{(n)} P\n$\n\n![模型收敛示意图（演示图片文字检索）](assets/demo-convergence.png)\n\n> [!WARNING] 常见失分点\n> 直接说「所以最终会收敛到平稳分布」而不验证**不可约 + 非周期**。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。\n\n## 第四步：结论表达\n\n答题句式和数字要给全，避免「大约会趋于稳定」这类空话：\n\n| 初始状态 | 5 步后处于状态 A 的概率 | 长期概率 π(A) | 收敛所需步数 |\n| --- | --- | --- | --- |\n| 状态 0 | 0.4521 | 0.3846 | 11 |\n| 状态 1 | 0.3987 | 0.3846 | 8 |\n| 状态 2 | 0.3312 | 0.3846 | 9 |\n\n结论写法：*\"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 $10^{-3}$。\"*\n\n## 灵敏度：转移概率估错会怎样\n\n把转移矩阵每一行扰动 $\\pm 5\\%$（重新归一化），观察 $\\pi$ 的变化幅度：\n\n```python\ndef perturb(P, eps=0.05, n=300, seed=7):\n    rng = np.random.default_rng(seed)\n    res = []\n    for _ in range(n):\n        Q = P * (1 + rng.uniform(-eps, eps, P.shape))\n        Q = Q / Q.sum(axis=1, keepdims=True)\n        res.append(stationary(Q))\n    res = np.array(res)\n    return res.mean(axis=0), res.std(axis=0)\n\nmean_pi, sd_pi = perturb(P)\nprint(\"π 均值:\", np.round(mean_pi, 4))\nprint(\"π 标准差:\", np.round(sd_pi, 4))\n```\n\n若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。\n\n## 一句话总结\n\n马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是**状态怎么划、参数怎么估、结论怎么写数字**。\n\n相关：[[数模方法速查卡]]\n","search":"随机过程 · 马尔可夫链建模笔记 \u0001 随机过程 · 马尔可夫链建模笔记 # 这类题的共同骨架是： 把连续的现实切成有限个状态 → 估计一步转移概率 → 求长期分布 → 用长期分布回答决策问题 。下面按这四步记录。 第一步：状态划分 # 状态必须是「互斥且完备」的。划分太粗，转移概率失去意义；划分太细，样本量撑不起参数估计。 状态数经验值 一般取 3～6 个状态 。样本量 时，转移矩阵有 个自由参数，粗算每个参数至少要 10 条以上的转移记录才稳。 第二步：估计转移矩阵 # 设样本中从状态 转移到状态 的频数为 ，则 若某些 会造成零概率陷阱，用拉普拉斯平滑（加一平滑）： 第三步：长期行为 # 若链不可约且非周期，则 ，与初始分布无关。验证收敛可以画幂次迭代曲线： 模型收敛示意图（演示图片文字检索） 常见失分点 直接说「所以最终会收敛到平稳分布」而不验证 不可约 + 非周期 。若转移矩阵可约（存在吸收态），长期分布依赖初始状态，结论完全不同。 第四步：结论表达 # 答题句式和数字要给全，避免「大约会趋于稳定」这类空话： 初始状态 5 步后处于状态 A 的概率 长期概率 π(A) 收敛所需步数 状态 0 0.4521 0.3846 11 状态 1 0.3987 0.3846 8 状态 2 0.3312 0.3846 9 结论写法： \"在给定转移矩阵下，系统长期处于状态 A 的概率为 0.3846；从任一初始状态出发，约 8～11 步后进入稳态，误差小于 。\" 灵敏度：转移概率估错会怎样 # 把转移矩阵每一行扰动 （重新归一化），观察 的变化幅度： 若标准差相对均值超过 10%，说明数据量不足或状态划分过细，需要在论文里明确写为局限。 一句话总结 # 马尔可夫链类赛题拿分的不是「会不会求平稳分布」，而是 状态怎么划、参数怎么估、结论怎么写数字 。 相关： 数模方法速查卡 import numpy as np def estimate_transition(seq, k, alpha=1.0): \"\"\"seq: 状态序列（0..k-1）；返回加一平滑后的转移矩阵\"\"\" counts = np.zeros((k, k)) for a, b in zip(seq[:-1], seq[1:]): counts[a, b] += 1 return (counts + alpha) / (counts.sum(axis=1, keepdims=True) + k * alpha) def stationary(P): \"\"\"求平稳分布：解 pi P = pi, sum(pi)=1\"\"\" k = P.shape[0] A = np.vstack([P.T - np.eye(k), np.ones(k)]) b = np.append(np.zeros(k), 1.0) pi, *_ = np.linalg.lstsq(A, b, rcond=None) # 最小二乘更稳 return pi / pi.sum() rng = np.random.default_rng(42) P = estimate_transition(rng.integers(0, 3, size=2000), k=3) print(\"平稳分布 π =\", np.round(stationary(P), 4)) def perturb(P, eps=0.05, n=300, seed=7): rng = np.random.default_rng(seed) res = [] for _ in range(n): Q = P * (1 + rng.uniform(-eps, eps, P.shape)) Q = Q / Q.sum(axis=1, keepdims=True) res.append(stationary(Q)) res = np.array(res) return res.mean(axis=0), res.std(axis=0) mean_pi, sd_pi = perturb(P) print(\"π 均值:\", np.round(mean_pi, 4)) print(\"π 标准差:\", np.round(sd_pi, 4)) \u0001 随机过程 马尔可夫链 数值计算 图表 \u0001 数学建模 \u0001 模型收敛示意图（演示图片文字检索）。标题：MARKOV CHAIN CONVERGENCE。纵轴 P（概率）0.0 到 1.0，横轴 STEPS 0-40。三条曲线分别为 PI(A) = 0.3846、PI(B) = 0.5521、PI(C) = 0.0633，其中 PI(A) 从 0.05 出发，约 8 到 11 步后收敛到平稳值 0.3846，误差小于 1e-3。图中水平虚线表示平稳分布，可见曲线单调逼近该值。关键词：马尔可夫链 平稳分布 收敛曲线 转移矩阵 灵敏度分析 演示图 图表识别。","attachments":["demo-convergence.png"],"cover":{"ink":"#EA5A47","soft":"#FDEBE7","glyph":"随"},"backlinks":["mm-methods"],"missingLinks":[],"resolvedLinks":["mm-methods"]},{"slug":"mm-methods","title":"数模方法速查卡","date":"2026-02-12","category":"数学建模","tags":["方法选型","优化","预测","评价","决策树"],"related":["markov-chain"],"links":["随机过程 · 马尔可夫链建模笔记"],"pinned":false,"status":"","source":"03-数模方法速查卡.md","excerpt":"按赛题类型直接定位方法：优化、预测、评价、机理、统计，一张决策表 + 每类首选两三个模型。","html":"<h1 id=\"数模方法速查卡\">数模方法速查卡<a class=\"md-anchor\" href=\"#数模方法速查卡\" aria-label=\"锚点\">#</a></h1>\n<p>拿到题先判类型，再选方法。<strong>选错类型比选错模型致命得多。</strong></p>\n<h2 id=\"一眼定类型\">一眼定类型<a class=\"md-anchor\" href=\"#一眼定类型\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>题目关键词</th><th>类型</th><th>首选方法</th><th>备选</th></tr></thead><tbody><tr><td>最小成本、最大化收益、排班、路径</td><td>优化</td><td>整数规划（MILP）</td><td>遗传/模拟退火、贪心+局部搜索</td></tr><tr><td>预测未来、趋势、走势</td><td>预测</td><td>ARIMA / 指数平滑</td><td>LSTM、灰色 GM(1,1)、随机森林</td></tr><tr><td>排名、打分、优劣、综合</td><td>评价</td><td>熵权法 + TOPSIS</td><td>AHP、主成分分析、DEA</td></tr><tr><td>机理、物理过程、传染、扩散</td><td>机理</td><td>微分方程组</td><td>元胞自动机、蒙特卡洛</td></tr><tr><td>关系、影响因素、相关性</td><td>统计</td><td>多元回归</td><td>岭回归/Lasso、结构方程</td></tr><tr><td>策略、博弈、多主体</td><td>决策</td><td>博弈论 / 多目标优化</td><td>强化学习、仿真</td></tr></tbody></table></div>\n<h2 id=\"优化类建模顺序\">优化类：建模顺序<a class=\"md-anchor\" href=\"#优化类建模顺序\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li><strong>决策变量</strong>是什么（连续/整数/0-1）</li><li><strong>目标函数</strong>（单目标先写清，多目标再加权或 ε-约束）</li><li><strong>约束</strong>逐个列（容量、平衡、逻辑、非负）</li><li>检查<strong>规模</strong>：变量数 > 10⁴ 就上启发式，否则精确解</li></ol>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\"># 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)</code></pre></figure></p>\n<p>多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。</p>\n<h2 id=\"预测类数据先说话\">预测类：数据先说话<a class=\"md-anchor\" href=\"#预测类数据先说话\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-callout md-callout-important\" data-callout=\"IMPORTANT\" data-callout-title=\"先看数据，再选模型\"><p class=\"md-callout-title\">先看数据，再选模型</p><p>少于 30 个点：指数平滑或灰色预测；<br>有明显季节：SARIMA 或 分解后建模；<br>有外部变量：回归类（含岭/Lasso）；<br>非线性强且样本多：机器学习模型 + 交叉验证。</p></div>\n<p>评价指标统一用 <strong>MAPE</strong> 或 <strong>RMSE</strong>，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。</p>\n<h2 id=\"评价类三件套\">评价类：三件套<a class=\"md-anchor\" href=\"#评价类三件套\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>指标标准化（正向/负向/区间型处理）</li><li>权重确定（熵权法客观 / AHP 主观，常用组合赋权）</li><li>排序（TOPSIS 贴近度，或灰色关联度）</li></ol>\n<p><figure class=\"md-code\" data-lang=\"python\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">python</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-python\">import numpy as np\ndef entropy_weight(X):\n    &quot;&quot;&quot;X: n×m 正向化后的矩阵 → 客观权重&quot;&quot;&quot;\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()</code></pre></figure></p>\n<h2 id=\"检验与灵敏度评委最爱看\">检验与灵敏度（评委最爱看）<a class=\"md-anchor\" href=\"#检验与灵敏度评委最爱看\" aria-label=\"锚点\">#</a></h2>\n<ul class=\"md-list\"><li>拟合优度 <span class=\"md-math-inline\" data-tex=\"R^2\"></span>、残差正态性、多重共线性（VIF）</li><li><strong>灵敏度分析</strong>：关键参数 ±10% 扫描，看结论是否翻转</li><li><strong>稳健性</strong>：换一组随机种子/换一种距离度量，排名是否一致</li></ul>\n<h2 id=\"论文里必须出现的四句话\">论文里必须出现的四句话<a class=\"md-anchor\" href=\"#论文里必须出现的四句话\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>为什么选这个模型（而不是隔壁那个）</li><li>模型假设是什么（每条标注强弱）</li><li>结果的具体数字（不是「显著提高」）</li><li>结果的不确定性（区间、误差、灵敏度）</li></ol>\n<p>相关：<a class=\"md-wikilink\" data-wikilink=\"随机过程 · 马尔可夫链建模笔记\" href=\"#/note/%E9%9A%8F%E6%9C%BA%E8%BF%87%E7%A8%8B%20%C2%B7%20%E9%A9%AC%E5%B0%94%E5%8F%AF%E5%A4%AB%E9%93%BE%E5%BB%BA%E6%A8%A1%E7%AC%94%E8%AE%B0\">随机过程 · 马尔可夫链建模笔记</a></p>","headings":[{"level":1,"text":"数模方法速查卡","id":"数模方法速查卡"},{"level":2,"text":"一眼定类型","id":"一眼定类型"},{"level":2,"text":"优化类：建模顺序","id":"优化类建模顺序"},{"level":2,"text":"预测类：数据先说话","id":"预测类数据先说话"},{"level":2,"text":"评价类：三件套","id":"评价类三件套"},{"level":2,"text":"检验与灵敏度（评委最爱看）","id":"检验与灵敏度评委最爱看"},{"level":2,"text":"论文里必须出现的四句话","id":"论文里必须出现的四句话"}],"raw":"\n# 数模方法速查卡\n\n拿到题先判类型，再选方法。**选错类型比选错模型致命得多。**\n\n## 一眼定类型\n\n| 题目关键词 | 类型 | 首选方法 | 备选 |\n| --- | --- | --- | --- |\n| 最小成本、最大化收益、排班、路径 | 优化 | 整数规划（MILP） | 遗传/模拟退火、贪心+局部搜索 |\n| 预测未来、趋势、走势 | 预测 | ARIMA / 指数平滑 | LSTM、灰色 GM(1,1)、随机森林 |\n| 排名、打分、优劣、综合 | 评价 | 熵权法 + TOPSIS | AHP、主成分分析、DEA |\n| 机理、物理过程、传染、扩散 | 机理 | 微分方程组 | 元胞自动机、蒙特卡洛 |\n| 关系、影响因素、相关性 | 统计 | 多元回归 | 岭回归/Lasso、结构方程 |\n| 策略、博弈、多主体 | 决策 | 博弈论 / 多目标优化 | 强化学习、仿真 |\n\n## 优化类：建模顺序\n\n1. **决策变量**是什么（连续/整数/0-1）\n2. **目标函数**（单目标先写清，多目标再加权或 ε-约束）\n3. **约束**逐个列（容量、平衡、逻辑、非负）\n4. 检查**规模**：变量数 > 10⁴ 就上启发式，否则精确解\n\n```python\n# 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)\n```\n\n多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。\n\n## 预测类：数据先说话\n\n> [!IMPORTANT] 先看数据，再选模型\n> 少于 30 个点：指数平滑或灰色预测；\n> 有明显季节：SARIMA 或 分解后建模；\n> 有外部变量：回归类（含岭/Lasso）；\n> 非线性强且样本多：机器学习模型 + 交叉验证。\n\n评价指标统一用 **MAPE** 或 **RMSE**，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。\n\n## 评价类：三件套\n\n1. 指标标准化（正向/负向/区间型处理）\n2. 权重确定（熵权法客观 / AHP 主观，常用组合赋权）\n3. 排序（TOPSIS 贴近度，或灰色关联度）\n\n```python\nimport numpy as np\ndef entropy_weight(X):\n    \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\"\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()\n```\n\n## 检验与灵敏度（评委最爱看）\n\n- 拟合优度 $R^2$、残差正态性、多重共线性（VIF）\n- **灵敏度分析**：关键参数 ±10% 扫描，看结论是否翻转\n- **稳健性**：换一组随机种子/换一种距离度量，排名是否一致\n\n## 论文里必须出现的四句话\n\n1. 为什么选这个模型（而不是隔壁那个）\n2. 模型假设是什么（每条标注强弱）\n3. 结果的具体数字（不是「显著提高」）\n4. 结果的不确定性（区间、误差、灵敏度）\n\n相关：[[随机过程 · 马尔可夫链建模笔记]]\n","rawFull":"---\ntitle: 数模方法速查卡\nslug: mm-methods\ncategory: 数学建模\ntags: [方法选型, 优化, 预测, 评价, 决策树]\ndate: 2026-02-12\nsummary: 按赛题类型直接定位方法：优化、预测、评价、机理、统计，一张决策表 + 每类首选两三个模型。\nrelated: [markov-chain]\n---\n\n# 数模方法速查卡\n\n拿到题先判类型，再选方法。**选错类型比选错模型致命得多。**\n\n## 一眼定类型\n\n| 题目关键词 | 类型 | 首选方法 | 备选 |\n| --- | --- | --- | --- |\n| 最小成本、最大化收益、排班、路径 | 优化 | 整数规划（MILP） | 遗传/模拟退火、贪心+局部搜索 |\n| 预测未来、趋势、走势 | 预测 | ARIMA / 指数平滑 | LSTM、灰色 GM(1,1)、随机森林 |\n| 排名、打分、优劣、综合 | 评价 | 熵权法 + TOPSIS | AHP、主成分分析、DEA |\n| 机理、物理过程、传染、扩散 | 机理 | 微分方程组 | 元胞自动机、蒙特卡洛 |\n| 关系、影响因素、相关性 | 统计 | 多元回归 | 岭回归/Lasso、结构方程 |\n| 策略、博弈、多主体 | 决策 | 博弈论 / 多目标优化 | 强化学习、仿真 |\n\n## 优化类：建模顺序\n\n1. **决策变量**是什么（连续/整数/0-1）\n2. **目标函数**（单目标先写清，多目标再加权或 ε-约束）\n3. **约束**逐个列（容量、平衡、逻辑、非负）\n4. 检查**规模**：变量数 > 10⁴ 就上启发式，否则精确解\n\n```python\n# 线性规划模板（scipy）\nfrom scipy.optimize import linprog\nc = [-3, -5]                      # 最大化 3x+5y → 取负\nA = [[1, 0], [0, 2], [3, 2]]\nb = [4, 12, 18]\nres = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs')\nprint(res.fun * -1, res.x)\n```\n\n多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。\n\n## 预测类：数据先说话\n\n> [!IMPORTANT] 先看数据，再选模型\n> 少于 30 个点：指数平滑或灰色预测；\n> 有明显季节：SARIMA 或 分解后建模；\n> 有外部变量：回归类（含岭/Lasso）；\n> 非线性强且样本多：机器学习模型 + 交叉验证。\n\n评价指标统一用 **MAPE** 或 **RMSE**，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。\n\n## 评价类：三件套\n\n1. 指标标准化（正向/负向/区间型处理）\n2. 权重确定（熵权法客观 / AHP 主观，常用组合赋权）\n3. 排序（TOPSIS 贴近度，或灰色关联度）\n\n```python\nimport numpy as np\ndef entropy_weight(X):\n    \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\"\n    P = X / X.sum(axis=0, keepdims=True)\n    P = np.clip(P, 1e-12, None)\n    e = -(P * np.log(P)).sum(axis=0) / np.log(len(X))\n    g = 1 - e\n    return g / g.sum()\n```\n\n## 检验与灵敏度（评委最爱看）\n\n- 拟合优度 $R^2$、残差正态性、多重共线性（VIF）\n- **灵敏度分析**：关键参数 ±10% 扫描，看结论是否翻转\n- **稳健性**：换一组随机种子/换一种距离度量，排名是否一致\n\n## 论文里必须出现的四句话\n\n1. 为什么选这个模型（而不是隔壁那个）\n2. 模型假设是什么（每条标注强弱）\n3. 结果的具体数字（不是「显著提高」）\n4. 结果的不确定性（区间、误差、灵敏度）\n\n相关：[[随机过程 · 马尔可夫链建模笔记]]\n","search":"数模方法速查卡 \u0001 数模方法速查卡 # 拿到题先判类型，再选方法。 选错类型比选错模型致命得多。 一眼定类型 # 题目关键词 类型 首选方法 备选 最小成本、最大化收益、排班、路径 优化 整数规划（MILP） 遗传/模拟退火、贪心+局部搜索 预测未来、趋势、走势 预测 ARIMA / 指数平滑 LSTM、灰色 GM(1,1)、随机森林 排名、打分、优劣、综合 评价 熵权法 + TOPSIS AHP、主成分分析、DEA 机理、物理过程、传染、扩散 机理 微分方程组 元胞自动机、蒙特卡洛 关系、影响因素、相关性 统计 多元回归 岭回归/Lasso、结构方程 策略、博弈、多主体 决策 博弈论 / 多目标优化 强化学习、仿真 优化类：建模顺序 # 决策变量 是什么（连续/整数/0-1） 目标函数 （单目标先写清，多目标再加权或 ε-约束） 约束 逐个列（容量、平衡、逻辑、非负） 检查 规模 ：变量数 > 10⁴ 就上启发式，否则精确解 多目标别直接拍权重：先求 Pareto 前沿（ε-约束法），再说明折中依据。 预测类：数据先说话 # 先看数据，再选模型 少于 30 个点：指数平滑或灰色预测； 有明显季节：SARIMA 或 分解后建模； 有外部变量：回归类（含岭/Lasso）； 非线性强且样本多：机器学习模型 + 交叉验证。 评价指标统一用 MAPE 或 RMSE ，并与「朴素法（上一期值）」对比——打不过朴素法就没必要上复杂模型。 评价类：三件套 # 指标标准化（正向/负向/区间型处理） 权重确定（熵权法客观 / AHP 主观，常用组合赋权） 排序（TOPSIS 贴近度，或灰色关联度） 检验与灵敏度（评委最爱看） # 拟合优度 、残差正态性、多重共线性（VIF） 灵敏度分析 ：关键参数 ±10% 扫描，看结论是否翻转 稳健性 ：换一组随机种子/换一种距离度量，排名是否一致 论文里必须出现的四句话 # 为什么选这个模型（而不是隔壁那个） 模型假设是什么（每条标注强弱） 结果的具体数字（不是「显著提高」） 结果的不确定性（区间、误差、灵敏度） 相关： 随机过程 · 马尔可夫链建模笔记 # 线性规划模板（scipy） from scipy.optimize import linprog c = [-3, -5] # 最大化 3x+5y → 取负 A = [[1, 0], [0, 2], [3, 2]] b = [4, 12, 18] res = linprog(c, A_ub=A, b_ub=b, bounds=[(0, None), (0, None)], method='highs') print(res.fun * -1, res.x) import numpy as np def entropy_weight(X): \"\"\"X: n×m 正向化后的矩阵 → 客观权重\"\"\" P = X / X.sum(axis=0, keepdims=True) P = np.clip(P, 1e-12, None) e = -(P * np.log(P)).sum(axis=0) / np.log(len(X)) g = 1 - e return g / g.sum() \u0001 方法选型 优化 预测 评价 决策树 \u0001 数学建模 \u0001 ","attachments":[],"cover":{"ink":"#EA5A47","soft":"#FDEBE7","glyph":"数"},"backlinks":["markdown-syntax","markov-chain"],"missingLinks":[],"resolvedLinks":["markov-chain"]},{"slug":"deploy","title":"GitHub Pages 部署与更新笔记","date":"2026-02-10","category":"工具链","tags":["GitHub","部署","命令","踩坑"],"related":[],"links":[],"pinned":false,"status":"","source":"04-GitHub-Pages部署与更新.md","excerpt":"从零把站点推上 GitHub Pages，以及每次更新笔记要做的三条命令和常见坑。","html":"<h1 id=\"github-pages-部署与更新笔记\">GitHub Pages 部署与更新笔记<a class=\"md-anchor\" href=\"#github-pages-部署与更新笔记\" aria-label=\"锚点\">#</a></h1>\n<h2 id=\"一次性配置只做一次\">一次性配置（只做一次）<a class=\"md-anchor\" href=\"#一次性配置只做一次\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">git init\ngit add -A\ngit commit -m &quot;init: 个人笔记站&quot;\ngit branch -M main\ngit remote add origin https://github.com/&lt;你的用户名&gt;/&lt;仓库名&gt;.git\ngit push -u origin main</code></pre></figure></p>\n<p>然后在 GitHub 网页端：<strong>Settings → Pages → Source 选 <code class=\"md-inline-code\">Deploy from a branch</code> → 分支 <code class=\"md-inline-code\">main</code>、目录 <code class=\"md-inline-code\">/site</code></strong> → Save。</p>\n<p>一分钟左右，访问：</p>\n<p><figure class=\"md-code\" data-lang=\"text\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">text</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-text\">https://&lt;你的用户名&gt;.github.io/&lt;仓库名&gt;/</code></pre></figure></p>\n<div class=\"md-callout md-callout-warn\" data-callout=\"WARNING\" data-callout-title=\"目录必须选 /site\"><p class=\"md-callout-title\">目录必须选 /site</p><p>网站文件在 <code class=\"md-inline-code\">docs/</code> 子目录里，Pages 的目录选成 <code class=\"md-inline-code\">/root</code> 会显示 404。</p></div>\n<h2 id=\"每次更新笔记三条命令\">每次更新笔记（三条命令）<a class=\"md-anchor\" href=\"#每次更新笔记三条命令\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">node tools/build.mjs\ngit add -A &amp;&amp; git commit -m &quot;notes: 新增 xxx&quot;\ngit push</code></pre></figure></p>\n<p><code class=\"md-inline-code\">build.mjs</code> 会把 <code class=\"md-inline-code\">content/*.md</code> 重新生成到 <code class=\"md-inline-code\">docs/data/index.json</code>，Pages 收到推送后自动重新发布。</p>\n<div class=\"md-callout md-callout-tip\" data-callout=\"TIP\" data-callout-title=\"只改文字不用重新构建？\"><p class=\"md-callout-title\">只改文字不用重新构建？</p><p>不行。正文渲染在构建时完成，改了 <code class=\"md-inline-code\">.md</code> 必须重跑 <code class=\"md-inline-code\">node tools/build.mjs</code>，否则网页还是旧的。</p></div>\n<h2 id=\"本地预览改样式时必用\">本地预览（改样式时必用）<a class=\"md-anchor\" href=\"#本地预览改样式时必用\" aria-label=\"锚点\">#</a></h2>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">cd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080</code></pre></figure></p>\n<p>或者：</p>\n<p><figure class=\"md-code\" data-lang=\"bash\"><figcaption class=\"md-code-bar\"><span class=\"md-code-lang\">bash</span><button class=\"md-code-copy\" type=\"button\" data-copy>复制</button></figcaption><pre><code class=\"language-bash\">npx serve site</code></pre></figure></p>\n<div class=\"md-callout md-callout-danger\" data-callout=\"CAUTION\" data-callout-title=\"不要直接双击 index.html\"><p class=\"md-callout-title\">不要直接双击 index.html</p><p>浏览器对 <code class=\"md-inline-code\">file://</code> 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。</p></div>\n<h2 id=\"常见坑速查\">常见坑速查<a class=\"md-anchor\" href=\"#常见坑速查\" aria-label=\"锚点\">#</a></h2>\n<div class=\"md-table-wrap\"><table><thead><tr><th>现象</th><th>原因</th><th>解决</th></tr></thead><tbody><tr><td>打开是 404</td><td>Pages 目录选了 <code class=\"md-inline-code\">/root</code></td><td>改成 <code class=\"md-inline-code\">/site</code></td></tr><tr><td>页面样式全丢</td><td>仓库名与路径层级不符</td><td>本站全部用相对路径，正常不会有；若自行加了绝对路径 <code class=\"md-inline-code\">/css/...</code> 必须去掉前导斜杠</td></tr><tr><td>数据不更新</td><td>忘了跑构建</td><td><code class=\"md-inline-code\">node tools/build.mjs</code> 后重新推送</td></tr><tr><td>中文文件名乱码</td><td>系统编码</td><td>文件名尽量用英文或加 <code class=\"md-inline-code\">slug</code> 字段</td></tr><tr><td>图片 404</td><td>图片没放 <code class=\"md-inline-code\">content/assets/</code></td><td>图片统一放该目录，正文写 <code class=\"md-inline-code\">assets/xxx.png</code></td></tr><tr><td>推送要密码</td><td>GitHub 已停用密码认证</td><td>用 Personal Access Token 或 <code class=\"md-inline-code\">gh auth login</code></td></tr></tbody></table></div>\n<h2 id=\"想用自定义域名\">想用自定义域名<a class=\"md-anchor\" href=\"#想用自定义域名\" aria-label=\"锚点\">#</a></h2>\n<ol class=\"md-list\"><li>域名 DNS 加一条 CNAME 指向 <code class=\"md-inline-code\">&lt;用户名&gt;.github.io</code></li><li>仓库 Settings → Pages → Custom domain 填入域名</li><li>勾选 Enforce HTTPS</li></ol>\n<div class=\"md-callout md-callout-info\" data-callout=\"NOTE\" data-callout-title=\"免费额度的边界\"><p class=\"md-callout-title\">免费额度的边界</p><p>公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 <code class=\"md-inline-code\">assets/</code>。</p></div>","headings":[{"level":1,"text":"GitHub Pages 部署与更新笔记","id":"github-pages-部署与更新笔记"},{"level":2,"text":"一次性配置（只做一次）","id":"一次性配置只做一次"},{"level":2,"text":"每次更新笔记（三条命令）","id":"每次更新笔记三条命令"},{"level":2,"text":"本地预览（改样式时必用）","id":"本地预览改样式时必用"},{"level":2,"text":"常见坑速查","id":"常见坑速查"},{"level":2,"text":"想用自定义域名","id":"想用自定义域名"}],"raw":"\n# GitHub Pages 部署与更新笔记\n\n## 一次性配置（只做一次）\n\n```bash\ngit init\ngit add -A\ngit commit -m \"init: 个人笔记站\"\ngit branch -M main\ngit remote add origin https://github.com/<你的用户名>/<仓库名>.git\ngit push -u origin main\n```\n\n然后在 GitHub 网页端：**Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/site`** → Save。\n\n一分钟左右，访问：\n\n```text\nhttps://<你的用户名>.github.io/<仓库名>/\n```\n\n> [!WARNING] 目录必须选 /site\n> 网站文件在 `docs/` 子目录里，Pages 的目录选成 `/root` 会显示 404。\n\n## 每次更新笔记（三条命令）\n\n```bash\nnode tools/build.mjs\ngit add -A && git commit -m \"notes: 新增 xxx\"\ngit push\n```\n\n`build.mjs` 会把 `content/*.md` 重新生成到 `docs/data/index.json`，Pages 收到推送后自动重新发布。\n\n> [!TIP] 只改文字不用重新构建？\n> 不行。正文渲染在构建时完成，改了 `.md` 必须重跑 `node tools/build.mjs`，否则网页还是旧的。\n\n## 本地预览（改样式时必用）\n\n```bash\ncd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080\n```\n\n或者：\n\n```bash\nnpx serve site\n```\n\n> [!CAUTION] 不要直接双击 index.html\n> 浏览器对 `file://` 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。\n\n## 常见坑速查\n\n| 现象 | 原因 | 解决 |\n| --- | --- | --- |\n| 打开是 404 | Pages 目录选了 `/root` | 改成 `/site` |\n| 页面样式全丢 | 仓库名与路径层级不符 | 本站全部用相对路径，正常不会有；若自行加了绝对路径 `/css/...` 必须去掉前导斜杠 |\n| 数据不更新 | 忘了跑构建 | `node tools/build.mjs` 后重新推送 |\n| 中文文件名乱码 | 系统编码 | 文件名尽量用英文或加 `slug` 字段 |\n| 图片 404 | 图片没放 `content/assets/` | 图片统一放该目录，正文写 `assets/xxx.png` |\n| 推送要密码 | GitHub 已停用密码认证 | 用 Personal Access Token 或 `gh auth login` |\n\n## 想用自定义域名\n\n1. 域名 DNS 加一条 CNAME 指向 `<用户名>.github.io`\n2. 仓库 Settings → Pages → Custom domain 填入域名\n3. 勾选 Enforce HTTPS\n\n> [!NOTE] 免费额度的边界\n> 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 `assets/`。\n","rawFull":"---\ntitle: GitHub Pages 部署与更新笔记\nslug: deploy\ncategory: 工具链\ntags: [GitHub, 部署, 命令, 踩坑]\ndate: 2026-02-10\nsummary: 从零把站点推上 GitHub Pages，以及每次更新笔记要做的三条命令和常见坑。\n---\n\n# GitHub Pages 部署与更新笔记\n\n## 一次性配置（只做一次）\n\n```bash\ngit init\ngit add -A\ngit commit -m \"init: 个人笔记站\"\ngit branch -M main\ngit remote add origin https://github.com/<你的用户名>/<仓库名>.git\ngit push -u origin main\n```\n\n然后在 GitHub 网页端：**Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/site`** → Save。\n\n一分钟左右，访问：\n\n```text\nhttps://<你的用户名>.github.io/<仓库名>/\n```\n\n> [!WARNING] 目录必须选 /site\n> 网站文件在 `docs/` 子目录里，Pages 的目录选成 `/root` 会显示 404。\n\n## 每次更新笔记（三条命令）\n\n```bash\nnode tools/build.mjs\ngit add -A && git commit -m \"notes: 新增 xxx\"\ngit push\n```\n\n`build.mjs` 会把 `content/*.md` 重新生成到 `docs/data/index.json`，Pages 收到推送后自动重新发布。\n\n> [!TIP] 只改文字不用重新构建？\n> 不行。正文渲染在构建时完成，改了 `.md` 必须重跑 `node tools/build.mjs`，否则网页还是旧的。\n\n## 本地预览（改样式时必用）\n\n```bash\ncd site\npython -m http.server 8080\n# 打开 http://127.0.0.1:8080\n```\n\n或者：\n\n```bash\nnpx serve site\n```\n\n> [!CAUTION] 不要直接双击 index.html\n> 浏览器对 `file://` 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。\n\n## 常见坑速查\n\n| 现象 | 原因 | 解决 |\n| --- | --- | --- |\n| 打开是 404 | Pages 目录选了 `/root` | 改成 `/site` |\n| 页面样式全丢 | 仓库名与路径层级不符 | 本站全部用相对路径，正常不会有；若自行加了绝对路径 `/css/...` 必须去掉前导斜杠 |\n| 数据不更新 | 忘了跑构建 | `node tools/build.mjs` 后重新推送 |\n| 中文文件名乱码 | 系统编码 | 文件名尽量用英文或加 `slug` 字段 |\n| 图片 404 | 图片没放 `content/assets/` | 图片统一放该目录，正文写 `assets/xxx.png` |\n| 推送要密码 | GitHub 已停用密码认证 | 用 Personal Access Token 或 `gh auth login` |\n\n## 想用自定义域名\n\n1. 域名 DNS 加一条 CNAME 指向 `<用户名>.github.io`\n2. 仓库 Settings → Pages → Custom domain 填入域名\n3. 勾选 Enforce HTTPS\n\n> [!NOTE] 免费额度的边界\n> 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 `assets/`。\n","search":"GitHub Pages 部署与更新笔记 \u0001 GitHub Pages 部署与更新笔记 # 一次性配置（只做一次） # 然后在 GitHub 网页端： Settings → Pages → Source 选 Deploy from a branch → 分支 main 、目录 /site → Save。 一分钟左右，访问： 目录必须选 /site 网站文件在 docs/ 子目录里，Pages 的目录选成 /root 会显示 404。 每次更新笔记（三条命令） # build.mjs 会把 content/*.md 重新生成到 docs/data/index.json ，Pages 收到推送后自动重新发布。 只改文字不用重新构建？ 不行。正文渲染在构建时完成，改了 .md 必须重跑 node tools/build.mjs ，否则网页还是旧的。 本地预览（改样式时必用） # 或者： 不要直接双击 index.html 浏览器对 file:// 的 fetch 有限制，页面会提示「没能加载 data/index.json」。必须走本地服务器或线上地址。 常见坑速查 # 现象 原因 解决 打开是 404 Pages 目录选了 /root 改成 /site 页面样式全丢 仓库名与路径层级不符 本站全部用相对路径，正常不会有；若自行加了绝对路径 /css/... 必须去掉前导斜杠 数据不更新 忘了跑构建 node tools/build.mjs 后重新推送 中文文件名乱码 系统编码 文件名尽量用英文或加 slug 字段 图片 404 图片没放 content/assets/ 图片统一放该目录，正文写 assets/xxx.png 推送要密码 GitHub 已停用密码认证 用 Personal Access Token 或 gh auth login 想用自定义域名 # 域名 DNS 加一条 CNAME 指向 &lt;用户名&gt;.github.io 仓库 Settings → Pages → Custom domain 填入域名 勾选 Enforce HTTPS 免费额度的边界 公开仓库的 Pages 免费；单仓库建议不超过 1 GB，单文件不超过 100 MB——所以图片记得压缩后再放 assets/ 。 git init git add -A git commit -m \"init: 个人笔记站\" git branch -M main git remote add origin https://github.com/<你的用户名>/<仓库名>.git git push -u origin main https://<你的用户名>.github.io/<仓库名>/ node tools/build.mjs git add -A && git commit -m \"notes: 新增 xxx\" git push cd site python -m http.server 8080 # 打开 http://127.0.0.1:8080 npx serve site \u0001 GitHub 部署 命令 踩坑 \u0001 工具链 \u0001 ","attachments":[],"cover":{"ink":"#4C7DF0","soft":"#E9EFFE","glyph":"GI"},"backlinks":[],"missingLinks":[],"resolvedLinks":[]}]};
 window.__NOTES_SITE__ = null;
 window.__NOTES_PORTABLE__ = true;
 window.__NOTES_ASSET_PREFIX__ = "../docs/";
@@ -7155,17 +7168,17 @@ class NotebookStore {
     return list;
   }
 
-  /** 笔记本的文字摘要（用文本对象，供搜索与卡片副标题用；手写内容需要 OCR，见对照文档） */
+  /** 笔记本的文字摘要（文本对象 + 已识别的 OCR 手写），供搜索与卡片副标题用 */
   snippetOf(nb) {
     const bits = [];
     for (const p of nb.pages || []) {
       for (const it of p.items || []) {
         if (it && it.kind === 'text' && it.text) bits.push(it.text);
-        if (bits.length > 40) break;
       }
+      if (p.ocr && p.ocr.text) bits.push(p.ocr.text.slice(0, 600));   // 手写识别结果也进搜索
       if (bits.length > 40) break;
     }
-    return bits.join(' ').slice(0, 400);
+    return bits.join(' ').slice(0, 900);
   }
 
   stats() {
@@ -7443,7 +7456,7 @@ class NotebookStore {
       .filter((x) => x.bookmarked || x.title);
   }
 
-  /** 页面里所有文本对象拼起来（手写搜索的替代方案：能搜到打字的与粘进来的文字） */
+  /** 页面里所有文字（打字的 + 手写识别出来的）拼起来，用于页内搜索 */
   searchText(bookId, needle) {
     const nb = this.get(bookId);
     if (!nb) return [];
@@ -7452,9 +7465,61 @@ class NotebookStore {
     const hits = [];
     nb.pages.forEach((p, i) => {
       const texts = (p.items || []).filter((it) => it.kind === 'text').map((it) => it.text || '').join('\n');
-      if (texts.toLowerCase().includes(q)) hits.push({ pageId: p.id, index: i, excerpt: texts.slice(0, 120) });
+      const ocr = (p.ocr && p.ocr.text) || '';
+      const where = [];
+      if (texts.toLowerCase().includes(q)) where.push('文字');
+      if (ocr.toLowerCase().includes(q)) where.push('手写识别');
+      if (where.length) hits.push({ pageId: p.id, index: i, source: where.join('+'), excerpt: (texts + '\n' + ocr).slice(0, 120) });
     });
     return hits;
+  }
+
+  /** 跨笔记本搜索（含手写 OCR 结果）→ 直接给出可跳转的命中 */
+  searchAll(needle, { limit = 40 } = {}) {
+    const q = String(needle || '').trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    for (const nb of this.data.notebooks) {
+      if (nb.trashedAt) continue;
+      for (const hit of this.searchText(nb.id, q)) {
+        out.push({ bookId: nb.id, title: nb.title, pageIndex: hit.index, pageId: hit.pageId, source: hit.source, excerpt: hit.excerpt });
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
+  }
+
+  /* ---------- 手写识别（OCR）结果 ---------- */
+
+  /** 写入某页的识别文字（OCR 模块用它回填） */
+  setPageOcr(bookId, pageId, { text, model } = {}) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    const clean = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 12000);
+    if (!clean) return p;
+    p.ocr = { text: clean, model: model || '', chars: clean.length, at: Date.now() };
+    this.touch(bookId);
+    return p;
+  }
+
+  clearPageOcr(bookId, pageId) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    delete p.ocr;
+    this.touch(bookId);
+    return p;
+  }
+
+  ocrStats(bookId) {
+    const nb = this.get(bookId);
+    if (!nb) return { pages: 0, done: 0, pending: 0, chars: 0 };
+    const done = nb.pages.filter((p) => p.ocr && p.ocr.text).length;
+    return {
+      pages: nb.pages.length,
+      done,
+      pending: nb.pages.length - done,
+      chars: nb.pages.reduce((s, p) => s + ((p.ocr && p.ocr.chars) || 0), 0),
+    };
   }
 
   /* ---------- 对象（页内内容） ---------- */
@@ -8007,6 +8072,479 @@ function deckQueue(store, bookId, limit = 20) {
 }
 
 
+/* ===== docs/js/notebook/ocr.mjs ===== */
+/**
+ * GoodNotes 模式 · 手写识别（OCR）——补上「手写内容可搜索」这个最大缺口
+ *
+ * 做法：把页面渲染成 JPEG（就用导出 PDF 同一套渲染，所见即所得）→ 交给视觉模型识别 → 文字存回页面
+ *   模型：SiliconFlow 的 Qwen3-VL（8B 快 / 32B 准），接口是 OpenAI 兼容的 /chat/completions
+ *   密钥：只存在你这台设备的浏览器（localStorage），请求直接从浏览器发往 api.siliconflow.cn，不经过任何第三方
+ *   识别结果：写在页面的 page.ocr 上，于是「资料库搜索」和「本笔记本内搜索」都能搜到手写
+ *
+ * 为什么不是自动的：识别要花钱、也要把页面图发出去，所以做成「你自己点一下才跑」，并且默认只跑没识别过的页。
+ * 纯逻辑（请求体、响应解析、错误提示、抽页规则、并发池、文本清洗）全部导出，方便无浏览器环境测试。
+ */
+
+const OCR_ENDPOINT = 'https://api.siliconflow.cn/v1/chat/completions';
+const OCR_KEY_STORAGE = 'note-ocr-key';
+const OCR_MODELS = [
+  { id: 'Qwen/Qwen3-VL-8B-Instruct', label: '8B（快）', hint: '约 15~25 秒/页，适合整本批量' },
+  { id: 'Qwen/Qwen3-VL-32B-Instruct', label: '32B（准）', hint: '约 50~90 秒/页，适合公式与表格页' },
+];
+const OCR_PROMPT = [
+  '你是一个专业的 OCR 引擎。请精确提取图片中的全部内容：',
+  '- 文字：逐字转录，保留原始排版（段落、换行、缩进）',
+  '- 表格：输出为 Markdown 表格，保留所有数值与表头',
+  '- 图表：提取标题、坐标轴、图例、关键数据点',
+  '- 数学公式：用 LaTeX 或可读符号表示',
+  '- 若图片没有文字，只回一句「（本页无文字）」',
+  '只输出提取结果本身，不要任何解释、不要代码块围栏。',
+].join('\n');
+
+const MAX_OCR_CHARS = 12000;
+
+/* ============================ 密钥 ============================ */
+
+function store(storage) {
+  if (storage) return storage;
+  try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch (e) { return null; }
+}
+
+function getOcrKey(storage) {
+  const s = store(storage);
+  try { return (s && s.getItem(OCR_KEY_STORAGE)) || ''; } catch (e) { return ''; }
+}
+
+function setOcrKey(storage, key) {
+  const s = store(storage);
+  const v = String(key || '').trim();
+  try {
+    if (!s) return false;
+    if (v) s.setItem(OCR_KEY_STORAGE, v);
+    else s.removeItem(OCR_KEY_STORAGE);
+    return true;
+  } catch (e) { return false; }
+}
+
+function hasOcrKey(storage) { return !!getOcrKey(storage); }
+
+/* ============================ 纯逻辑 ============================ */
+
+function modelOf(id) { return OCR_MODELS.find((m) => m.id === id) || OCR_MODELS[0]; }
+
+/** 组装请求体（OpenAI 兼容） */
+function buildOcrBody(dataUrl, { model = OCR_MODELS[0].id, prompt = OCR_PROMPT, maxTokens = 4096 } = {}) {
+  return {
+    model,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: String(dataUrl || '') } },
+      ],
+    }],
+    temperature: 0.1,
+    max_tokens: maxTokens,
+  };
+}
+
+/** 清洗识别结果：去围栏、压空行、限长 */
+function normalizeOcrText(text) {
+  let t = String(text == null ? '' : text);
+  t = t.replace(/^\s*```[a-zA-Z]*\s*/,'').replace(/\s*```\s*$/,'');
+  t = t.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  if (t.length > MAX_OCR_CHARS) t = t.slice(0, MAX_OCR_CHARS) + '…';
+  return t;
+}
+
+/** 从接口响应里取文字；失败时给出中文可读原因 */
+function parseOcrResponse(json) {
+  if (!json) throw new Error('识别服务没有返回内容');
+  if (json.error) throw new Error(ocrErrorHint(json.error.code || json.error.status, json));
+  const choice = json.choices && json.choices[0];
+  const content = choice && choice.message && choice.message.content;
+  if (!content) throw new Error('识别服务返回了空结果');
+  const text = typeof content === 'string'
+    ? content
+    : Array.isArray(content) ? content.map((c) => (typeof c === 'string' ? c : c.text || '')).join('\n') : '';
+  return normalizeOcrText(text);
+}
+
+/** 错误码 → 人话（含常见坑：余额不足 / 限流 / key 无效） */
+function ocrErrorHint(status, json) {
+  const s = Number(status) || 0;
+  const msg = (json && json.error && (json.error.message || json.error.code)) || (json && json.message) || '';
+  if (s === 401 || s === 403) return `密钥无效或没有权限（${s}）：去 cloud.siliconflow.cn 复制一个新的 API Key`;
+  if (s === 402 || /30001|balance|insufficient/i.test(String(msg))) return '账户余额不足：先去 SiliconFlow 充值，再重试';
+  if (s === 429) return '请求太频繁（429）：把并发调小一点，或等一分钟再试';
+  if (s === 413) return '页面图太大（413）：先调小导出倍率再试';
+  if (s >= 500) return `识别服务暂时故障（${s}）：稍后重试`;
+  if (s === 400) return `请求被拒绝（400）：${String(msg).slice(0, 120)}`;
+  return `识别失败${s ? `（${s}）` : ''}：${String(msg).slice(0, 160) || '未知原因'}`;
+}
+
+/** 哪些页需要识别（默认跳过已经识别过的） */
+function pickPagesToOcr(notebook, { onlyMissing = true, max = 0 } = {}) {
+  const pages = (notebook && notebook.pages) || [];
+  const out = [];
+  pages.forEach((p, i) => {
+    const has = !!(p.ocr && p.ocr.text);
+    if (onlyMissing && has) return;
+    if (!has && !(p.items || []).length && onlyMissing) return;   // 空白页不用花钱识别
+    out.push(i);
+  });
+  return max > 0 ? out.slice(0, max) : out;
+}
+
+/** 页面图渲染倍率：太小认不清，太大上传慢 */
+function ocrRenderScale(paper, { minPx = 1100, maxPx = 1900 } = {}) {
+  const w = Math.max(1, Number(paper && paper.w) || 794);
+  const s = Math.min(maxPx, Math.max(minPx, w)) / w;
+  return Math.max(1, Math.min(2.4, Number(s.toFixed(2))));
+}
+
+/** 简易并发池：按顺序取任务，最多 concurrency 个同时在跑 */
+async function runPool(items, worker, { concurrency = 3, onProgress, signal } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const results = new Array(list.length).fill(null);
+  let next = 0, done = 0, failed = 0;
+  const n = Math.max(1, Math.min(8, concurrency || 1));
+  const runner = async () => {
+    for (;;) {
+      if (signal && signal.aborted) return;
+      const i = next++;
+      if (i >= list.length) return;
+      try {
+        results[i] = { ok: true, value: await worker(list[i], i) };
+      } catch (e) {
+        failed++;
+        results[i] = { ok: false, error: (e && e.message) || String(e) };
+      }
+      done++;
+      if (onProgress) { try { onProgress({ done, total: list.length, failed }); } catch (e) {} }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, list.length || 1) }, runner));
+  return { results, done, failed };
+}
+
+function progressText(done, total, failed = 0) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return `识别中 ${done}/${total}（${pct}%）${failed ? ` · 失败 ${failed}` : ''}`;
+}
+
+/** 把识别结果并进页面对象（不改原对象） */
+function mergePageOcr(page, { text, model }, at = Date.now()) {
+  const clean = normalizeOcrText(text);
+  if (!clean) return page;
+  return { ...page, ocr: { text: clean, model: model || '', chars: clean.length, at } };
+}
+
+/** 笔记本的识别概况（界面提示用） */
+function ocrSummary(notebook) {
+  const pages = (notebook && notebook.pages) || [];
+  const done = pages.filter((p) => p.ocr && p.ocr.text).length;
+  const chars = pages.reduce((s, p) => s + ((p.ocr && p.ocr.chars) || 0), 0);
+  return { pages: pages.length, done, pending: pages.length - done, chars };
+}
+
+/* ============================ 浏览器侧调用 ============================ */
+
+/** 把一页渲染成 JPEG data URL（走导出 PDF 同一套渲染） */
+function pageToJpeg(page, { renderPage, scale = 1.4, quality = 0.82 } = {}) {
+  if (typeof document === 'undefined' || typeof renderPage !== 'function') return '';
+  const canvas = document.createElement('canvas');
+  renderPage(canvas, { paper: page.paper, items: page.items, scale, dpr: 1 });
+  try { return canvas.toDataURL('image/jpeg', quality); } catch (e) { return ''; }
+}
+
+/** 识别一张图（data URL）→ 文字 */
+async function ocrImageDataUrl(dataUrl, { apiKey, model = OCR_MODELS[0].id, fetchImpl, timeoutMs = 150000, prompt } = {}) {
+  if (!dataUrl) throw new Error('没有可识别的图片');
+  if (!apiKey) throw new Error('还没填 API Key：去 cloud.siliconflow.cn 申请一个（站点里只需填一次）');
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!f) throw new Error('当前环境不能发网络请求');
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : 0;
+  try {
+    const res = await f(OCR_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(buildOcrBody(dataUrl, { model, prompt })),
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) { json = null; }
+    if (!res.ok) throw new Error(ocrErrorHint(res.status, json));
+    return parseOcrResponse(json);
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error(`识别超时（>${Math.round(timeoutMs / 1000)}秒）：换 8B 模型或先把页面图调小`);
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * 整本（或指定几页）识别，结果逐页写回 store
+ * @returns {Promise<{done:number, failed:number, skipped:number, chars:number, errors:string[]}>}
+ */
+async function ocrNotebook(store, bookId, {
+  apiKey, model = OCR_MODELS[0].id, onlyMissing = true, indices = null, concurrency = 3,
+  renderPage, fetchImpl, onProgress, signal, dryRun = false,
+} = {}) {
+  const nb = store.get(bookId);
+  if (!nb) return { done: 0, failed: 0, skipped: 0, chars: 0, errors: ['找不到这本笔记本'] };
+  const targets = Array.isArray(indices) ? indices : pickPagesToOcr(nb, { onlyMissing });
+  const summary = { done: 0, failed: 0, skipped: nb.pages.length - targets.length, chars: 0, errors: [] };
+  if (!targets.length) return summary;
+  const scaleFor = (page) => ocrRenderScale(paperDims(page.paper || nb.paper));
+
+  const { results } = await runPool(targets, async (idx) => {
+    const page = store.get(bookId).pages[idx];
+    const jpeg = pageToJpeg({ paper: page.paper || nb.paper, items: page.items }, { renderPage, scale: scaleFor(page), quality: 0.82 });
+    if (dryRun) return { idx, text: '', dry: true };
+    const text = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl });
+    if (!text || /^（?本页无文字）?$/.test(text.trim())) return { idx, text: '', empty: true };
+    store.setPageOcr(bookId, page.id, { text, model });
+    return { idx, text };
+  }, { concurrency, onProgress, signal });
+
+  results.forEach((r) => {
+    if (!r) return;
+    if (!r.ok) { summary.failed++; if (summary.errors.length < 5) summary.errors.push(r.error); return; }
+    summary.done++;
+    summary.chars += (r.value && r.value.text ? r.value.text.length : 0);
+  });
+  return summary;
+}
+
+/** 单页识别（界面上「识别这一页」用） */
+async function ocrOnePage(store, bookId, pageIndex, opts = {}) {
+  return ocrNotebook(store, bookId, { ...opts, indices: [pageIndex], onlyMissing: false });
+}
+
+
+/* ===== docs/js/notebook/sync.mjs ===== */
+/**
+ * GoodNotes 模式 · 与仓库同步（把笔记本也交给 git 管）
+ *
+ * 思路和站点的 Markdown 笔记一致：笔记本 JSON 提交到仓库，于是
+ *   · 换设备能拉回来（拉取）
+ *   · 每次改动都有 git 历史、可 diff、可回滚
+ *   · 别人打开 Pages 上的 docs/notebooks/index.json 就能只读浏览（不需要令牌）
+ *
+ * 落点：
+ *   content/notebooks/<id>.json   笔记本本体（版本控制的真身）
+ *   docs/notebooks/<id>.json      线上副本（Pages 直接托管，只读浏览/无令牌拉取）
+ *   docs/notebooks/index.json     目录（标题/页数/封面/时间/识别进度），资料库「线上笔记本」用它
+ *
+ * 冲突规则（简单、可预期）：
+ *   远端更新 → 拉取覆盖本地（覆盖前把本地存成「…（本机备份）」副本，不丢东西）
+ *   本地更新 → 推送
+ *   两边一样 → 什么都不做
+ *   本地没有 → 直接导入
+ *
+ * 纯逻辑（路径、索引、冲突判定、合并）都导出；网络与 gh 客户端通过参数注入，方便测试。
+ */
+
+const NOTEBOOK_DIR = 'content/notebooks';
+const PUBLIC_DIR = 'docs/notebooks';
+const PUBLIC_INDEX = `${PUBLIC_DIR}/index.json`;
+
+function notebookPath(id) { return `${NOTEBOOK_DIR}/${id}.json`; }
+function publicPath(id) { return `${PUBLIC_DIR}/${id}.json`; }
+
+/** 笔记本 → 可提交的 JSON（音频本体在 IndexedDB，这里只留元数据并标注） */
+function serializeNotebook(nb) {
+  const { audio, ...rest } = nb || {};
+  return JSON.stringify({
+    app: '我的笔记 · GoodNotes 模式',
+    version: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    notebook: {
+      ...rest,
+      audio: (audio || []).map((a) => ({ ...a, localOnly: true })),
+    },
+  }, null, 1);
+}
+
+function parseNotebookJson(text) {
+  const j = typeof text === 'string' ? JSON.parse(text) : text;
+  const raw = j && j.notebook ? j.notebook : j;
+  if (!raw || !Array.isArray(raw.pages)) throw new Error('这个文件不是本站的笔记本');
+  return makeNotebook(raw);
+}
+
+/** 线上目录（只读浏览/列表用，不含内容，体积小） */
+function buildRemoteIndex(notebooks, { generatedAt = new Date().toISOString() } = {}) {
+  return JSON.stringify({
+    app: '我的笔记 · GoodNotes 模式',
+    version: SCHEMA_VERSION,
+    generatedAt,
+    notebooks: (notebooks || []).map((nb) => ({
+      id: nb.id,
+      title: nb.title,
+      cover: nb.cover,
+      folder: nb.folder,
+      tags: nb.tags,
+      fav: !!nb.fav,
+      pages: nb.pages.length,
+      scroll: nb.scroll,
+      createdAt: nb.createdAt,
+      updatedAt: nb.updatedAt,
+      openedAt: nb.openedAt || 0,
+      study: (nb.study || []).length,
+      ocr: (nb.pages || []).filter((p) => p.ocr && p.ocr.text).length,
+    })),
+  }, null, 1);
+}
+
+function parseRemoteIndex(text) {
+  try {
+    const j = typeof text === 'string' ? JSON.parse(text) : text;
+    return Array.isArray(j && j.notebooks) ? j.notebooks : [];
+  } catch (e) { return []; }
+}
+
+/**
+ * 决定这本笔记本该推还是该拉
+ * @returns {'push'|'pull'|'same'|'create-local'|'create-remote'}
+ */
+function decisionFor(local, remote) {
+  if (!local && !remote) return 'same';
+  if (!local) return 'create-local';
+  if (!remote) return 'create-remote';
+  const lt = Number(local.updatedAt) || 0;
+  const rt = Number(remote.updatedAt) || 0;
+  if (rt > lt + 1000) return 'pull';        // 远端明显更新（1 秒容差，避免时钟抖动反复横跳）
+  if (lt > rt + 1000) return 'push';
+  return 'same';
+}
+
+/** 从线上目录里挑出「本来没有 / 远端更新」的本子 */
+function planSync(localList, remoteList) {
+  const byId = new Map((localList || []).map((n) => [n.id, n]));
+  const plan = [];
+  for (const r of remoteList || []) {
+    const local = byId.get(r.id);
+    const action = decisionFor(local, r);
+    if (action === 'create-local' || action === 'pull') plan.push({ id: r.id, title: r.title, action });
+  }
+  for (const l of localList || []) {
+    if (!(remoteList || []).some((r) => r.id === l.id)) plan.push({ id: l.id, title: l.title, action: 'create-remote' });
+  }
+  return plan;
+}
+
+/* ============================ 与 gh / 静态文件打交道 ============================ */
+
+/**
+ * 推一本到仓库（正文 + 线上副本 + 刷新目录）
+ * @param {object} gh   editor.mjs 导出的 gh（getFile / putFile）
+ */
+async function pushNotebook(gh, store, bookId, { alsoIndex = true } = {}) {
+  const nb = store.get(bookId);
+  if (!nb) throw new Error('找不到这本笔记本');
+  const body = serializeNotebook(nb);
+  const msg = `notebook: 更新「${nb.title}」（${nb.pages.length} 页）`;
+
+  const exist = await gh.getFile(notebookPath(bookId));
+  await gh.putFile(notebookPath(bookId), body, msg, exist ? exist.sha : null);
+
+  const pubExist = await gh.getFile(publicPath(bookId));
+  await gh.putFile(publicPath(bookId), body, `notebook: 同步「${nb.title}」到线上`, pubExist ? pubExist.sha : null);
+
+  let indexOk = false;
+  if (alsoIndex) {
+    const all = store.notebooks({ sort: 'updated' });
+    const idxExist = await gh.getFile(PUBLIC_INDEX);
+    await gh.putFile(PUBLIC_INDEX, buildRemoteIndex(all), `notebook: 刷新线上目录（${all.length} 本）`, idxExist ? idxExist.sha : null);
+    indexOk = true;
+  }
+  return { ok: true, bytes: body.length, sha: exist ? exist.sha : null, indexOk, path: notebookPath(bookId) };
+}
+
+/** 把本地所有笔记本推上去（第一次用最省事） */
+async function pushAll(gh, store, { onProgress, alsoIndex = true } = {}) {
+  const list = store.notebooks();
+  const out = { total: list.length, ok: 0, failed: 0, errors: [] };
+  for (let i = 0; i < list.length; i++) {
+    try {
+      await pushNotebook(gh, store, list[i].id, { alsoIndex: false });
+      out.ok++;
+    } catch (e) {
+      out.failed++;
+      if (out.errors.length < 5) out.errors.push(`${list[i].title}: ${(e && e.message) || e}`);
+    }
+    if (onProgress) { try { onProgress({ done: i + 1, total: list.length, title: list[i].title }); } catch (e) {} }
+  }
+  if (alsoIndex && out.ok) {
+    const idxExist = await gh.getFile(PUBLIC_INDEX);
+    await gh.putFile(PUBLIC_INDEX, buildRemoteIndex(store.notebooks({ sort: 'updated' })), `notebook: 刷新线上目录（${store.stats().notebooks} 本）`, idxExist ? idxExist.sha : null);
+  }
+  return out;
+}
+
+/**
+ * 拉一本下来（远端更新的覆盖本地，覆盖前留一份本机备份副本）
+ * @returns {{action:'pull'|'same', notebook?:object, backup?:string}}
+ */
+async function pullNotebook(gh, store, bookId, { force = false } = {}) {
+  const f = await gh.getFile(notebookPath(bookId));
+  if (!f) return { action: 'same' };
+  const remote = parseNotebookJson(f.text);
+  const local = store.get(bookId);
+  let action = decisionFor(local, { ...remote, updatedAt: remote.updatedAt });
+  if (force) action = 'pull';
+  if (action !== 'pull') return { action: 'same', notebook: remote };
+
+  let backup = '';
+  if (local) {
+    const copy = store.duplicate(bookId);
+    if (copy) {
+      store.update(copy.id, { title: `${copy.title}（本机备份 ${new Date().toISOString().slice(0, 10)}）` });
+      backup = copy.id;
+    }
+    store.purge(bookId);
+  }
+  const imported = store.importJSON(JSON.stringify({ notebooks: [{ ...remote, id: bookId }] }));
+  return { action: 'pull', notebook: store.get(bookId), backup, imported: imported.notebooks };
+}
+
+/** 从静态站点读线上目录（不需要令牌，只读浏览用） */
+async function fetchPublicIndex(fetchImpl, base = '') {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!f) return [];
+  try {
+    const res = await f(`${base}notebooks/index.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    return parseRemoteIndex(await res.text());
+  } catch (e) { return []; }
+}
+
+/** 从静态站点拉一本（不需要令牌；用于「线上笔记本」只读导入） */
+async function pullFromPublicSite(store, id, fetchImpl, base = '') {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!f) throw new Error('当前环境不能发网络请求');
+  const res = await f(`${base}notebooks/${encodeURIComponent(id)}.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`线上没有这本笔记本（HTTP ${res.status}）`);
+  const nb = parseNotebookJson(await res.text());
+  const clash = !!store.get(nb.id);
+  if (clash) nb.id = nb.id + '-' + Date.now().toString(36);
+  store.data.notebooks.unshift(nb);
+  store.save();
+  return { notebook: nb, renamed: clash };
+}
+
+function syncText(res) {
+  if (!res) return '';
+  if (res.action === 'pull') return `已从仓库拉取${res.backup ? '（旧的存成了本机备份副本）' : ''}`;
+  if (res.action === 'same') return '两边一样，不用动';
+  return '';
+}
+
+
 /* ===== docs/js/notebook/page.mjs ===== */
 /**
  * GoodNotes 模式 · 页面编辑引擎
@@ -8295,6 +8833,97 @@ function boxOfItems(items) {
     x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
   }
   return { x0, y0, x1, y1 };
+}
+
+/**
+ * 手写笔快速双击判定（浏览器不暴露 Apple Pencil 的双击 API，用时间+位移等效判定）
+ * @param {{x:number,y:number,t:number}} prev 上一次落笔
+ * @param {{x:number,y:number,t:number}} next 这一次落笔
+ */
+function isPenDoubleTap(prev, next, { windowMs = 340, maxDistPx = 12 } = {}) {
+  if (!prev || !next) return false;
+  const dt = Number(next.t) - Number(prev.t);
+  if (!(dt >= 0 && dt <= windowMs)) return false;
+  const d = Math.hypot(Number(next.x) - Number(prev.x), Number(next.y) - Number(prev.y));
+  return d <= maxDistPx;
+}
+
+/** 图片裁剪：把「图内相对框」换算成像素源矩形 + 新的归一化几何 */
+function cropPixels(item, rel = { x: 0, y: 0, w: 1, h: 1 }, { pageW = 800, pageH = 1000, natural = null } = {}) {
+  const x = Math.min(1, Math.max(0, Number(rel.x) || 0));
+  const y = Math.min(1, Math.max(0, Number(rel.y) || 0));
+  const w = Math.min(1 - x, Math.max(0.02, Number(rel.w) || 1));
+  const h = Math.min(1 - y, Math.max(0.02, Number(rel.h) || 1));
+  const iw = (natural && natural.w) || Math.max(1, Math.round((Number(item.w) || 0.3) * pageW));
+  const ih = (natural && natural.h) || Math.max(1, Math.round((Number(item.h) || 0.2) * pageH));
+  return {
+    rel: { x, y, w, h },
+    src: { x: Math.round(x * iw), y: Math.round(y * ih), w: Math.max(1, Math.round(w * iw)), h: Math.max(1, Math.round(h * ih)) },
+    next: {
+      x: (Number(item.x) || 0) + x * (Number(item.w) || 0),
+      y: (Number(item.y) || 0) + y * (Number(item.h) || 0),
+      w: (Number(item.w) || 0) * w,
+      h: (Number(item.h) || 0) * h,
+    },
+  };
+}
+
+/** 裁剪框的四个角（像素坐标，画控制点用） */
+function cropHandles(item, rel, { pageW = 800, pageH = 1000 } = {}) {
+  const box = cropBox(item, rel, { pageW, pageH });
+  const mx = box.x + box.w / 2, my = box.y + box.h / 2;
+  return [
+    { id: 'nw', x: box.x, y: box.y }, { id: 'n', x: mx, y: box.y },
+    { id: 'ne', x: box.x + box.w, y: box.y }, { id: 'e', x: box.x + box.w, y: my },
+    { id: 'se', x: box.x + box.w, y: box.y + box.h }, { id: 's', x: mx, y: box.y + box.h },
+    { id: 'sw', x: box.x, y: box.y + box.h }, { id: 'w', x: box.x, y: my },
+  ];
+}
+
+/** 裁剪框在页面像素坐标里的位置 */
+function cropBox(item, rel, { pageW = 800, pageH = 1000 } = {}) {
+  const ix = (Number(item.x) || 0) * pageW, iy = (Number(item.y) || 0) * pageH;
+  const iw = (Number(item.w) || 0) * pageW, ih = (Number(item.h) || 0) * pageH;
+  const x = Math.min(1, Math.max(0, Number(rel && rel.x) || 0));
+  const y = Math.min(1, Math.max(0, Number(rel && rel.y) || 0));
+  const w = Math.min(1 - x, Math.max(0.02, Number(rel && rel.w) || 1));
+  const h = Math.min(1 - y, Math.max(0.02, Number(rel && rel.h) || 1));
+  return { x: ix + x * iw, y: iy + y * ih, w: w * iw, h: h * ih };
+}
+
+/** 拖动裁剪框（把像素位移换算回图内相对位移） */
+function dragCrop(item, rel, handle, dxPx, dyPx, { pageW = 800, pageH = 1000 } = {}) {
+  const iw = Math.max(1, (Number(item.w) || 0) * pageW);
+  const ih = Math.max(1, (Number(item.h) || 0) * pageH);
+  const dx = dxPx / iw, dy = dyPx / ih;
+  let { x, y, w, h } = { x: Number(rel.x) || 0, y: Number(rel.y) || 0, w: Number(rel.w) || 1, h: Number(rel.h) || 1 };
+  const MIN = 0.06;
+  if (handle === 'move') {
+    x = Math.min(1 - w, Math.max(0, x + dx));
+    y = Math.min(1 - h, Math.max(0, y + dy));
+  } else {
+    if (handle.includes('w')) { const nx = Math.min(x + w - MIN, Math.max(0, x + dx)); w += x - nx; x = nx; }
+    if (handle.includes('e')) { w = Math.min(1 - x, Math.max(MIN, w + dx)); }
+    if (handle.includes('n')) { const ny = Math.min(y + h - MIN, Math.max(0, y + dy)); h += y - ny; y = ny; }
+    if (handle.includes('s')) { h = Math.min(1 - y, Math.max(MIN, h + dy)); }
+  }
+  return { x, y, w, h };
+}
+
+/** 真正裁出新的图（需要 canvas；工厂可注入，便于测试） */
+function cropImageItem(item, rel, { pageW = 800, pageH = 1000, image = null, canvasFactory = null } = {}) {
+  const info = cropPixels(item, rel, { pageW, pageH, natural: image && image.naturalWidth ? { w: image.naturalWidth, h: image.naturalHeight } : null });
+  const make = canvasFactory || (typeof document !== 'undefined' ? () => document.createElement('canvas') : null);
+  if (!make || !image) return { ...info, src: null };
+  const canvas = make();
+  canvas.width = info.src.w;
+  canvas.height = info.src.h;
+  const ctx = canvas.getContext ? canvas.getContext('2d') : null;
+  if (!ctx) return { ...info, src: null };
+  ctx.drawImage(image, info.src.x, info.src.y, info.src.w, info.src.h, 0, 0, info.src.w, info.src.h);
+  let src = '';
+  try { src = canvas.toDataURL('image/png'); } catch (e) { src = ''; }
+  return { ...info, src: src || null };
 }
 
 function itemHit(item, x, y, W, H, opts = {}) {
@@ -8634,6 +9263,9 @@ class PageEditor {
     this.laserRAF = 0;
     this.editing = null;
     this.suppressStore = false;
+    this.crop = null;              // 图片裁剪状态 { itemId, rel, drag }
+    this.penDoubleTap = 'eraser';  // 手写笔快速双击切换到哪个工具
+    this._penTaps = [];
 
     this._pending = null;
     this._pendingPage = '';
@@ -8894,7 +9526,21 @@ class PageEditor {
     if (!c || !c.addEventListener) return {};
     let activePen = false;
     const down = (e) => {
-      if (e.pointerType === 'pen') activePen = true;
+      if (e.pointerType === 'pen') {
+        activePen = true;
+        // 手写笔快速双击 = 切换工具（浏览器不暴露 Apple Pencil 的双击 API，用等效手势顶上）
+        const now = Date.now();
+        const prev = this._penTaps[this._penTaps.length - 1] || null;
+        const pt = { x: e.clientX, y: e.clientY };
+        this._penTaps.push({ ...pt, t: now });
+        if (this._penTaps.length > 4) this._penTaps.shift();
+        if (prev && isPenDoubleTap({ ...prev, x: prev.x, y: prev.y }, { ...pt, t: now })) {
+          this._penTaps = [];
+          this.abortGesture();
+          this.onPenDoubleTap();
+          return;                 // 双击不落笔
+        }
+      }
       // 防误触：笔在用时忽略手指（手账 App 的「手掌误触」）
       if (e.pointerType === 'touch' && activePen) return;
       e.preventDefault && e.preventDefault();
@@ -8926,6 +9572,7 @@ class PageEditor {
   }
 
   onDown(p, meta = {}) {
+    if (this.crop) return this.cropPointerDown(p);
     if (this.tool === 'pen' || this.tool === 'highlighter' || this.tool === 'shape' || this.tool === 'tape') {
       return this.startInk(p, meta);
     }
@@ -8943,6 +9590,7 @@ class PageEditor {
   }
 
   onMove(p, meta = {}) {
+    if (this.crop && this.crop.drag) return this.cropPointerMove(p);
     if (!this.gesture) return;
     if (this.gesture.type === 'erase') return this.applyErase(p);
     if (this.gesture.type === 'laser') {
@@ -8984,6 +9632,7 @@ class PageEditor {
   }
 
   onUp() {
+    if (this.crop && this.crop.drag) { this.crop.drag = null; this.redraw(); return; }
     const g = this.gesture;
     this.gesture = null;
     if (!g) { this.commit(); return; }
@@ -9484,6 +10133,161 @@ class PageEditor {
     return item;
   }
 
+  /* ---------- 图片裁剪 & 手写笔双击 ---------- */
+
+  /** 手写笔快速双击的落点（默认切橡皮，可改） */
+  onPenDoubleTap() {
+    const mode = this.penDoubleTap || 'eraser';
+    if (mode === 'off') { this.onToast('手写笔双击：已关闭（可在「更多」里改）'); return null; }
+    if (mode === 'cycle') {
+      const order = ['pen', 'highlighter', 'eraser', 'lasso'];
+      const next = order[(order.indexOf(this.tool) + 1) % order.length];
+      this.setTool(next);
+      this.onToast(`手写笔双击 → ${({ pen: '画笔', highlighter: '荧光笔', eraser: '橡皮', lasso: '套索' })[next]}`);
+      return next;
+    }
+    this.setTool(mode);
+    this.onToast(`手写笔双击 → ${({ pen: '画笔', highlighter: '荧光笔', eraser: '橡皮', lasso: '套索' })[mode] || mode}`);
+    return mode;
+  }
+
+  setPenDoubleTap(mode) {
+    this.penDoubleTap = mode || 'eraser';
+    this.onToast(`手写笔双击：${{ off: '关闭', eraser: '切橡皮', pen: '切画笔', highlighter: '切荧光笔', cycle: '轮换工具' }[this.penDoubleTap] || this.penDoubleTap}`);
+    return this.penDoubleTap;
+  }
+
+  /** 开始裁剪：必须正好选中一张图片 */
+  beginCrop() {
+    const sel = this.selectedItems().filter((it) => it.kind === 'image');
+    if (sel.length !== 1) {
+      this.onToast('先用套索选中**一张**图片，再点裁剪');
+      return false;
+    }
+    this.crop = { itemId: sel[0].id, rel: { x: 0, y: 0, w: 1, h: 1 }, drag: null };
+    this.redraw();
+    this.onToast('拖动框线裁剪，按 Enter 或点「完成」应用，Esc 取消');
+    this.refreshStatus();
+    return true;
+  }
+
+  cancelCrop() {
+    if (!this.crop) return false;
+    this.crop = null;
+    this.redraw();
+    this.refreshStatus();
+    return true;
+  }
+
+  cropItem() {
+    if (!this.crop) return null;
+    const it = this.items.find((x) => x.id === this.crop.itemId);
+    return it && it.kind === 'image' ? it : null;
+  }
+
+  cropPointerDown(p) {
+    const item = this.cropItem();
+    if (!item) { this.cancelCrop(); return; }
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const px = { x: p[0] * W, y: p[1] * H };
+    const handles = cropHandles(item, this.crop.rel, { pageW: W, pageH: H });
+    let hit = null, best = 16;
+    for (const h of handles) {
+      const d = Math.hypot(h.x - px.x, h.y - px.y);
+      if (d <= best) { best = d; hit = h.id; }
+    }
+    if (!hit) {
+      const box = cropBox(item, this.crop.rel, { pageW: W, pageH: H });
+      const inside = px.x >= box.x && px.x <= box.x + box.w && px.y >= box.y && px.y <= box.y + box.h;
+      hit = inside ? 'move' : null;
+    }
+    this.crop.drag = hit ? { handle: hit, start: [px.x, px.y], base: { ...this.crop.rel } } : null;
+    if (!hit) this.onToast('拖框线里面的区域可以整块移动，拖角上的小方块改大小');
+  }
+
+  cropPointerMove(p) {
+    const item = this.cropItem();
+    const g = this.crop && this.crop.drag;
+    if (!item || !g) return;
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const dx = p[0] * W - g.start[0];
+    const dy = p[1] * H - g.start[1];
+    this.crop.rel = dragCrop(item, g.base, g.handle, dx, dy, { pageW: W, pageH: H });
+    this.scheduleRedraw();
+  }
+
+  /** 应用裁剪：真的裁出新图（data URL 替换原图） */
+  applyCrop() {
+    const item = this.cropItem();
+    if (!item) { this.cancelCrop(); return false; }
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const img = this.imageEl(item.src);
+    const res = cropImageItem(item, this.crop.rel, { pageW: W, pageH: H, image: img });
+    const tiny = res.rel.w > 0.995 && res.rel.h > 0.995;
+    if (!res.src || tiny) {
+      this.cancelCrop();
+      this.onToast(tiny ? '裁剪框和原图一样大，没改什么' : '这张图还在加载或无法裁剪，稍后再试');
+      return false;
+    }
+    this.snapshot('裁剪图片');
+    this.items = this.items.map((it) => (it.id === item.id ? { ...it, src: res.src, ...res.next } : it));
+    this.crop = null;
+    this.commit('裁剪图片');
+    this.redraw();
+    this.refreshStatus();
+    this.onToast('已裁剪（可撤销）');
+    return true;
+  }
+
+  /** 图片元素缓存（裁剪与绘制共用） */
+  imageEl(src) {
+    if (!src) return null;
+    if (!this._imgs) this._imgs = new Map();
+    if (this._imgs.has(src)) return this._imgs.get(src);
+    if (typeof Image !== 'function') { this._imgs.set(src, null); return null; }
+    const img = new Image();
+    img.onload = () => this.redraw();
+    try { img.src = src; } catch (e) {}
+    this._imgs.set(src, img);
+    return img;
+  }
+
+  drawCrop(ctx, W, H) {
+    const item = this.cropItem();
+    if (!item) return;
+    const box = cropBox(item, this.crop.rel, { pageW: W, pageH: H });
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,16,12,.42)';
+    ctx.fillRect(0, 0, W, box.y);
+    ctx.fillRect(0, box.y + box.h, W, H - (box.y + box.h));
+    ctx.fillRect(0, box.y, box.x, box.h);
+    ctx.fillRect(box.x + box.w, box.y, W - (box.x + box.w), box.h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(box.x, box.y, box.w, box.h);
+    // 三分线
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    for (let i = 1; i <= 2; i++) {
+      ctx.moveTo(box.x + (box.w * i) / 3, box.y);
+      ctx.lineTo(box.x + (box.w * i) / 3, box.y + box.h);
+      ctx.moveTo(box.x, box.y + (box.h * i) / 3);
+      ctx.lineTo(box.x + box.w, box.y + (box.h * i) / 3);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    for (const h of cropHandles(item, this.crop.rel, { pageW: W, pageH: H })) {
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.strokeStyle = '#2F6FE8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   /* ---------- 撤销 / 重做（跨页） ---------- */
 
   snapshot(label) {
@@ -9616,6 +10420,7 @@ class PageEditor {
     if (this.drawing) drawItem(ctx, this.drawing, W, H, state);
     if (this.ruler.on) this.drawRuler(ctx, W, H);
     if (this.selection.size) this.drawSelection(ctx, W, H);
+    if (this.crop) this.drawCrop(ctx, W, H);
     if (this.lassoPoly && this.lassoPoly.length > 1) this.drawPoly(ctx, W, H, this.lassoPoly);
     if (this.lassoRect) this.drawRectSelect(ctx, W, H, this.lassoRect);
     ctx.restore();
@@ -9790,6 +10595,8 @@ class PageEditor {
       shapeFill: this.shapeFill,
       ruler: this.ruler.on,
       zoom: this.zoom.on,
+      crop: !!this.crop,
+      penDoubleTap: this.penDoubleTap,
       pageIndex: this.pageIndex,
       items: c.total,
       strokes: c.stroke,
@@ -9826,7 +10633,11 @@ class PageEditor {
     if (mod && k === ']') { e.preventDefault && e.preventDefault(); return this.zOrder('front'); }
     if (mod && k === '[') { e.preventDefault && e.preventDefault(); return this.zOrder('back'); }
     if (k === 'delete' || k === 'backspace') { if (this.selection.size) { e.preventDefault && e.preventDefault(); return this.deleteSelection(); } return; }
-    if (k === 'escape') { this.selection.clear(); this.abortGesture(); this.refreshStatus(); return; }
+    if (k === 'enter' && this.crop) { e.preventDefault && e.preventDefault(); return this.applyCrop(); }
+    if (k === 'escape') {
+      if (this.crop) { this.cancelCrop(); return; }
+      this.selection.clear(); this.abortGesture(); this.refreshStatus(); return;
+    }
     if (mod) return;
     const map = { b: 'pen', h: 'highlighter', e: 'eraser', l: 'lasso', s: 'shape', t: 'text', m: 'image', k: 'sticker', g: 'tape', r: 'ruler', p: 'laser' };
     if (map[k]) return this.setTool(map[k]);
@@ -9886,6 +10697,8 @@ export { prefersDark };
  * 3. 界面状态（scope / folder / sort / viewMode）存 localStorage 的 note-books-lib
  * 4. 对外接口：render / setQuery / setFolder / setScope / setSort / setViewMode / onOpenHook / destroy
  */
+
+
 
 /* ============================ 常量 ============================ */
 
@@ -10251,7 +11064,7 @@ class LibraryUI {
     this.el.tools.innerHTML = `
       <label class="lib-search">
         <span class="lib-search-icon">⌕</span>
-        <input type="search" data-act="query" placeholder="搜索标题、标签、文字摘要" value="${bkEsc(this.state.query)}" aria-label="搜索笔记本">
+        <input type="search" data-act="query" placeholder="搜索标题、标签、文字摘要（含已 OCR 的手写）" value="${bkEsc(this.state.query)}" aria-label="搜索笔记本">
       </label>
       <select class="lib-select" data-act="sort" aria-label="排序方式">
         ${SORTS.map((o) => `<option value="${o.id}"${o.id === this.state.sort ? ' selected' : ''}>${o.label}</option>`).join('')}
@@ -10482,7 +11295,14 @@ class LibraryUI {
   _renderLayer() {
     const layer = this.el.layer;
     if (!layer) return;
-    layer.innerHTML = `${this._sheetHTML()}${this._menuHTML()}${this._selectbarHTML()}`;
+    layer.innerHTML = `${this._sheetHTML()}${this._panelHTML()}${this._menuHTML()}${this._selectbarHTML()}`;
+  }
+
+  /** 附加面板（目前只有「线上笔记本」） */
+  _panelHTML() {
+    if (!this._panel) return '';
+    if (this._panel.kind === 'remote') return this.remoteHTML();
+    return '';
   }
 
   _sheetHTML() {
@@ -10531,6 +11351,8 @@ class LibraryUI {
       { run: 'tag', label: '加标签' },
       { run: 'folder', label: '移入文件夹' },
       { run: 'duplicate', label: '复制一本' },
+      { run: 'sync-push', label: '同步到仓库' },
+      { run: 'sync-pull', label: '从仓库拉取' },
       '-',
       { run: 'trash', label: '移到回收站', danger: true },
     ];
@@ -10815,6 +11637,8 @@ class LibraryUI {
       case 'go-md': if (this.onGoMarkdown) this.onGoMarkdown(); break;
       case 'export': this.exportBackup(); break;
       case 'import': this.importBackup(); break;
+      case 'panel-close': this._panel = null; this._renderLayer(); break;
+      case 'remote-import': e.stopPropagation(); this.importRemote(rowId); break;
 
       /* 卡片与行 */
       case 'open': if (!this.selecting && this.state.scope !== 'trash') this.openBook(rowId); break;
@@ -11022,6 +11846,9 @@ class LibraryUI {
     const items = [
       { run: 'export', label: '导出备份（下载 JSON）' },
       { run: 'import', label: '导入备份（选择文件）' },
+      { run: 'sync-all', label: '全部同步到仓库' },
+      { run: 'sync-pull-all', label: '从仓库拉取线上更新' },
+      { run: 'remote', label: '看线上笔记本（免令牌）' },
     ];
     if (this.onGoMarkdown) items.push('-', { run: 'go-md', label: '切回 Markdown 资料库' });
     return items;
@@ -11033,11 +11860,16 @@ class LibraryUI {
     if (id === '__top') {
       if (run === 'export') this.exportBackup();
       else if (run === 'import') this.importBackup();
+      else if (run === 'sync-all') this.syncAll();
+      else if (run === 'sync-pull-all') this.syncPullAll();
+      else if (run === 'remote') this.openRemote();
       else if (run === 'go-md' && this.onGoMarkdown) this.onGoMarkdown();
       return;
     }
     if (!id) return;
     if (run === 'open') this.openBook(id);
+    if (run === 'sync-push') this.syncOne(id);
+    if (run === 'sync-pull') this.syncPullOne(id);
     else if (run === 'fav') this._toggleFav(id);
     else if (run === 'rename') this._renameBook(id);
     else if (run === 'cover') this.openCoverSheet(id);
@@ -11332,6 +12164,105 @@ class LibraryUI {
     this.openBook(nb.id);
   }
 
+  /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */
+
+  async syncOne(id) {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次'); return; }
+    try {
+      this.toast('正在推送…');
+      const res = await pushNotebook(gh, this.store, id, { alsoIndex: true });
+      this.toast(`已推送（${Math.max(1, Math.round(res.bytes / 1024))} KB）`);
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncAll() {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次'); return; }
+    try {
+      const total = this.getStats().notebooks;
+      if (!total) { this.toast('还没有笔记本可以同步'); return; }
+      this.toast(`开始推送 ${total} 本…`);
+      const res = await pushAll(gh, this.store, {
+        onProgress: ({ done, total: tt }) => this.toast(`推送中 ${done}/${tt}…`),
+      });
+      this.toast(`完成：${res.ok} 本成功${res.failed ? ` · ${res.failed} 本失败` : ''}（含线上目录）`);
+      if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncPullOne(id) {
+    if (!gh.configured()) { this.toast('拉取需要 GitHub 令牌'); return; }
+    try {
+      const res = await pullNotebook(gh, this.store, id, {});
+      if (res.action === 'pull') { this.toast(`已用仓库版本覆盖本地${res.backup ? '（旧的存成本机备份）' : ''}`); this.render(); }
+      else this.toast('两边一样，或本地更新：先同步到仓库');
+    } catch (e) { this._fail(e); }
+  }
+
+  async syncPullAll() {
+    try {
+      const remote = await fetchPublicIndex(null, this._base());
+      if (!remote.length) { this.toast('线上目录是空的：先在笔记本里点「同步到仓库」'); return; }
+      let pulled = 0, skipped = 0;
+      for (const r of remote) {
+        const local = this.store.get(r.id);
+        if (!gh.configured() || !local) { skipped++; continue; }
+        try {
+          const res = await pullNotebook(gh, this.store, r.id, {});
+          if (res.action === 'pull') pulled++;
+          else skipped++;
+        } catch (e) { skipped++; }
+      }
+      this.toast(`拉取完成：更新 ${pulled} 本${skipped ? ` · 跳过 ${skipped} 本` : ''}`);
+      if (!gh.configured()) this.toast('线上目录已读到，但要真正拉取需要令牌；也可以用「看线上笔记本」只读导入');
+      this.render();
+    } catch (e) { this._fail(e); }
+  }
+
+  /** 免令牌：列出线上笔记本（读 docs/notebooks/index.json），可一键导入到本地 */
+  async openRemote() {
+    const remote = await fetchPublicIndex(null, this._base());
+    if (!remote.length) { this.toast('线上还没有笔记本（先在笔记本里点「同步到仓库」，约 1 分钟后线上可见）'); return; }
+    this._remote = remote;
+    this._panel = { kind: 'remote' };
+    this._renderLayer();
+  }
+
+  async importRemote(id) {
+    try {
+      const res = await pullFromPublicSite(this.store, id, null, this._base());
+      this._panel = null;
+      this._renderLayer();
+      this.render();
+      this.toast(`已导入「${res.notebook.title}」${res.renamed ? '（本地已有同名，存成副本）' : ''}`);
+    } catch (e) { this._fail(e); }
+  }
+
+  remoteHTML() {
+    const list = this._remote || [];
+    return `<div class="lib-sheet-mask" data-act="panel-close">
+      <div class="lib-sheet" data-stop="1">
+        <div class="lib-sheet-head"><h3>线上笔记本（免令牌只读）</h3><button class="lib-btn ghost" type="button" data-act="panel-close">✕</button></div>
+        <div class="lib-sheet-body">
+          <p class="lib-hint">这些是仓库 docs/notebooks/ 里已发布的笔记本，任何设备打开这个网页都能看到。点「导入到本地」会复制一份到这台设备（不会覆盖本地已有的）。</p>
+          ${list.map((r) => `<div class="lib-pick-row" data-id="${bkEsc(r.id)}">
+            <span class="bk-row-cover" style="--bk:${bkEsc((r.cover && r.cover.color) || '#5A6B8C')}" data-pattern="${bkEsc((r.cover && r.cover.pattern) || 'plain')}" aria-hidden="true"></span>
+            <span class="lib-pick-name">${bkEsc(r.title)}<i class="lib-pick-meta">${r.pages} 页 · ${r.ocr || 0} 页已识别 · ${relTime(r.updatedAt)}</i></span>
+            <button class="lib-btn primary" type="button" data-act="remote-import" data-id="${bkEsc(r.id)}">导入到本地</button>
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /** 线上资源基地址（Pages 下 docs/ 就是站点根） */
+  _base() {
+    try {
+      if (typeof location === 'undefined') return '';
+      const p = location.pathname || '/';
+      return p.endsWith('/') ? p : p.slice(0, p.lastIndexOf('/') + 1);
+    } catch (e) { return ''; }
+  }
+
   /* ---------- 备份 ---------- */
 
   exportBackup() {
@@ -11415,6 +12346,9 @@ export default LibraryUI;
 
 
 
+
+
+
 /* ============================ 小工具（纯函数，加载期不碰 DOM） ============================ */
 
 const HAS_DOM = () => typeof document !== 'undefined';
@@ -11492,7 +12426,10 @@ class NotebookView {
     this.status = {};
     this.toolsOpen = false;
 
-    this.panelKind = '';       // pages / outline / study / audio / paper
+    this.panelKind = '';       // pages / outline / study / audio / paper / ocr
+    this.ocrModel = OCR_MODELS[0].id;
+    this.ocrRunning = false;
+    this.ocrStatusText = '';
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -11550,7 +12487,12 @@ class NotebookView {
       <button class="nb-btn" type="button" data-act="menu" data-menu="more">更多 ▾</button>
       <div class="nb-menu" data-menu="more" hidden>
         <button type="button" data-act="panel" data-panel="paper">改纸张 / 尺寸</button>
+        <button type="button" data-act="panel" data-panel="ocr">识别手写文字（OCR）…</button>
+        <button type="button" data-act="syncPush">同步到仓库（推送）</button>
+        <button type="button" data-act="syncPull">从仓库拉取这本</button>
+        <hr>
         <button type="button" data-act="scrollToggle">切换竖排 / 横排滚动</button>
+        <button type="button" data-act="penDoubleTapCycle">手写笔双击：切换动作</button>
         <button type="button" data-act="summary">总结当前页文字</button>
         <hr>
         <button type="button" data-act="clearPage">清空此页</button>
@@ -11701,6 +12643,9 @@ class NotebookView {
   onInput(e) {
     const t = e.target;
     if (!t || !t.closest) return;
+    // OCR 密钥：失焦或回车时存下来
+    const ocrKeyEl = t.closest('[data-act="ocrKey"]');
+    if (ocrKeyEl) { setOcrKey(null, ocrKeyEl.value); return; }
     const el = t.closest('[data-x]');
     if (!el) return;
     const key = el.dataset.x;
@@ -11782,6 +12727,32 @@ class NotebookView {
       return true;
     }
     if (act === 'summary') { this.summaryToPage(); return true; }
+    if (act === 'cropImage') {
+      const e = ed();
+      if (e) { e.setTool('lasso'); e.beginCrop(); this.setStatus(e.info()); }
+      return true;
+    }
+    if (act === 'penDoubleTapCycle') {
+      const e = ed();
+      if (!e) return true;
+      const order = ['eraser', 'pen', 'highlighter', 'cycle', 'off'];
+      const next = order[(order.indexOf(e.penDoubleTap || 'eraser') + 1) % order.length];
+      e.setPenDoubleTap(next);
+      return true;
+    }
+    if (act === 'syncPush') { this.syncPush(); return true; }
+    if (act === 'syncPull') { this.syncPull(); return true; }
+    if (act === 'ocrModel') { this.ocrModel = note; this.renderPanel(); return true; }
+    if (act === 'ocrRun') { this.runOcr({}); return true; }
+    if (act === 'ocrRunPage') { this.runOcr({ indices: [this.cur] }); return true; }
+    if (act === 'ocrRunAll') { this.runOcr({ all: true, indices: (this.nb.pages || []).map((_, i) => i) }); return true; }
+    if (act === 'ocrClearPage') {
+      this.store.clearPageOcr(this.bookId, this.nb.pages[this.cur].id);
+      this.toast('已清掉本页的识别结果');
+      this.renderPanel();
+      return true;
+    }
+    if (act === 'ocrToText') { this.ocrToText(); return true; }
     if (act === 'clearPage') {
       const e = ed();
       if (!e) return true;
@@ -12759,6 +13730,7 @@ class NotebookView {
           <button class="nb-btn danger" type="button" data-act="lassoOp" data-note="delete">删除</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="front">置顶</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="back">置底</button>
+          <button class="nb-btn" type="button" data-act="cropImage">裁剪图片</button>
           <button class="nb-btn" type="button" data-act="lassoOp" data-note="peel">撕胶带</button>
         </div>
       </div>
@@ -12964,9 +13936,150 @@ class NotebookView {
     else if (k === 'study') this.panelEl.innerHTML = this.markupStudyPanel();
     else if (k === 'audio') this.panelEl.innerHTML = this.markupAudioPanel();
     else if (k === 'paper') this.panelEl.innerHTML = this.markupPaperPanel();
+    else if (k === 'ocr') this.panelEl.innerHTML = this.markupOcrPanel();
     if (k === 'study') { this.paintStudy(); this.renderStudyCard(); }
     if (k === 'audio') this.renderAudioLists();
     if (k === 'pages') this.paintPanelThumbs();
+    if (k === 'ocr') this.renderOcrStatus();
+  }
+
+  /* ---------- 手写识别（OCR）面板 ---------- */
+
+  markupOcrPanel() {
+    const nb = this.nb;
+    const st = this.store.ocrStats(nb.id);
+    const key = getOcrKey();
+    const model = this.ocrModel || OCR_MODELS[0].id;
+    return `${this.panelHead('识别手写文字（OCR）')}
+      <div class="nb-panel-body">
+        <div class="nb-hint">
+          把页面图交给视觉模型识别，结果存进这一页；之后<b>资料库搜索</b>和「本笔记本搜索」都能搜到手写内容。<br>
+          密钥只存在你这台设备的浏览器，请求直接从浏览器发往 api.siliconflow.cn（本站之外的第三方服务）——介意的话就别开。
+        </div>
+        <div class="nb-field">
+          <span>SiliconFlow API Key（cloud.siliconflow.cn 免费申请，填一次即可）</span>
+          <input class="nb-input" type="password" data-act="ocrKey" value="${nbEsc(key)}" placeholder="sk-...">
+        </div>
+        <div class="nb-field">
+          <span>模型</span>
+          <div class="nb-row">
+            ${OCR_MODELS.map((m) => `<button class="nb-chip${model === m.id ? ' on' : ''}" type="button" data-act="ocrModel" data-note="${nbEsc(m.id)}" title="${nbEsc(m.hint)}">${nbEsc(m.label)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="nb-row">
+          <button class="nb-btn primary" type="button" data-act="ocrRun" ${key ? '' : 'disabled'}>识别未识别的页（${st.pending} 页）</button>
+          <button class="nb-btn" type="button" data-act="ocrRunPage" ${key ? '' : 'disabled'}>只识别当前页</button>
+          <button class="nb-btn" type="button" data-act="ocrRunAll" ${key ? '' : 'disabled'}>全部重识别</button>
+          <button class="nb-btn danger" type="button" data-act="ocrClearPage">清掉本页识别结果</button>
+          <button class="nb-btn" type="button" data-act="ocrToText" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr) ? '' : 'disabled'} title="把手写识别结果变成可编辑的文本框">识别结果转成文本框</button>
+        </div>
+        <div class="nb-field">
+          <span>进度</span>
+          <div class="nb-ocr-status" id="nbOcrStatus">共 ${st.pages} 页 · 已识别 ${st.done} 页 · 已入库 ${st.chars} 字</div>
+        </div>
+        ${nb.pages && nb.pages[this.cur] && nb.pages[this.cur].ocr ? `
+        <div class="nb-field">
+          <span>本页识别结果（${(nb.pages[this.cur].ocr.text || '').length} 字）</span>
+          <textarea class="nb-textarea" readonly>${nbEsc((nb.pages[this.cur].ocr.text || '').slice(0, 4000))}</textarea>
+        </div>` : ''}
+        <div class="nb-hint">提示：8B 模型快（约 15~25 秒/页），公式与表格多的页建议切 32B 复核。识别要花钱，所以默认只跑没识别过的页。</div>
+      </div>`;
+  }
+
+  renderOcrStatus() {
+    const el = q(this.panelEl, '#nbOcrStatus');
+    if (el) el.textContent = this.ocrStatusText || (() => {
+      const st = this.store.ocrStats(this.bookId);
+      return `共 ${st.pages} 页 · 已识别 ${st.done} 页 · 已入库 ${st.chars} 字`;
+    })();
+  }
+
+  async runOcr(opts = {}) {
+    const key = getOcrKey();
+    if (!key) { this.toast('先把 API Key 填上'); return; }
+    const model = this.ocrModel || OCR_MODELS[0].id;
+    this.ocrRunning = true;
+    const total = opts.indices ? opts.indices.length : this.store.ocrStats(this.bookId).pending;
+    this.ocrStatusText = progressText(0, total || 1, 0);
+    this.renderOcrStatus();
+    try {
+      const res = await ocrNotebook(this.store, this.bookId, {
+        apiKey: key,
+        model,
+        onlyMissing: !opts.all,
+        indices: opts.indices || null,
+        concurrency: opts.concurrency || 3,
+        renderPage,
+        onProgress: ({ done, total: tt, failed }) => {
+          this.ocrStatusText = progressText(done, tt, failed);
+          this.renderOcrStatus();
+        },
+      });
+      const st = this.store.ocrStats(this.bookId);
+      this.ocrStatusText = `识别完成：${res.done} 页成功${res.failed ? ` · ${res.failed} 页失败` : ''} · 已入库 ${st.chars} 字`;
+      this.toast(`OCR：${res.done} 页成功${res.failed ? `，${res.failed} 页失败` : ''}`);
+      if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
+      this.refresh();
+      this.renderOcrStatus();
+    } catch (e) {
+      this.ocrStatusText = '识别失败：' + ((e && e.message) || '未知错误');
+      this.toast(this.ocrStatusText);
+      this.renderOcrStatus();
+    } finally {
+      this.ocrRunning = false;
+    }
+  }
+
+  /** 把识别结果变成文本框（手写 → 可编辑文本：Scribble 的等效实现） */
+  ocrToText() {
+    const page = this.nb.pages[this.cur];
+    const ed = this.editor;
+    if (!page || !page.ocr || !page.ocr.text) { this.toast('这一页还没识别过'); return; }
+    if (!ed) return;
+    ed.snapshot('识别结果转文本');
+    ed.items.push({
+      kind: 'text',
+      id: 'ocr' + Date.now().toString(36),
+      x: 0.06, y: 0.06,
+      text: page.ocr.text.slice(0, 1200),
+      size: 0.018,
+      color: '#2B2723',
+      font: 'sans',
+      bold: false, italic: false, align: 'left', rot: 0,
+    });
+    ed.commit('识别结果转文本');
+    ed.redraw();
+    this.setStatus(ed.info());
+    this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
+  }
+
+  /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */
+  async syncPush() {
+    if (!gh.configured()) { this.toast('还没配 GitHub 令牌：进任意笔记点「✎ 编辑」→ ⚙ 填一次，再来同步'); return; }
+    try {
+      this.toast('正在推送到仓库…');
+      const res = await pushNotebook(gh, this.store, this.bookId, { alsoIndex: true });
+      this.toast(`已推送（${Math.max(1, Math.round(res.bytes / 1024))} KB，含线上目录）`);
+      try { this.onChanged(); } catch (e) {}
+    } catch (e) {
+      this.toast('推送失败：' + ((e && e.message) || '未知错误'));
+    }
+  }
+
+  async syncPull() {
+    if (!gh.configured()) { this.toast('拉取需要 GitHub 令牌（只想看线上内容：资料库里有「线上笔记本」入口）'); return; }
+    try {
+      const res = await pullNotebook(gh, this.store, this.bookId, { force: false });
+      if (res.action === 'pull') {
+        this.toast(`已用仓库版本覆盖本地${res.backup ? '（旧版本存成了本机备份副本）' : ''}`);
+        this.open(this.bookId);
+        try { this.onChanged(); } catch (e) {}
+      } else {
+        this.toast('两边一样，或本地更新：先「同步到仓库」再拉');
+      }
+    } catch (e) {
+      this.toast('拉取失败：' + ((e && e.message) || '未知错误'));
+    }
   }
 
   panelHead(title) {

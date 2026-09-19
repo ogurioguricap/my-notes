@@ -293,6 +293,97 @@ export function boxOfItems(items) {
   return { x0, y0, x1, y1 };
 }
 
+/**
+ * 手写笔快速双击判定（浏览器不暴露 Apple Pencil 的双击 API，用时间+位移等效判定）
+ * @param {{x:number,y:number,t:number}} prev 上一次落笔
+ * @param {{x:number,y:number,t:number}} next 这一次落笔
+ */
+export function isPenDoubleTap(prev, next, { windowMs = 340, maxDistPx = 12 } = {}) {
+  if (!prev || !next) return false;
+  const dt = Number(next.t) - Number(prev.t);
+  if (!(dt >= 0 && dt <= windowMs)) return false;
+  const d = Math.hypot(Number(next.x) - Number(prev.x), Number(next.y) - Number(prev.y));
+  return d <= maxDistPx;
+}
+
+/** 图片裁剪：把「图内相对框」换算成像素源矩形 + 新的归一化几何 */
+export function cropPixels(item, rel = { x: 0, y: 0, w: 1, h: 1 }, { pageW = 800, pageH = 1000, natural = null } = {}) {
+  const x = Math.min(1, Math.max(0, Number(rel.x) || 0));
+  const y = Math.min(1, Math.max(0, Number(rel.y) || 0));
+  const w = Math.min(1 - x, Math.max(0.02, Number(rel.w) || 1));
+  const h = Math.min(1 - y, Math.max(0.02, Number(rel.h) || 1));
+  const iw = (natural && natural.w) || Math.max(1, Math.round((Number(item.w) || 0.3) * pageW));
+  const ih = (natural && natural.h) || Math.max(1, Math.round((Number(item.h) || 0.2) * pageH));
+  return {
+    rel: { x, y, w, h },
+    src: { x: Math.round(x * iw), y: Math.round(y * ih), w: Math.max(1, Math.round(w * iw)), h: Math.max(1, Math.round(h * ih)) },
+    next: {
+      x: (Number(item.x) || 0) + x * (Number(item.w) || 0),
+      y: (Number(item.y) || 0) + y * (Number(item.h) || 0),
+      w: (Number(item.w) || 0) * w,
+      h: (Number(item.h) || 0) * h,
+    },
+  };
+}
+
+/** 裁剪框的四个角（像素坐标，画控制点用） */
+export function cropHandles(item, rel, { pageW = 800, pageH = 1000 } = {}) {
+  const box = cropBox(item, rel, { pageW, pageH });
+  const mx = box.x + box.w / 2, my = box.y + box.h / 2;
+  return [
+    { id: 'nw', x: box.x, y: box.y }, { id: 'n', x: mx, y: box.y },
+    { id: 'ne', x: box.x + box.w, y: box.y }, { id: 'e', x: box.x + box.w, y: my },
+    { id: 'se', x: box.x + box.w, y: box.y + box.h }, { id: 's', x: mx, y: box.y + box.h },
+    { id: 'sw', x: box.x, y: box.y + box.h }, { id: 'w', x: box.x, y: my },
+  ];
+}
+
+/** 裁剪框在页面像素坐标里的位置 */
+export function cropBox(item, rel, { pageW = 800, pageH = 1000 } = {}) {
+  const ix = (Number(item.x) || 0) * pageW, iy = (Number(item.y) || 0) * pageH;
+  const iw = (Number(item.w) || 0) * pageW, ih = (Number(item.h) || 0) * pageH;
+  const x = Math.min(1, Math.max(0, Number(rel && rel.x) || 0));
+  const y = Math.min(1, Math.max(0, Number(rel && rel.y) || 0));
+  const w = Math.min(1 - x, Math.max(0.02, Number(rel && rel.w) || 1));
+  const h = Math.min(1 - y, Math.max(0.02, Number(rel && rel.h) || 1));
+  return { x: ix + x * iw, y: iy + y * ih, w: w * iw, h: h * ih };
+}
+
+/** 拖动裁剪框（把像素位移换算回图内相对位移） */
+export function dragCrop(item, rel, handle, dxPx, dyPx, { pageW = 800, pageH = 1000 } = {}) {
+  const iw = Math.max(1, (Number(item.w) || 0) * pageW);
+  const ih = Math.max(1, (Number(item.h) || 0) * pageH);
+  const dx = dxPx / iw, dy = dyPx / ih;
+  let { x, y, w, h } = { x: Number(rel.x) || 0, y: Number(rel.y) || 0, w: Number(rel.w) || 1, h: Number(rel.h) || 1 };
+  const MIN = 0.06;
+  if (handle === 'move') {
+    x = Math.min(1 - w, Math.max(0, x + dx));
+    y = Math.min(1 - h, Math.max(0, y + dy));
+  } else {
+    if (handle.includes('w')) { const nx = Math.min(x + w - MIN, Math.max(0, x + dx)); w += x - nx; x = nx; }
+    if (handle.includes('e')) { w = Math.min(1 - x, Math.max(MIN, w + dx)); }
+    if (handle.includes('n')) { const ny = Math.min(y + h - MIN, Math.max(0, y + dy)); h += y - ny; y = ny; }
+    if (handle.includes('s')) { h = Math.min(1 - y, Math.max(MIN, h + dy)); }
+  }
+  return { x, y, w, h };
+}
+
+/** 真正裁出新的图（需要 canvas；工厂可注入，便于测试） */
+export function cropImageItem(item, rel, { pageW = 800, pageH = 1000, image = null, canvasFactory = null } = {}) {
+  const info = cropPixels(item, rel, { pageW, pageH, natural: image && image.naturalWidth ? { w: image.naturalWidth, h: image.naturalHeight } : null });
+  const make = canvasFactory || (typeof document !== 'undefined' ? () => document.createElement('canvas') : null);
+  if (!make || !image) return { ...info, src: null };
+  const canvas = make();
+  canvas.width = info.src.w;
+  canvas.height = info.src.h;
+  const ctx = canvas.getContext ? canvas.getContext('2d') : null;
+  if (!ctx) return { ...info, src: null };
+  ctx.drawImage(image, info.src.x, info.src.y, info.src.w, info.src.h, 0, 0, info.src.w, info.src.h);
+  let src = '';
+  try { src = canvas.toDataURL('image/png'); } catch (e) { src = ''; }
+  return { ...info, src: src || null };
+}
+
 function itemHit(item, x, y, W, H, opts = {}) {
   if (!item) return false;
   if (item.kind === 'sticker') {
@@ -630,6 +721,9 @@ export class PageEditor {
     this.laserRAF = 0;
     this.editing = null;
     this.suppressStore = false;
+    this.crop = null;              // 图片裁剪状态 { itemId, rel, drag }
+    this.penDoubleTap = 'eraser';  // 手写笔快速双击切换到哪个工具
+    this._penTaps = [];
 
     this._pending = null;
     this._pendingPage = '';
@@ -890,7 +984,21 @@ export class PageEditor {
     if (!c || !c.addEventListener) return {};
     let activePen = false;
     const down = (e) => {
-      if (e.pointerType === 'pen') activePen = true;
+      if (e.pointerType === 'pen') {
+        activePen = true;
+        // 手写笔快速双击 = 切换工具（浏览器不暴露 Apple Pencil 的双击 API，用等效手势顶上）
+        const now = Date.now();
+        const prev = this._penTaps[this._penTaps.length - 1] || null;
+        const pt = { x: e.clientX, y: e.clientY };
+        this._penTaps.push({ ...pt, t: now });
+        if (this._penTaps.length > 4) this._penTaps.shift();
+        if (prev && isPenDoubleTap({ ...prev, x: prev.x, y: prev.y }, { ...pt, t: now })) {
+          this._penTaps = [];
+          this.abortGesture();
+          this.onPenDoubleTap();
+          return;                 // 双击不落笔
+        }
+      }
       // 防误触：笔在用时忽略手指（手账 App 的「手掌误触」）
       if (e.pointerType === 'touch' && activePen) return;
       e.preventDefault && e.preventDefault();
@@ -922,6 +1030,7 @@ export class PageEditor {
   }
 
   onDown(p, meta = {}) {
+    if (this.crop) return this.cropPointerDown(p);
     if (this.tool === 'pen' || this.tool === 'highlighter' || this.tool === 'shape' || this.tool === 'tape') {
       return this.startInk(p, meta);
     }
@@ -939,6 +1048,7 @@ export class PageEditor {
   }
 
   onMove(p, meta = {}) {
+    if (this.crop && this.crop.drag) return this.cropPointerMove(p);
     if (!this.gesture) return;
     if (this.gesture.type === 'erase') return this.applyErase(p);
     if (this.gesture.type === 'laser') {
@@ -980,6 +1090,7 @@ export class PageEditor {
   }
 
   onUp() {
+    if (this.crop && this.crop.drag) { this.crop.drag = null; this.redraw(); return; }
     const g = this.gesture;
     this.gesture = null;
     if (!g) { this.commit(); return; }
@@ -1480,6 +1591,161 @@ export class PageEditor {
     return item;
   }
 
+  /* ---------- 图片裁剪 & 手写笔双击 ---------- */
+
+  /** 手写笔快速双击的落点（默认切橡皮，可改） */
+  onPenDoubleTap() {
+    const mode = this.penDoubleTap || 'eraser';
+    if (mode === 'off') { this.onToast('手写笔双击：已关闭（可在「更多」里改）'); return null; }
+    if (mode === 'cycle') {
+      const order = ['pen', 'highlighter', 'eraser', 'lasso'];
+      const next = order[(order.indexOf(this.tool) + 1) % order.length];
+      this.setTool(next);
+      this.onToast(`手写笔双击 → ${({ pen: '画笔', highlighter: '荧光笔', eraser: '橡皮', lasso: '套索' })[next]}`);
+      return next;
+    }
+    this.setTool(mode);
+    this.onToast(`手写笔双击 → ${({ pen: '画笔', highlighter: '荧光笔', eraser: '橡皮', lasso: '套索' })[mode] || mode}`);
+    return mode;
+  }
+
+  setPenDoubleTap(mode) {
+    this.penDoubleTap = mode || 'eraser';
+    this.onToast(`手写笔双击：${{ off: '关闭', eraser: '切橡皮', pen: '切画笔', highlighter: '切荧光笔', cycle: '轮换工具' }[this.penDoubleTap] || this.penDoubleTap}`);
+    return this.penDoubleTap;
+  }
+
+  /** 开始裁剪：必须正好选中一张图片 */
+  beginCrop() {
+    const sel = this.selectedItems().filter((it) => it.kind === 'image');
+    if (sel.length !== 1) {
+      this.onToast('先用套索选中**一张**图片，再点裁剪');
+      return false;
+    }
+    this.crop = { itemId: sel[0].id, rel: { x: 0, y: 0, w: 1, h: 1 }, drag: null };
+    this.redraw();
+    this.onToast('拖动框线裁剪，按 Enter 或点「完成」应用，Esc 取消');
+    this.refreshStatus();
+    return true;
+  }
+
+  cancelCrop() {
+    if (!this.crop) return false;
+    this.crop = null;
+    this.redraw();
+    this.refreshStatus();
+    return true;
+  }
+
+  cropItem() {
+    if (!this.crop) return null;
+    const it = this.items.find((x) => x.id === this.crop.itemId);
+    return it && it.kind === 'image' ? it : null;
+  }
+
+  cropPointerDown(p) {
+    const item = this.cropItem();
+    if (!item) { this.cancelCrop(); return; }
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const px = { x: p[0] * W, y: p[1] * H };
+    const handles = cropHandles(item, this.crop.rel, { pageW: W, pageH: H });
+    let hit = null, best = 16;
+    for (const h of handles) {
+      const d = Math.hypot(h.x - px.x, h.y - px.y);
+      if (d <= best) { best = d; hit = h.id; }
+    }
+    if (!hit) {
+      const box = cropBox(item, this.crop.rel, { pageW: W, pageH: H });
+      const inside = px.x >= box.x && px.x <= box.x + box.w && px.y >= box.y && px.y <= box.y + box.h;
+      hit = inside ? 'move' : null;
+    }
+    this.crop.drag = hit ? { handle: hit, start: [px.x, px.y], base: { ...this.crop.rel } } : null;
+    if (!hit) this.onToast('拖框线里面的区域可以整块移动，拖角上的小方块改大小');
+  }
+
+  cropPointerMove(p) {
+    const item = this.cropItem();
+    const g = this.crop && this.crop.drag;
+    if (!item || !g) return;
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const dx = p[0] * W - g.start[0];
+    const dy = p[1] * H - g.start[1];
+    this.crop.rel = dragCrop(item, g.base, g.handle, dx, dy, { pageW: W, pageH: H });
+    this.scheduleRedraw();
+  }
+
+  /** 应用裁剪：真的裁出新图（data URL 替换原图） */
+  applyCrop() {
+    const item = this.cropItem();
+    if (!item) { this.cancelCrop(); return false; }
+    const W = this.cssW || 800, H = this.cssH || 1000;
+    const img = this.imageEl(item.src);
+    const res = cropImageItem(item, this.crop.rel, { pageW: W, pageH: H, image: img });
+    const tiny = res.rel.w > 0.995 && res.rel.h > 0.995;
+    if (!res.src || tiny) {
+      this.cancelCrop();
+      this.onToast(tiny ? '裁剪框和原图一样大，没改什么' : '这张图还在加载或无法裁剪，稍后再试');
+      return false;
+    }
+    this.snapshot('裁剪图片');
+    this.items = this.items.map((it) => (it.id === item.id ? { ...it, src: res.src, ...res.next } : it));
+    this.crop = null;
+    this.commit('裁剪图片');
+    this.redraw();
+    this.refreshStatus();
+    this.onToast('已裁剪（可撤销）');
+    return true;
+  }
+
+  /** 图片元素缓存（裁剪与绘制共用） */
+  imageEl(src) {
+    if (!src) return null;
+    if (!this._imgs) this._imgs = new Map();
+    if (this._imgs.has(src)) return this._imgs.get(src);
+    if (typeof Image !== 'function') { this._imgs.set(src, null); return null; }
+    const img = new Image();
+    img.onload = () => this.redraw();
+    try { img.src = src; } catch (e) {}
+    this._imgs.set(src, img);
+    return img;
+  }
+
+  drawCrop(ctx, W, H) {
+    const item = this.cropItem();
+    if (!item) return;
+    const box = cropBox(item, this.crop.rel, { pageW: W, pageH: H });
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,16,12,.42)';
+    ctx.fillRect(0, 0, W, box.y);
+    ctx.fillRect(0, box.y + box.h, W, H - (box.y + box.h));
+    ctx.fillRect(0, box.y, box.x, box.h);
+    ctx.fillRect(box.x + box.w, box.y, W - (box.x + box.w), box.h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(box.x, box.y, box.w, box.h);
+    // 三分线
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    for (let i = 1; i <= 2; i++) {
+      ctx.moveTo(box.x + (box.w * i) / 3, box.y);
+      ctx.lineTo(box.x + (box.w * i) / 3, box.y + box.h);
+      ctx.moveTo(box.x, box.y + (box.h * i) / 3);
+      ctx.lineTo(box.x + box.w, box.y + (box.h * i) / 3);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    for (const h of cropHandles(item, this.crop.rel, { pageW: W, pageH: H })) {
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.strokeStyle = '#2F6FE8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   /* ---------- 撤销 / 重做（跨页） ---------- */
 
   snapshot(label) {
@@ -1612,6 +1878,7 @@ export class PageEditor {
     if (this.drawing) drawItem(ctx, this.drawing, W, H, state);
     if (this.ruler.on) this.drawRuler(ctx, W, H);
     if (this.selection.size) this.drawSelection(ctx, W, H);
+    if (this.crop) this.drawCrop(ctx, W, H);
     if (this.lassoPoly && this.lassoPoly.length > 1) this.drawPoly(ctx, W, H, this.lassoPoly);
     if (this.lassoRect) this.drawRectSelect(ctx, W, H, this.lassoRect);
     ctx.restore();
@@ -1786,6 +2053,8 @@ export class PageEditor {
       shapeFill: this.shapeFill,
       ruler: this.ruler.on,
       zoom: this.zoom.on,
+      crop: !!this.crop,
+      penDoubleTap: this.penDoubleTap,
       pageIndex: this.pageIndex,
       items: c.total,
       strokes: c.stroke,
@@ -1822,7 +2091,11 @@ export class PageEditor {
     if (mod && k === ']') { e.preventDefault && e.preventDefault(); return this.zOrder('front'); }
     if (mod && k === '[') { e.preventDefault && e.preventDefault(); return this.zOrder('back'); }
     if (k === 'delete' || k === 'backspace') { if (this.selection.size) { e.preventDefault && e.preventDefault(); return this.deleteSelection(); } return; }
-    if (k === 'escape') { this.selection.clear(); this.abortGesture(); this.refreshStatus(); return; }
+    if (k === 'enter' && this.crop) { e.preventDefault && e.preventDefault(); return this.applyCrop(); }
+    if (k === 'escape') {
+      if (this.crop) { this.cancelCrop(); return; }
+      this.selection.clear(); this.abortGesture(); this.refreshStatus(); return;
+    }
     if (mod) return;
     const map = { b: 'pen', h: 'highlighter', e: 'eraser', l: 'lasso', s: 'shape', t: 'text', m: 'image', k: 'sticker', g: 'tape', r: 'ruler', p: 'laser' };
     if (map[k]) return this.setTool(map[k]);

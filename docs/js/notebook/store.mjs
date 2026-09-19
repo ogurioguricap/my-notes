@@ -201,17 +201,17 @@ export class NotebookStore {
     return list;
   }
 
-  /** 笔记本的文字摘要（用文本对象，供搜索与卡片副标题用；手写内容需要 OCR，见对照文档） */
+  /** 笔记本的文字摘要（文本对象 + 已识别的 OCR 手写），供搜索与卡片副标题用 */
   snippetOf(nb) {
     const bits = [];
     for (const p of nb.pages || []) {
       for (const it of p.items || []) {
         if (it && it.kind === 'text' && it.text) bits.push(it.text);
-        if (bits.length > 40) break;
       }
+      if (p.ocr && p.ocr.text) bits.push(p.ocr.text.slice(0, 600));   // 手写识别结果也进搜索
       if (bits.length > 40) break;
     }
-    return bits.join(' ').slice(0, 400);
+    return bits.join(' ').slice(0, 900);
   }
 
   stats() {
@@ -489,7 +489,7 @@ export class NotebookStore {
       .filter((x) => x.bookmarked || x.title);
   }
 
-  /** 页面里所有文本对象拼起来（手写搜索的替代方案：能搜到打字的与粘进来的文字） */
+  /** 页面里所有文字（打字的 + 手写识别出来的）拼起来，用于页内搜索 */
   searchText(bookId, needle) {
     const nb = this.get(bookId);
     if (!nb) return [];
@@ -498,9 +498,61 @@ export class NotebookStore {
     const hits = [];
     nb.pages.forEach((p, i) => {
       const texts = (p.items || []).filter((it) => it.kind === 'text').map((it) => it.text || '').join('\n');
-      if (texts.toLowerCase().includes(q)) hits.push({ pageId: p.id, index: i, excerpt: texts.slice(0, 120) });
+      const ocr = (p.ocr && p.ocr.text) || '';
+      const where = [];
+      if (texts.toLowerCase().includes(q)) where.push('文字');
+      if (ocr.toLowerCase().includes(q)) where.push('手写识别');
+      if (where.length) hits.push({ pageId: p.id, index: i, source: where.join('+'), excerpt: (texts + '\n' + ocr).slice(0, 120) });
     });
     return hits;
+  }
+
+  /** 跨笔记本搜索（含手写 OCR 结果）→ 直接给出可跳转的命中 */
+  searchAll(needle, { limit = 40 } = {}) {
+    const q = String(needle || '').trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    for (const nb of this.data.notebooks) {
+      if (nb.trashedAt) continue;
+      for (const hit of this.searchText(nb.id, q)) {
+        out.push({ bookId: nb.id, title: nb.title, pageIndex: hit.index, pageId: hit.pageId, source: hit.source, excerpt: hit.excerpt });
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
+  }
+
+  /* ---------- 手写识别（OCR）结果 ---------- */
+
+  /** 写入某页的识别文字（OCR 模块用它回填） */
+  setPageOcr(bookId, pageId, { text, model } = {}) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    const clean = String(text == null ? '' : text).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 12000);
+    if (!clean) return p;
+    p.ocr = { text: clean, model: model || '', chars: clean.length, at: Date.now() };
+    this.touch(bookId);
+    return p;
+  }
+
+  clearPageOcr(bookId, pageId) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    delete p.ocr;
+    this.touch(bookId);
+    return p;
+  }
+
+  ocrStats(bookId) {
+    const nb = this.get(bookId);
+    if (!nb) return { pages: 0, done: 0, pending: 0, chars: 0 };
+    const done = nb.pages.filter((p) => p.ocr && p.ocr.text).length;
+    return {
+      pages: nb.pages.length,
+      done,
+      pending: nb.pages.length - done,
+      chars: nb.pages.reduce((s, p) => s + ((p.ocr && p.ocr.chars) || 0), 0),
+    };
   }
 
   /* ---------- 对象（页内内容） ---------- */
