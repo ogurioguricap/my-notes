@@ -26,9 +26,9 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount } from './study.mjs';
 import {
-  ASR_MODELS, transcribeAudio, getAsrKey, setAsrKey,
+  ASR_MODELS, transcribeAudio, transcribeAudioFull, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
 } from './asr.mjs';
 import { applyEdit } from '../../lib/site-build.mjs';
 import {
@@ -132,6 +132,9 @@ export class NotebookView {
     this.pdfQuality = 'high';   // standard / high / print
     this.dropTape = false;      // 导出时是否撕掉胶带
     this.textLayer = true;      // 导出 PDF 是否带可搜索文字层
+    this.pdfToc = true;         // 导出 PDF 是否自动插一页目录
+    this.plainPaper = false;    // 阅读版：导出时去格线
+    this.searchIndex = 0;       // 笔记本内搜索当前高亮的命中
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -190,6 +193,8 @@ export class NotebookView {
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
         <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
         <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
+        <button type="button" data-act="toggleToc">PDF 自动目录页</button>
+        <button type="button" data-act="togglePlain">阅读版（去格线，省墨）</button>
         <hr>
         <button type="button" data-act="print">打印</button>
       </div>
@@ -526,6 +531,16 @@ export class NotebookView {
         : '导出 PDF 带可搜索文字层（打字内容 + 已 OCR 的手写，Ctrl+F 能搜）');
       return true;
     }
+    if (act === 'toggleToc') {
+      this.pdfToc = this.pdfToc === false ? true : false;
+      this.toast(this.pdfToc === false ? '导出 PDF 不再自动加目录页' : '导出 PDF 会在最前面插一页自动目录（条目可点）');
+      return true;
+    }
+    if (act === 'togglePlain') {
+      this.plainPaper = !this.plainPaper;
+      this.toast(this.plainPaper ? '阅读版：导出 PDF 时去掉格线/横线（省墨）' : '恢复正常纸张：导出 PDF 带格线');
+      return true;
+    }
     if (act === 'exportJson') {
       try {
         const json = this.store.exportJSON([this.bookId]);
@@ -601,6 +616,11 @@ export class NotebookView {
     if (act === 'audioStop') { this.audioStop(); return true; }
     if (act === 'audioDelete') { this.audioDelete(actEl.dataset.id); return true; }
     if (act === 'audioTranscribe') { this.audioTranscribe(actEl.dataset.id); return true; }
+    if (act === 'audioSegGo') {
+      const idx = Number(actEl.dataset.page);
+      if (Number.isFinite(idx)) this.gotoPage(idx);
+      return true;
+    }
     if (act === 'audioTextClear') {
       this.store.clearAudioText(this.bookId, actEl.dataset.id);
       this.toast('已清掉这段录音的转写');
@@ -1736,11 +1756,39 @@ export class NotebookView {
       host.innerHTML = `<div class="nb-hint">没找到「${nbEsc(query)}」。<br>如果这页是手写，先去「更多 → 识别手写文字（OCR）」跑一次。</div>`;
       return;
     }
-    host.innerHTML = `<div class="nb-search-count">命中 ${hits.length} 页</div>` + hits.map((h) => `<button class="nb-search-hit" type="button" data-act="gotoHit" data-page="${h.index}">
+    const active = Math.max(0, Math.min(hits.length - 1, Number(this.searchIndex) || 0));
+    this.searchIndex = active;
+    host.innerHTML = `<div class="nb-search-count">命中 ${hits.length} 页 · ↑↓ 切换 · Enter 跳页</div>` + hits.map((h, i) => `<button class="nb-search-hit${i === active ? ' on' : ''}" type="button" data-act="gotoHit" data-page="${h.index}" data-hit="${i}">
         <span class="nb-search-page">第 ${h.index + 1} 页</span>
         <span class="nb-search-src">${nbEsc(h.source)}</span>
         <span class="nb-search-text">${nbMark(h.excerpt || '', query)}</span>
       </button>`).join('');
+    return hits;
+  }
+
+  /** 键盘流：↑↓ 在命中间移动、Enter 跳页 */
+  searchMove(delta) {
+    const hits = this.store.searchText(this.bookId, this.bookQuery || '');
+    if (!hits.length) return;
+    this.searchIndex = (Math.max(0, this.searchIndex || 0) + delta + hits.length) % hits.length;
+    this.renderBookSearch();
+  }
+
+  searchGo() {
+    const hits = this.store.searchText(this.bookId, this.bookQuery || '');
+    const hit = hits[Math.max(0, Math.min(hits.length - 1, this.searchIndex || 0))];
+    if (!hit) return;
+    this.gotoPage(hit.index);
+    this.closePanel();
+  }
+
+  /** Ctrl/Cmd+F：打开内搜面板并聚焦输入框 */
+  openBookSearch() {
+    this.openPanel('search');
+    const input = q(this.panelEl, '#nbBookQuery');
+    if (input && input.focus) { try { input.focus(); } catch (e) {} }
+    if (input && input.select) { try { input.select(); } catch (e) {} }
+    return true;
   }
 
   /* ---------- 手写识别（OCR）面板 ---------- */
@@ -2373,6 +2421,14 @@ export class NotebookView {
       <button class="nb-btn ghost icon" type="button" data-act="audioDelete" data-id="${nbEsc(a.id)}" title="删除">🗑</button>
       ${a.text ? `<div class="nb-audio-text">${nbEsc(a.text.slice(0, 600))}${a.text.length > 600 ? '…' : ''}
         <button class="nb-btn ghost" type="button" data-act="audioTextClear" data-id="${nbEsc(a.id)}">清掉转写</button></div>` : ''}
+      ${(a.segments && a.segments.length) ? `<div class="nb-audio-segs">
+        <div class="nb-audio-segs-head">按句分段（${a.segments[0].exact ? '接口时间戳' : '按时长等分近似'}）· 点一句跳到它对应的页</div>
+        ${a.segments.map((sg, i) => `<button class="nb-audio-seg" type="button" data-act="audioSegGo" data-id="${nbEsc(a.id)}" data-page="${sg.pageIndex || 0}" data-seg="${i}">
+          <span class="nb-audio-seg-time">${fmtTime(sg.start)}</span>
+          <span class="nb-audio-seg-page">P${(sg.pageIndex || 0) + 1}</span>
+          <span class="nb-audio-seg-text">${nbEsc(sg.text)}</span>
+        </button>`).join('')}
+      </div>` : ''}
     </div>`).join('');
   }
 
@@ -2447,6 +2503,19 @@ export class NotebookView {
     this.audio.chunks = null;
   }
 
+  /** 播放时高亮当前那一句（面板里每句都标了它对应的页） */
+  markAudioSegment(audioId, segIndex, time) {
+    if (!this.panelEl || this.panelKind !== 'audio') return;
+    const box = q(this.panelEl, `[data-id="${audioId}"] .nb-audio-segs`);
+    if (!box) return;
+    const rows = qa(box, '.nb-audio-seg');
+    rows.forEach((row, i) => row.classList.toggle('on', i === segIndex));
+    const active = rows[segIndex];
+    if (active && active.scrollIntoView) { try { active.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+    const clock = q(this.panelEl, '#nbAudioTime');
+    if (clock && time != null) clock.textContent = `${fmtTime(time)}`;
+  }
+
   async audioPlay(id) {
     if (!id) return;
     if (this.audio.playingId === id && this.audio.audioEl) { this.audioStop(); return; }
@@ -2466,7 +2535,11 @@ export class NotebookView {
         const bar = q(this.panelEl, `[data-id="${id}"] .nb-audio-bar`);
         if (bar) bar.value = Math.round(ratio * 100);
         const anchor = this.store.audioAnchor(this.bookId, id, ratio);
-        if (anchor && anchor.pageIndex !== this.cur) this.gotoPage(anchor.pageIndex);
+        // 有分段就按「当前说到哪一句」翻页（比整段比例更准），没有就退回整段比例
+        const seg = this.store.audioSegmentAt(this.bookId, id, el.currentTime);
+        const target = seg && seg.segment ? seg.segment.pageIndex : (anchor ? anchor.pageIndex : null);
+        if (target != null && target !== this.cur) this.gotoPage(target);
+        this.markAudioSegment(id, seg ? seg.index : -1, el.currentTime);
       };
       el.onended = () => this.audioStop();
       el.onerror = () => { this.toast('这段录音播不出来'); this.audioStop(); };
@@ -2506,6 +2579,12 @@ export class NotebookView {
       const text = await transcribeAudio(blob, { apiKey: key, model: this.asrModel || ASR_MODELS[0].id, filename: `nb-${id}.webm` });
       if (!text) { this.toast('这段录音没转出文字（可能是纯音乐或太吵）'); return; }
       this.store.setAudioText(this.bookId, id, text, this.asrModel || ASR_MODELS[0].id);
+      // 再把每一句挂到「说它时正在写的那一页 / 第几个对象」
+      try {
+        const detail = await transcribeAudioFull(blob, { apiKey: key, model: this.asrModel || ASR_MODELS[0].id, filename: `nb-${id}.webm`, duration: rec.duration || 0 });
+        const segs = anchorSegments(this.store, this.bookId, id, detail.segments.length ? detail.segments : parseAsrSegments({ text }, { duration: rec.duration || 0 }), { duration: rec.duration || 0 });
+        if (segs.length) this.store.setAudioSegments(this.bookId, id, segs);
+      } catch (e) { /* 分段失败不影响已有转写 */ }
       this.toast(`转写完成（${text.length} 字）：现在这段录音的内容也能被搜到了`);
       this.renderPanel();
       try { this.onChanged(); } catch (e) {}
@@ -2639,20 +2718,24 @@ export class NotebookView {
     try {
       const pages = (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [], ocr: p.ocr || null }));
       const outlines = outlinesFromNotebook(this.nb);
+      const toc = this.pdfToc === false ? null : { entries: tocEntries(this.nb, { offset: 1 }), title: '目录' };
       const blob = await buildPdf(pages, {
         title: this.nb.title || '笔记本',
         qualityId: q.id,
         dropTape: !!this.dropTape,
         textLayer: this.textLayer !== false,
+        plain: !!this.plainPaper,
+        toc,
         outlines,
         renderPageImpl: renderPage,
         onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
       });
       if (!blob) { this.toast('PDF 生成失败'); return; }
       const mb = (blob.size / 1048576).toFixed(1);
-      downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}.pdf`);
-      const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}${outlines.length ? ` · 目录 ${outlines.length} 项` : ''}`;
-      this.toast(`PDF 已导出（${total} 页 · ${q.label} · ${mb} MB${extras}）`);
+      downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}${this.plainPaper ? '-阅读版' : ''}.pdf`);
+      const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}`
+        + `${toc ? ` · 目录 ${toc.entries.length} 项` : ''}${this.plainPaper ? ' · 阅读版' : ''}`;
+      this.toast(`PDF 已导出（${pdfPageCount(pages, { toc })} 页 · ${q.label} · ${mb} MB${extras}）`);
     } catch (e) {
       this.toast('导出 PDF 失败：' + ((e && e.message) || '未知错误'));
     }
@@ -2664,10 +2747,10 @@ export class NotebookView {
     const scale = 2;
     this.toast('正在导出 PNG…');
     try {
-      const blob = await pageToPng(page, { scale, renderPage });
+      const blob = await pageToPng(page, { scale, renderPage, plain: !!this.plainPaper });
       if (!blob) { this.toast('PNG 生成失败'); return; }
       downloadBlob(blob, `${safeName(this.nb.title)}-第${this.cur + 1}页.png`);
-      this.toast(`当前页 PNG 已导出（${scale}×）`);
+      this.toast(`当前页 PNG 已导出（${scale}×${this.plainPaper ? ' · 阅读版' : ''}）`);
     } catch (e) {
       this.toast('导出 PNG 失败：' + ((e && e.message) || '未知错误'));
     }
@@ -2726,6 +2809,21 @@ export class NotebookView {
     const tag = String(t.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable;
     const k = String(e.key || '');
+    const mod = !!(e.ctrlKey || e.metaKey);
+
+    // Ctrl/Cmd+F：直接打开本笔记本内搜索（含手写与录音转写）
+    if (mod && k.toLowerCase() === 'f') {
+      e.preventDefault && e.preventDefault();
+      return this.openBookSearch();
+    }
+    if (this.panelKind === 'search' && (k === 'ArrowDown' || k === 'ArrowUp')) {
+      e.preventDefault && e.preventDefault();
+      return this.searchMove(k === 'ArrowDown' ? 1 : -1);
+    }
+    if (this.panelKind === 'search' && k === 'Enter') {
+      e.preventDefault && e.preventDefault();
+      return this.searchGo();
+    }
 
     if (k === 'Escape') {
       if (this.panelKind) { this.closePanel(); return; }

@@ -672,7 +672,7 @@ export function drawItem(ctx, item, W, H, state = {}) {
  * 把一整页画到 canvas（纸张 + 内容；只读，导出/缩略图/打印都用它）
  * @param {HTMLCanvasElement|CanvasRenderingContext2D} target
  */
-export function renderPage(target, { paper, items = [], scale = 1, dpr = 1, dark = false, state = {} } = {}) {
+export function renderPage(target, { paper, items = [], scale = 1, dpr = 1, dark = false, plain = false, flat = false, state = {} } = {}) {
   const canvas = target && target.getContext ? target : null;
   const ctx = canvas ? target.getContext('2d') : target;
   const dims = paperDims(paper);
@@ -691,6 +691,8 @@ export function renderPage(target, { paper, items = [], scale = 1, dpr = 1, dark
     template: (paper && paper.template) || 'lined',
     color: (paper && paper.color) || (dark && !paper ? '#22252B' : '#FFFFFF'),
     lineColor: paper && paper.lineColor,
+    plain: !!plain,
+    flat: !!flat,
   });
   // 荧光笔先画（压在手写与文字下面，和手账 App 一致）
   const hl = items.filter((it) => it && it.tool === 'highlighter');

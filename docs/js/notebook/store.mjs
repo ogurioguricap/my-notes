@@ -940,6 +940,41 @@ export class NotebookStore {
     return rec;
   }
 
+  /** 录音的分段（句级）：每句带上它对应的页码/对象序号，播放时能跟着高亮 */
+  setAudioSegments(bookId, audioId, segments) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    const rec = (nb.audio || []).find((a) => a.id === audioId);
+    if (!rec) return null;
+    rec.segments = (Array.isArray(segments) ? segments : [])
+      .filter((s) => s && String(s.text || '').trim())
+      .slice(0, 400)
+      .map((s) => ({
+        start: Math.max(0, Number(s.start) || 0),
+        end: Math.max(0, Number(s.end) || 0) || (Number(s.start) || 0) + 1,
+        text: String(s.text).slice(0, 600),
+        exact: !!s.exact,
+        pageIndex: Math.max(0, asInt(s.pageIndex, 0)),
+        pageId: s.pageId || '',
+        itemIndex: Math.max(0, asInt(s.itemIndex, 0)),
+      }));
+    this.touch(bookId);
+    return rec;
+  }
+
+  /** 播放到 t 秒时，当前是哪一句（含它对应的页） */
+  audioSegmentAt(bookId, audioId, time) {
+    const nb = this.get(bookId);
+    const rec = nb && (nb.audio || []).find((a) => a.id === audioId);
+    if (!rec || !Array.isArray(rec.segments) || !rec.segments.length) return null;
+    const t = Number(time) || 0;
+    const segs = rec.segments;
+    for (let i = 0; i < segs.length; i++) {
+      if (t >= segs[i].start && t < segs[i].end) return { index: i, segment: segs[i] };
+    }
+    return { index: segs.length - 1, segment: segs[segs.length - 1] };
+  }
+
   /** 录音转写统计 */
   audioStats(bookId) {
     const nb = this.get(bookId);

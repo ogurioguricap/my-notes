@@ -148,17 +148,20 @@ export function templateGroups() {
 /**
  * 把纸张画到画布上（会先铺底色）
  * @param {CanvasRenderingContext2D} ctx
- * @param {object} o { w, h, template, color, lineColor }
+ * @param {object} o { w, h, template, color, lineColor, plain, flat }
+ *   plain = 阅读版：不画格线/横线（省墨），只留底色
+ *   flat  = 强制白底（最省墨）
  */
 export function renderPaper(ctx, o) {
   const w = Math.max(1, Math.round(o.w));
   const h = Math.max(1, Math.round(o.h));
-  const color = (o && o.color) || '#FFFFFF';
+  const color = (o && (o.flat ? '#FFFFFF' : o.color)) || '#FFFFFF';
   const line = lineColorOf(o);
   const t = (o && o.template) || 'lined';
   ctx.save();
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, w, h);
+  if (o && o.plain) { ctx.restore(); return { w, h }; }   // 阅读版：只要底色
 
   if (t === 'lined') ruled(ctx, w, h, 34, line);
   else if (t === 'grid') grid(ctx, w, h, 34, line);

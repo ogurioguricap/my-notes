@@ -572,6 +572,18 @@
   border: 1px solid var(--line); border-radius: 10px; white-space: pre-wrap;
 }
 .nb-audio-text .nb-btn { margin-left: 8px; padding: 2px 8px; font-size: 11.5px; }
+.nb-audio-segs { flex: 1 1 100%; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.nb-audio-segs-head { font-size: 11.5px; color: var(--text-faint); }
+.nb-audio-seg {
+  display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: baseline;
+  text-align: left; padding: 6px 9px; cursor: pointer;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+}
+.nb-audio-seg:hover { border-color: var(--accent); }
+.nb-audio-seg.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.nb-audio-seg-time { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.nb-audio-seg-page { font-size: 11.5px; color: var(--accent-text); }
+.nb-audio-seg-text { font-size: 12.5px; line-height: 1.6; }
 .nb-search-hits { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .nb-search-count { font-size: 12px; color: var(--text-faint); }
 .nb-search-hit {
@@ -580,6 +592,7 @@
   background: var(--paper); border: 1px solid var(--line); border-radius: 10px; color: var(--text);
 }
 .nb-search-hit:hover { border-color: var(--accent); background: var(--accent-soft); }
+.nb-search-hit.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .nb-search-page { font-weight: 650; font-size: 12.5px; }
 .nb-search-src { font-size: 11.5px; color: var(--accent-text); }
 .nb-search-text { font-size: 12.5px; color: var(--text-soft); line-height: 1.7; }

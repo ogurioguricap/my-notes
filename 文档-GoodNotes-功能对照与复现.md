@@ -18,7 +18,16 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **318 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **339 项断言，当前全绿** |
+
+### 第九批交付（阅读版 PDF / 自动目录页 / 搜索键盘流 / 转写分段锚定）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **阅读版 PDF（省墨）** | `paper.mjs` 的 `renderPaper({ plain, flat })` + `page.mjs` 的 `renderPage({ plain, flat })` + 导出菜单开关 | `plain` 只铺底色、不画格线横线（打印讲义省墨）；`flat` 再强制白底。测试用绘制调用断言「plain 下没有 stroke」 |
+| **自动目录页** | `study.mjs` 的 `tocEntries / estimateWidth / renderTocPage / pdfPageCount` + `buildPdf({ toc })` | 导出时在最前面插一页 canvas 画的目录（标题 + 虚线引导 + 页码）：条目带**隐形文字层**（Ctrl+F 能搜目录）与**可点链接**（点标题跳页）；页码已把「目录页占第 1 页」算进去；页数太多放不下就停（不硬挤）；可关闭 |
+| **笔记本内搜索键盘流** | `viewer.mjs` 的 `openBookSearch / searchMove / searchGo` + `handleKey` | **Ctrl/Cmd+F** 直接开面板并聚焦；**↑↓** 在命中间移动（高亮当前行）；**Enter** 跳页；**Esc** 关闭 |
+| **转写分段 + 每句锚定到页** | `asr.mjs` 的 `parseAsrSegments / anchorSegments / segmentAtTime / transcribeAudioFull` + `store.setAudioSegments / audioSegmentAt` + 录音面板与播放高亮 | 接口给时间戳就用原值（`exact`），没给就按句切、按时长**等分**并在界面上注明「近似」；每句用 `store.audioAnchor` 挂到**说它时所在的那一页与第几个对象**；播放时高亮当前句并自动翻到对应页；点句子也能跳页 |
 
 ### 第八批交付（捏合锚点 / 笔记本内搜索 / PDF 内链 / 录音转写）
 

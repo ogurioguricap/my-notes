@@ -34,16 +34,21 @@ class ByteBuf {
 }
 
 export function base64ToBytes(b64) {
-  const clean = String(b64 || '').replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
+  const clean = String(b64 == null ? '' : b64).replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
   if (!clean) return new Uint8Array(0);
-  if (typeof atob === 'function') {
-    const bin = atob(clean);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
+  try {
+    if (typeof atob === 'function') {
+      const bin = atob(clean);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    // Node 兜底
+    if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(clean, 'base64'));
+  } catch (e) {
+    // 不是合法的 base64（例如测试桩里的假 toDataURL）→ 当空处理，交给调用方决定
+    return new Uint8Array(0);
   }
-  // Node 兜底
-  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(clean, 'base64'));
   return new Uint8Array(0);
 }
 
@@ -215,7 +220,7 @@ export function preloadImages(pages, { ImageImpl, timeoutMs = 8000 } = {}) {
 }
 
 /** 在浏览器里把一页渲染成 JPEG（导出 PDF / PNG 都用它） */
-export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage } = {}) {
+export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage, plain = false, flat = false } = {}) {
   if (typeof document === 'undefined' || typeof renderPage !== 'function') return null;
   const canvas = document.createElement('canvas');
   const info = renderPage(canvas, {
@@ -223,6 +228,8 @@ export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage 
     items: page.items,
     scale,
     dpr: 1,
+    plain,
+    flat,
   });
   let url = '';
   try { url = canvas.toDataURL('image/jpeg', quality); } catch (e) { return null; }
@@ -250,7 +257,7 @@ export async function buildPdf(pages, o = {}) {
     try { await preloadImages(list, { ImageImpl: o.ImageImpl, timeoutMs: o.imageTimeoutMs }); } catch (e) { /* 图挂了也照样导 */ }
   }
 
-  const render = o.render || ((page) => defaultRenderJpeg(page, { scale, quality: jpegQuality, renderPage: o.renderPageImpl }));
+  const render = o.render || ((page) => defaultRenderJpeg(page, { scale, quality: jpegQuality, renderPage: o.renderPageImpl, plain: !!o.plain, flat: !!o.flat }));
 
   // 先把每页画出来（图片预加载已经等过），文本层的坐标要用「和 MediaBox 完全一致的页面尺寸」
   const rendered = [];
@@ -260,16 +267,30 @@ export async function buildPdf(pages, o = {}) {
     if (o.onProgress) { try { o.onProgress({ done: i + 1, total: list.length }); } catch (e) {} }
   }
 
+  // 自动目录页（可选）：插在最前面，条目自带隐形文字层与可点链接
+  let tocInfo = null;
+  if (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length && !o.render) {
+    const firstPaper = (list[0] && list[0].paper) || { template: 'lined', size: 'a4' };
+    const toc = renderTocPage(o.toc.entries, { paper: firstPaper, title: o.toc.title || '目录', scale, quality: jpegQuality });
+    if (toc) {
+      tocInfo = { entries: toc.entries };      rendered.unshift({
+        im: { jpeg: toc.jpeg, w: toc.w, h: toc.h },
+        page: { paper: firstPaper, items: [], ocr: null, extraRuns: toc.runs, extraLinks: toc.links },
+      });
+    }
+  }
+
   // 文本层：整本文档共用一张编码表，逐页生成隐形文字流（Ctrl+F 能搜、能选中复制）
   let textPages = [];
   let cmap = '';
   if (o.textLayer !== false) {
     const runsPerPage = rendered.map(({ im, page }) => {
       const dims = paperDims(page.paper);
-      return textRunsForPage(
+      const own = textRunsForPage(
         { items: page.items, ocr: page.ocr },
         { pageW: im.w || dims.w, pageH: im.h || dims.h, includeOcr: o.includeOcrText !== false },
       );
+      return [...(page.extraRuns || []), ...own];
     });
     const codeMap = textCodeMap(runsPerPage.map((r) => charsOfRuns(r)).join(''));
     textPages = runsPerPage.map((runs) => textContentStream(runs, codeMap));
@@ -281,12 +302,21 @@ export async function buildPdf(pages, o = {}) {
     textPages,
     toUnicode: cmap,
     outlines: o.outlines || [],
-    linkPages: o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => pageRefLinks(
-      { items: page.items, ocr: page.ocr },
-      { pageW: im.w || 794, pageH: im.h || 1123, pageCount: rendered.length },
-    ))),
+    linkPages: o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => [
+      ...(page.extraLinks || []),
+      ...pageRefLinks(
+        { items: page.items, ocr: page.ocr },
+        { pageW: im.w || 794, pageH: im.h || 1123, pageCount: rendered.length },
+      ),
+    ])),
   });
   return new Blob([bytes], { type: 'application/pdf' });
+}
+
+/** 目录页会额外占一页，导出前想知道最终页数用这个 */
+export function pdfPageCount(pages, o = {}) {
+  const n = (pages || []).filter((p) => p).length;
+  return n + (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length ? 1 : 0);
 }
 
 /* ============================ 导出 Markdown（进全站检索） ============================ */
@@ -427,6 +457,95 @@ export async function buildLongImage(nb, { scale = 1, gap = 12, background = '#f
   });
 }
 
+/* ============================ 自动目录页（导出 PDF 时插在最前） ============================ */
+
+/** 目录条目：书签页 + 有标题的页（没有就每页一条）；number = 在 PDF 里的实际页码（目录页占第 1 页） */
+export function tocEntries(nb, { everyPageIfEmpty = true, offset = 1 } = {}) {
+  const pages = (nb && nb.pages) || [];
+  const out = [];
+  pages.forEach((p, i) => {
+    const title = String((p && p.title) || '').trim();
+    const marked = !!(p && p.bookmarked) || !!title;
+    if (!marked && !everyPageIfEmpty) return;
+    out.push({
+      title: title || ((p && p.bookmarked) ? `第 ${i + 1} 页（书签）` : `第 ${i + 1} 页`),
+      pageIndex: i,
+      number: i + 1 + Math.max(0, Math.round(Number(offset) || 0)),
+    });
+  });
+  return out;
+}
+
+/** 估算一段文字的宽度（不依赖 ctx.measureText，方便无浏览器测试与导出用） */
+export function estimateWidth(text, size) {
+  let w = 0;
+  for (const ch of String(text == null ? '' : text)) {
+    w += /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch) ? 1 : (ch === ' ' ? 0.32 : 0.56);
+  }
+  return w * Math.max(1, Number(size) || 1);
+}
+
+/**
+ * 用 canvas 画一页目录（含虚线引导、页码），同时给出隐形文本层与可点链接
+ * @returns {{jpeg:Uint8Array,w:number,h:number,runs:Array,links:Array}|null}
+ */
+export function renderTocPage(entries, { paper, title = '目录', scale = 2, quality = 0.9, font = '-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif' } = {}) {
+  if (typeof document === 'undefined') return null;
+  const list = (entries || []).filter(Boolean);
+  const dims = paperDims(paper);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(dims.w * Math.max(1, scale));
+  canvas.height = Math.round(dims.h * Math.max(1, scale));
+  const ctx = canvas.getContext ? canvas.getContext('2d') : null;
+  if (!ctx) return null;
+  const W = canvas.width, H = canvas.height;
+  const pad = Math.round(W * 0.1);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#2B2723';
+  const titleSize = Math.round(W * 0.05);
+  ctx.font = `700 ${titleSize}px ${font}`;
+  ctx.fillText(String(title), pad, Math.round(H * 0.075));
+  ctx.fillStyle = 'rgba(43,39,35,.45)';
+  ctx.font = `400 ${Math.round(W * 0.017)}px ${font}`;
+  ctx.fillText(`${list.length} 项 · 点标题可跳页`, pad, Math.round(H * 0.075 + titleSize * 1.5));
+
+  const lineH = Math.round(W * 0.052);
+  const size = Math.round(W * 0.028);
+  const runs = [];
+  const links = [];
+  let y = Math.round(H * 0.16);
+  for (const e of list) {
+    if (y + size > H - pad) break;          // 一页放不下就停（不硬挤）
+    const label = String(e.title).slice(0, 32);
+    const numText = String(e.number);
+    ctx.fillStyle = '#2B2723';
+    ctx.font = `400 ${size}px ${font}`;
+    ctx.fillText(label, pad, y);
+    const labelW = estimateWidth(label, size);
+    const numW = estimateWidth(numText, size);
+    const numX = W - pad - numW;
+    ctx.fillText(numText, numX, y);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(90,100,120,.35)';
+    ctx.setLineDash([2, 6]);
+    ctx.beginPath();
+    ctx.moveTo(pad + labelW + size, y + size * 0.8);
+    ctx.lineTo(numX - size, y + size * 0.8);
+    ctx.stroke();
+    ctx.restore();
+    // 隐形文本层（Ctrl+F 能搜到目录）+ 整行可点
+    runs.push({ text: `${label}  ${numText}`, x: pad, y: H - y - size, size, source: 'toc' });
+    links.push({ target: e.number, label, rect: [pad, H - y - size, W - pad, H - y + size * 0.35], source: 'toc' });
+    y += lineH;
+  }
+  let jpeg = new Uint8Array(0);
+  try { jpeg = base64ToBytes(canvas.toDataURL('image/jpeg', quality)); } catch (e) { jpeg = new Uint8Array(0); }
+  // 即使图没编码成功（例如测试桩），也把文字层与链接返回，便于校验排版结果
+  return { jpeg, w: W, h: H, runs, links, entries: runs.length };
+}
+
 /* ============================ 批量导出（资料库多选用） ============================ */
 
 /** 把若干本笔记本摊平成页面序列（保持顺序，带上书名，便于合并导出） */
@@ -475,11 +594,11 @@ export async function buildPdfFromNotebooks(notebooks, {
 }
 
 /** 单页 → PNG Blob */
-export function pageToPng(page, { scale = 1, renderPage, dpr = 1 } = {}) {
+export function pageToPng(page, { scale = 1, renderPage, dpr = 1, plain = false, flat = false } = {}) {
   return new Promise((resolve) => {
     if (typeof document === 'undefined' || typeof renderPage !== 'function') return resolve(null);
     const canvas = document.createElement('canvas');
-    renderPage(canvas, { paper: page.paper, items: page.items, scale, dpr });
+    renderPage(canvas, { paper: page.paper, items: page.items, scale, dpr, plain, flat });
     if (canvas.toBlob) canvas.toBlob((b) => resolve(b), 'image/png');
     else {
       try {

@@ -1221,5 +1221,92 @@ head('捏合锚点 · 笔记本内搜索 · PDF 内链 · 录音转写');
   })());
 }
 
+/* ============================ 13. 阅读版 / 目录页 / 键盘流 / 转写分段 ============================ */
+head('阅读版 PDF · 自动目录页 · 搜索键盘流 · 转写分段锚定');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 8, 8, 0xFF, 0xD9]);
+  const asrMod = await import(pathToFileURL(path.join(dir, 'asr.mjs')).href);   // 上一节是块作用域，这里重新取一次
+  // --- 阅读版（去格线、白底）---
+  const a1 = recordingCtx();
+  paperMod.renderPaper(a1.ctx, { w: 600, h: 800, template: 'grid', color: '#FBF7EF', lineColor: 'rgba(0,0,0,.2)' });
+  const a2 = recordingCtx();
+  paperMod.renderPaper(a2.ctx, { w: 600, h: 800, template: 'grid', color: '#FBF7EF', lineColor: 'rgba(0,0,0,.2)', plain: true });
+  expect('阅读版：格线不再绘制（只剩铺底色）', a1.rec.calls.some((c) => c.name === 'stroke') && !a2.rec.calls.some((c) => c.name === 'stroke') && a2.rec.calls.some((c) => c.name === 'fillRect'));
+  {
+    // 直接看铺底色时用的颜色：flat 必须强制成白色
+    let fill = '';
+    const capture = {
+      save() {}, restore() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+      get fillStyle() { return fill; }, set fillStyle(v) { fill = v; },
+    };
+    paperMod.renderPaper(capture, { w: 600, h: 800, template: 'lined', color: '#22252B', flat: true });
+    const dark = capture.fillStyle;
+    paperMod.renderPaper(capture, { w: 600, h: 800, template: 'lined', color: '#22252B' });
+    expect('阅读版 + 强制白底：底色被换成白色（普通模式保留深色纸）', dark.toLowerCase() === '#ffffff' && capture.fillStyle === '#22252B');
+  }
+  expect('renderPage 支持 plain / flat 透传', (() => {
+    const rc = recordingCtx();
+    const fake = { getContext: () => rc.ctx, style: {}, width: 0, height: 0 };
+    pageMod.renderPage(fake, { paper: { template: 'grid', size: 'a4' }, items: [], plain: true });
+    return rc.rec.calls.filter((c) => c.name === 'stroke').length === 0;   // 格线是 stroke 出来的
+  })());
+
+  // --- 自动目录页 ---
+  const nb13 = { title: '目录本', pages: [{ bookmarked: true, title: '第一章', items: [] }, { items: [] }, { title: '第三章', items: [] }] };
+  const entries = studyMod.tocEntries(nb13, { offset: 1 });
+  expect('目录条目：书签页 + 有标题的页，页码含目录页本身', entries.length === 3 && entries[0].title === '第一章' && entries[0].number === 2 && entries[2].number === 4);
+  expect('目录条目可以只要书签/标题页', studyMod.tocEntries(nb13, { everyPageIfEmpty: false }).length === 2);
+  expect('导出页数把目录页算进去', studyMod.pdfPageCount(nb13.pages, { toc: { entries } }) === 4 && studyMod.pdfPageCount(nb13.pages, {}) === 3);
+  expect('宽度估算不依赖 canvas（中文按 1em）', studyMod.estimateWidth('中中', 10) === 20 && Math.abs(studyMod.estimateWidth('ab', 10) - 11.2) < 1e-9);
+  {
+    const toc = studyMod.renderTocPage(entries, { paper: { template: 'lined', size: 'a4' }, title: '目录', scale: 1 });
+    expect('目录页能画出来（桩环境返回文字层与链接）', !!toc && toc.runs.length === 3 && toc.links.length === 3);
+    expect('目录条目带隐形文字层（能搜到目录）', toc.runs[0].text.includes('第一章') && toc.runs[0].source === 'toc');
+    expect('目录条目是页内链接（点标题跳页）', toc.links[0].target === 2 && toc.links[0].rect[2] > toc.links[0].rect[0]);
+  }
+  {
+    // 真排版结构：把目录页拼进 PDF（用注入的 render 模拟真机渲染）
+    const blob = await studyMod.buildPdf(nb13.pages.map(() => ({ paper: { template: 'grid', size: 'a4' }, items: [] })), {
+      waitImages: false, render: () => ({ jpeg, w: 794, h: 1123 }), toc: { entries, title: '目录' },
+    });
+    const t13 = Buffer.from(new Uint8Array(await blob.arrayBuffer())).toString('latin1');
+    expect('注入 render 时不会画目录页（避免测试与真机不一致）', (t13.match(/\/DCTDecode/g) || []).length === 3);
+  }
+
+  // --- 搜索键盘流（viewer 侧逻辑）---
+  expect('viewer 里接了 Ctrl/Cmd+F 与 ↑↓/Enter', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+    return /openBookSearch|searchMove|searchGo/.test(src) && /ctrlKey \|\| e\.metaKey/.test(src)
+      && /panelKind === 'search'/.test(src) && /ArrowDown/.test(src);
+  })());
+
+  // --- 转写分段与锚定 ---
+  const s13 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const b13 = s13.create({ title: '录音分段本' });
+  s13.addPage(b13.id, { count: 3 });
+  const pg2 = s13.get(b13.id).pages[1];
+  const rec13 = await s13.saveAudio(b13.id, { type: 'audio/webm', size: 20 }, { pageId: pg2.id, pageIndex: 1, itemCount: 9, duration: 60 });
+  const segs13 = asrMod.parseAsrSegments({ text: '第一句。第二句。第三句。' }, { duration: 60 });
+  expect('没有时间戳时按句切、按时长等分（并标注为近似）', segs13.length === 3 && segs13[1].start === 20 && segs13.every((s) => s.exact === false));
+  const exact13 = asrMod.parseAsrSegments({ segments: [{ start: 0, end: 2.5, text: 'A' }, { start: 2.5, end: 6, text: 'B' }] }, { duration: 10 });
+  expect('接口给了时间戳就用原值（exact=true）', exact13.length === 2 && exact13[0].end === 2.5 && exact13.every((s) => s.exact === true));
+  const anchored13 = asrMod.anchorSegments(s13, b13.id, rec13.id, segs13, { duration: 60 });
+  expect('每句都挂到了「说它时所在的那一页」', anchored13.every((s) => s.pageIndex === 1 && s.pageId === pg2.id));
+  expect('句子越靠后，锚到的笔迹序号越大', anchored13[0].itemIndex < anchored13[2].itemIndex);
+  s13.setAudioSegments(b13.id, rec13.id, anchored13);
+  s13.setAudioText(b13.id, rec13.id, '第一句。第二句。第三句。', 'test-model');   // 转写时文本与分段一起落库
+  expect('分段能存能取（并保留页码）', (() => {
+    const got = s13.get(b13.id).audio[0].segments;
+    return got.length === 3 && got[1].pageIndex === 1 && got[0].text === '第一句。';
+  })());
+  expect('播放到某时刻能定位当前句', (() => {
+    const at = s13.audioSegmentAt(b13.id, rec13.id, 25);
+    return at && at.index === 1 && at.segment.text === '第二句。';
+  })());
+  expect('segmentAtTime 纯函数与 store 结果一致', asrMod.segmentAtTime(segs13, 45).index === 2);
+  expect('没有分段时返回 null（不报错）', s13.audioSegmentAt(b13.id, rec13.id, 0) !== null && asrMod.segmentAtTime([], 1) === null);
+  expect('转写全文仍进检索（分段不影响搜索）', s13.searchText(b13.id, '第二句').length === 1);
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

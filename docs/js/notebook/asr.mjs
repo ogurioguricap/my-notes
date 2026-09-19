@@ -88,6 +88,84 @@ export async function transcribeAudio(blob, {
   }
 }
 
+/* ============================ 分段与「每句挂到当时那一页」 ============================ */
+
+/**
+ * 把转写结果切成句段
+ *   · 接口给了 segments（带 start/end）就直接用（exact=true）
+ *   · 没给就按句/行切，再按录音时长**等分**（exact=false，界面上会说明是近似）
+ */
+export function parseAsrSegments(json, { duration = 0, text = '' } = {}) {
+  const dur = Math.max(0, Number(duration) || 0);
+  const raw = Array.isArray(json && json.segments) ? json.segments : [];
+  const exact = [];
+  for (const s of raw) {
+    const t = String((s && (s.text || s.transcript)) || '').trim();
+    if (!t) continue;
+    const start = Math.max(0, Number(s.start) || 0);
+    const end = Number(s.end) > start ? Number(s.end) : start + 1;
+    exact.push({ start, end, text: t, exact: true });
+  }
+  if (exact.length) return exact;
+  const body = String(text || (json && json.text) || '');
+  const lines = body.split(/\n+/).flatMap((l) => l.split(/(?<=[。！？!?；;])/)).map((s) => s.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  if (!(dur > 0)) return lines.map((t, i) => ({ start: i, end: i + 1, text: t, exact: false }));
+  const step = dur / lines.length;
+  return lines.map((t, i) => ({ start: Number((i * step).toFixed(2)), end: Number(((i + 1) * step).toFixed(2)), text: t, exact: false }));
+}
+
+/**
+ * 给每句挂上「说这句时正在写的那一页 / 第几个对象」
+ * 复用 store.audioAnchor 的锚定模型（录音时记下的 pageId + itemCount）
+ */
+export function anchorSegments(store, bookId, audioId, segments, { duration = 0 } = {}) {
+  const nb = store && typeof store.get === 'function' ? store.get(bookId) : null;
+  const rec = ((nb && nb.audio) || []).find((a) => a.id === audioId);
+  const maxEnd = (segments || []).reduce((m, s) => Math.max(m, Number(s.end) || 0), 0);
+  const dur = Math.max(1e-6, Number(duration) || Number(rec && rec.duration) || maxEnd || 1);
+  return (segments || []).map((s) => {
+    const mid = ((Number(s.start) || 0) + (Number(s.end) || 0)) / 2;
+    const ratio = Math.min(1, Math.max(0, mid / dur));
+    const anchor = store && typeof store.audioAnchor === 'function' ? store.audioAnchor(bookId, audioId, ratio) : null;
+    return {
+      ...s,
+      ratio,
+      pageId: (anchor && anchor.pageId) || '',
+      pageIndex: anchor ? anchor.pageIndex : 0,
+      itemIndex: anchor ? anchor.itemsAtThatMoment : 0,
+    };
+  });
+}
+
+/** 播放到某个时刻，当前是哪一句 */
+export function segmentAtTime(segments, time) {
+  const t = Number(time) || 0;
+  const list = segments || [];
+  for (let i = 0; i < list.length; i++) {
+    if (t >= Number(list[i].start) && t < Number(list[i].end)) return { index: i, segment: list[i] };
+  }
+  return list.length ? { index: list.length - 1, segment: list[list.length - 1] } : null;
+}
+
+/** 转写并把分段一起返回（界面上要显示「每句对应哪一页」时用它） */
+export async function transcribeAudioFull(blob, opts = {}) {
+  const { duration = 0, ...rest } = opts;
+  const f = rest.fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  // 直接复用 transcribeAudio 的请求与错误处理，只是要把原始响应留下来切段
+  const form = buildAsrForm(blob, { model: rest.model, language: rest.language, filename: rest.filename, FormDataImpl: rest.FormDataImpl });
+  if (!form) throw new Error('当前环境不支持 multipart 上传');
+  if (!rest.apiKey) throw new Error('还没填 API Key：去 cloud.siliconflow.cn 申请一个（和 OCR 共用同一个也行）');
+  if (!f) throw new Error('当前环境不能发网络请求');
+  const res = await f(ASR_ENDPOINT, { method: 'POST', headers: { Authorization: `Bearer ${rest.apiKey}` }, body: form });
+  let json = null;
+  try { json = await res.json(); } catch (e) { json = null; }
+  if (!res.ok) throw new Error(asrErrorHint(res.status, json));
+  const text = parseAsrResponse(json);
+  const segments = parseAsrSegments(json, { duration, text });
+  return { text, segments, exact: segments.some((s) => s.exact) };
+}
+
 /** 录音键：与 OCR 分开存，但接口一样（填一次即可） */
 export function getAsrKey(storage) {
   const s = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
