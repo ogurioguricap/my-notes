@@ -421,6 +421,8 @@ try {
     expect(`首页搜索能搜到笔记本手写内容（${bookHits.length} 条）`, bookHits.length >= 1, `href=${href}`);
     expect('笔记本结果能点回那一本', href.includes(`/book/${nb.id}`) || href.includes(nb.id), href);
     expect('结果摘要里带命中关键词高亮', String((bookHits[0] || {}).innerHTML || '').includes('<mark>') || String((bookHits[0] || {}).innerHTML || '').includes('拉格朗日'));
+    const thumbs = queryAll(docRoot, '.result-thumb', false);
+    expect(`笔记本结果带该页缩略图（${thumbs.length} 张）`, thumbs.length >= 1 && Number(thumbs[0].width) > 1, `width=${thumbs[0] && thumbs[0].width}`);
     sInput.value = '';
     sInput.dispatchEvent({ type: 'input', target: sInput });
     await sleep(200);

@@ -60,7 +60,14 @@ export function pdfFromImages(images, o = {}) {
   const n = Math.max(1, pages.length);
 
   // 对象编号：1 目录 / 2 页树 / 之后每页 3 个对象（Page、Contents、Image）
-  const objCount = 2 + n * 3;
+  // 若有文本层，最后再补 3 个文档级对象：Type0 字体 / 后代 CIDFont / ToUnicode 映射
+  const textPages = Array.isArray(o.textPages) ? o.textPages : [];
+  const hasText = textPages.some((s) => s && String(s).trim());
+  const baseCount = 2 + n * 3;
+  const fontNum = baseCount + 1;
+  const descNum = baseCount + 2;
+  const uniNum = baseCount + 3;
+  const objCount = hasText ? baseCount + 3 : baseCount;
   const push = (num, body) => {
     offsets[num] = buf.length;
     buf.push(`${num} 0 obj\n${body}\nendobj\n`);
@@ -80,13 +87,24 @@ export function pdfFromImages(images, o = {}) {
     const im = pages[i] || { jpeg: new Uint8Array(0), w: 595, h: 842 };
     const w = Math.max(1, Math.round(im.w || 595));
     const h = Math.max(1, Math.round(im.h || 842));
-    push(pageNum, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 ${imageNum} 0 R >> /ProcSet [/PDF /ImageC] >> /Contents ${contentNum} 0 R >>`);
-    const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q`;
+    const text = textPages[i] && String(textPages[i]).trim() ? String(textPages[i]) : '';
+    const res = text
+      ? `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /Font << /F1 ${fontNum} 0 R >> /ProcSet [/PDF /Text /ImageC] >>`
+      : `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /ProcSet [/PDF /ImageC] >>`;
+    push(pageNum, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] ${res} /Contents ${contentNum} 0 R >>`);
+    const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q` + (text ? `\n${text}` : '');
     push(contentNum, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
     offsets[imageNum] = buf.length;
     buf.push(`${imageNum} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>\nstream\n`);
     buf.push(im.jpeg);
     buf.push('\nendstream\nendobj\n');
+  }
+
+  if (hasText) {
+    push(fontNum, `<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [${descNum} 0 R] /ToUnicode ${uniNum} 0 R >>`);
+    push(descNum, '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor << /Type /FontDescriptor /FontName /Helvetica /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >> /CIDToGIDMap /Identity /DW 1000 >>');
+    const cmap = o.toUnicode || '';
+    push(uniNum, `<< /Length ${cmap.length} >>\nstream\n${cmap}\nendstream`);
   }
 
   const xrefAt = buf.length;
@@ -179,6 +197,7 @@ export async function buildPdf(pages, o = {}) {
   const list = (pages || []).map((p) => ({
     paper: p && p.paper,
     items: ((p && p.items) || []).filter((it) => !(o.dropTape && it && it.kind === 'tape')),
+    ocr: (p && p.ocr) || null,
   }));
 
   if (o.waitImages !== false) {
@@ -186,14 +205,84 @@ export async function buildPdf(pages, o = {}) {
   }
 
   const render = o.render || ((page) => defaultRenderJpeg(page, { scale, quality: jpegQuality, renderPage: o.renderPageImpl }));
-  const images = [];
+
+  // 先把每页画出来（图片预加载已经等过），文本层的坐标要用「和 MediaBox 完全一致的页面尺寸」
+  const rendered = [];
   for (let i = 0; i < list.length; i++) {
     const im = render(list[i], i);
-    if (im) images.push(im);
+    if (im && im.jpeg && im.jpeg.length) rendered.push({ im, page: list[i] });
     if (o.onProgress) { try { o.onProgress({ done: i + 1, total: list.length }); } catch (e) {} }
   }
-  const bytes = pdfFromImages(images, { title: o.title });
+
+  // 文本层：整本文档共用一张编码表，逐页生成隐形文字流（Ctrl+F 能搜、能选中复制）
+  let textPages = [];
+  let cmap = '';
+  if (o.textLayer !== false) {
+    const runsPerPage = rendered.map(({ im, page }) => {
+      const dims = paperDims(page.paper);
+      return textRunsForPage(
+        { items: page.items, ocr: page.ocr },
+        { pageW: im.w || dims.w, pageH: im.h || dims.h, includeOcr: o.includeOcrText !== false },
+      );
+    });
+    const codeMap = textCodeMap(runsPerPage.map((r) => charsOfRuns(r)).join(''));
+    textPages = runsPerPage.map((runs) => textContentStream(runs, codeMap));
+    cmap = codeMap.size ? toUnicodeCMap(codeMap) : '';
+  }
+
+  const bytes = pdfFromImages(rendered.map((r) => r.im), {
+    title: o.title,
+    textPages,
+    toUnicode: cmap,
+  });
   return new Blob([bytes], { type: 'application/pdf' });
+}
+
+/* ============================ 批量导出（资料库多选用） ============================ */
+
+/** 把若干本笔记本摊平成页面序列（保持顺序，带上书名，便于合并导出） */
+export function collectNotebookPages(notebooks, { paperForPage } = {}) {
+  const out = [];
+  const paperOf = paperForPage || ((nb, p) => p.paper || nb.paper || { template: 'lined', size: 'a4' });
+  for (const nb of notebooks || []) {
+    (nb.pages || []).forEach((p, i) => {
+      out.push({
+        bookId: nb.id,
+        bookTitle: nb.title,
+        pageIndex: i,
+        paper: paperOf(nb, p, i),
+        items: p.items || [],
+        ocr: p.ocr || null,
+      });
+    });
+  }
+  return out;
+}
+
+/**
+ * 批量导出：合并成一个 PDF，或每本一个 PDF
+ * @returns {Promise<{merged:boolean, blob:Blob|null, pages:number, files:Array<{title:string,blob:Blob,pages:number}>}>}
+ */
+export async function buildPdfFromNotebooks(notebooks, {
+  qualityId = 'high', merge = true, title = '', onProgress, textLayer = true, dropTape = false,
+  renderPageImpl, render, waitImages = true,
+} = {}) {
+  const books = (notebooks || []).filter(Boolean);
+  const flat = collectNotebookPages(books);
+  const common = { qualityId, textLayer, dropTape, renderPageImpl, render, waitImages };
+  if (merge) {
+    const blob = await buildPdf(flat, { ...common, title: title || '笔记本合集', onProgress });
+    return { merged: true, blob, pages: flat.length, files: [] };
+  }
+  const files = [];
+  for (let i = 0; i < books.length; i++) {
+    const nb = books[i];
+    const pages = collectNotebookPages([nb]);
+    const blob = await buildPdf(pages, { ...common, title: nb.title });   // eslint-disable-line no-await-in-loop
+    files.push({ title: nb.title, blob, pages: pages.length });
+    if (onProgress) { try { onProgress({ done: i + 1, total: books.length, title: nb.title }); } catch (e) {} }
+  }
+  return { merged: false, blob: null, pages: flat.length, files };
 }
 
 /** 单页 → PNG Blob */
@@ -244,6 +333,173 @@ export async function blobToDataUrl(blob) {
     } catch (e) { resolve(''); }
   });
 }
+
+/* ============================ PDF 文本层（可搜索 / 可复制） ============================ */
+import { estimateTextSize } from '../ink.mjs';
+import { paperDims } from './paper.mjs';
+
+/**
+ * 文档级编码表：每个用到的字符分配一个 2 字节码（Identity-H），
+ * 再配一张 ToUnicode CMap —— 这样隐形文字在阅读器里能搜、能选中、能复制。
+ * 说明：字形本身不嵌入（文字是隐形绘制的），所以只靠 ToUnicode 就能被正确提取。
+ */
+export function textCodeMap(chars) {
+  const map = new Map();
+  let code = 1;
+  for (const ch of String(chars || '')) {
+    if (ch === '\n' || ch === '\r') continue;
+    if (!map.has(ch)) map.set(ch, code++);
+  }
+  return map;
+}
+
+export function charsOfRuns(runs) {
+  const set = new Set();
+  for (const r of runs || []) for (const ch of String(r.text || '')) if (ch !== '\n') set.add(ch);
+  return [...set].join('');
+}
+
+function utf16beHex(str) {
+  let out = '';
+  for (const ch of String(str)) {
+    const cp = ch.codePointAt(0);
+    if (cp > 0xFFFF) {
+      const v = cp - 0x10000;
+      out += (0xD800 + (v >> 10)).toString(16).padStart(4, '0');
+      out += (0xDC00 + (v & 0x3FF)).toString(16).padStart(4, '0');
+    } else {
+      out += cp.toString(16).padStart(4, '0');
+    }
+  }
+  return out.toUpperCase();
+}
+
+export function encodeTextHex(text, codeMap) {
+  let hex = '';
+  for (const ch of String(text == null ? '' : text)) {
+    if (ch === '\n' || ch === '\r') continue;
+    const c = codeMap.get(ch);
+    if (c) hex += c.toString(16).padStart(4, '0');
+  }
+  return hex;
+}
+
+/** 生成 ToUnicode CMap（bfchar 每块最多 100 条，规范要求） */
+export function toUnicodeCMap(codeMap) {
+  const entries = [...codeMap.entries()];
+  const out = [
+    '/CIDInit /ProcSet findresource begin',
+    '12 dict begin',
+    'begincmap',
+    '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
+    '/CMapName /Adobe-Identity-UCS def',
+    '/CMapType 2 def',
+    '1 begincodespacerange',
+    '<0000> <FFFF>',
+    'endcodespacerange',
+  ];
+  for (let i = 0; i < entries.length; i += 100) {
+    const chunk = entries.slice(i, i + 100);
+    out.push(`${chunk.length} beginbfchar`);
+    for (const [ch, code] of chunk) {
+      out.push(`<${code.toString(16).padStart(4, '0').toUpperCase()}> <${utf16beHex(ch)}>`);
+    }
+    out.push('endbfchar');
+  }
+  out.push('endcmap', 'CMapName currentdict /CMap defineresource pop', 'end', 'end');
+  return out.join('\n');
+}
+
+/**
+ * 把一页里「有文字的内容」变成 PDF 文本行（坐标用 PDF 用户空间：原点在左下角）
+ *   · 文本对象：按它自己的位置/字号/对齐精确摆位（和画布上看到的一致）
+ *   · OCR 结果：视觉模型不给坐标，所以按行铺在页面左侧（隐形文字，只为可搜索/可复制）
+ */
+export function textRunsForPage(page, { pageW = 794, pageH = 1123, includeOcr = true, includeText = true } = {}) {
+  const runs = [];
+  const items = (page && page.items) || [];
+  if (includeText) {
+    for (const it of items) {
+      if (!it || it.kind !== 'text' || !it.text) continue;
+      const px = Math.max(4, (Number(it.size) || 0.026) * pageW);
+      const block = estimateTextSize(it.text, it.size);
+      const lines = String(it.text).split('\n');
+      const align = it.align || 'left';
+      lines.forEach((line, i) => {
+        if (!line.trim()) return;
+        const lineW = estimateTextSize(line, it.size).w * pageW;
+        let x = (Number(it.x) || 0) * pageW;
+        if (align === 'center') x += (block.w * pageW - lineW) / 2;
+        else if (align === 'right') x += block.w * pageW - lineW;
+        const yTop = (Number(it.y) || 0) * pageH + i * px * 1.36;
+        runs.push({ text: line, x, y: pageH - yTop - px, size: px, source: 'text' });
+      });
+    }
+  }
+  if (includeOcr && page && page.ocr && page.ocr.text) {
+    const size = 10;
+    const leading = 14;
+    let y = 22;
+    for (const line of String(page.ocr.text).split('\n')) {
+      if (y > pageH - 16) break;
+      if (line.trim()) runs.push({ text: line, x: 22, y: pageH - y - size, size, source: 'ocr' });
+      y += leading;
+    }
+  }
+  return runs;
+}
+
+/** 把文本行拼成 PDF 内容流片段（3 Tr = 隐形绘制） */
+export function textContentStream(runs, codeMap, { fontName = 'F1' } = {}) {
+  const parts = [];
+  for (const r of runs || []) {
+    const hex = encodeTextHex(r.text, codeMap);
+    if (!hex) continue;
+    parts.push(`BT 3 Tr /${fontName} ${Number(r.size).toFixed(2)} Tf 1 0 0 1 ${Number(r.x).toFixed(2)} ${Number(r.y).toFixed(2)} Tm <${hex}> Tj ET`);
+  }
+  return parts.join('\n');
+}
+
+/** 从自己生成的 PDF 里把文本层读回来（自检与「能不能搜」的验证工具） */
+export function readTextLayer(bytes) {
+  const latin = Buffer.from(bytes).toString('latin1');
+  // 1) 解析 ToUnicode 表
+  const map = new Map();
+  const cmapBlocks = latin.match(/beginbfchar[\s\S]*?endbfchar/g) || [];
+  for (const blk of cmapBlocks) {
+    for (const m of blk.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
+      const code = parseInt(m[1], 16);
+      const hex = m[2];
+      let str = '';
+      for (let i = 0; i + 4 <= hex.length; i += 4) {
+        const unit = parseInt(hex.slice(i, i + 4), 16);
+        if (unit >= 0xD800 && unit <= 0xDBFF && i + 8 <= hex.length) {
+          const low = parseInt(hex.slice(i + 4, i + 8), 16);
+          str += String.fromCodePoint(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00));
+          i += 4;
+        } else {
+          str += String.fromCharCode(unit);
+        }
+      }
+      map.set(code, str);
+    }
+  }
+  // 2) 逐页把 BT…ET 里的 <hex> Tj 还原成文字
+  const pages = [];
+  for (const blk of latin.match(/BT[\s\S]*?ET/g) || []) {
+    let text = '';
+    for (const m of blk.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) {
+      const hex = m[1];
+      for (let i = 0; i + 4 <= hex.length; i += 4) {
+        const code = parseInt(hex.slice(i, i + 4), 16);
+        text += map.get(code) || '';
+      }
+    }
+    if (text) pages.push(text);
+  }
+  return { text: pages.join('\n'), pages, chars: map.size };
+}
+
 
 /* ============================ 录音 ============================ */
 

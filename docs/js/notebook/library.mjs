@@ -31,6 +31,7 @@ import {
   templateGroups,
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
+import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf } from './study.mjs';
 import { gh } from '../editor.mjs';
 
 /* ============================ 常量 ============================ */
@@ -648,6 +649,7 @@ export class LibraryUI {
       tag: () => this._sheetTagPick(sh.data),
       folder: () => this._sheetFolderName(sh.data),
       prompt: () => this._sheetConfirm(sh.data),
+      exportPdf: () => this._sheetExportPdf(),
     }[sh.type];
     if (!builder) return '';
     return `<div class="lib-sheet-mask" data-act="sheet-close">
@@ -699,9 +701,38 @@ export class LibraryUI {
       <button type="button" class="lib-btn" data-act="sel-tag">加标签</button>
       <button type="button" class="lib-btn" data-act="sel-fav">收藏</button>
       <button type="button" class="lib-btn" data-act="sel-duplicate">复制</button>
+      <button type="button" class="lib-btn" data-act="sel-export">导出 PDF</button>
       <button type="button" class="lib-btn danger" data-act="sel-trash">移到回收站</button>
       <button type="button" class="lib-btn ghost" data-act="sel-cancel">取消</button>
     </div>`;
+  }
+
+  /** 批量导出 PDF 的小面板（画质 + 合并 / 逐本） */
+  _sheetExportPdf() {
+    const n = this.sel.size;
+    const q = this._exportQ || 'high';
+    return `<div class="lib-sheet-head"><h3>导出 ${n} 本笔记本为 PDF</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-field"><span>画质</span>
+          <div class="lib-row">
+            ${PDF_QUALITY.map((x) => `<button type="button" class="lib-chip${q === x.id ? ' on' : ''}" data-act="export-quality" data-v="${x.id}" title="${bkEsc(x.hint)}">${bkEsc(x.label)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="lib-field"><span>输出方式</span>
+          <div class="lib-row">
+            <button type="button" class="lib-chip${this._exportMerge !== false ? ' on' : ''}" data-act="export-merge" data-v="1">合并成一个 PDF</button>
+            <button type="button" class="lib-chip${this._exportMerge === false ? ' on' : ''}" data-act="export-merge" data-v="0">每本一个 PDF</button>
+          </div>
+        </div>
+        <p class="lib-hint">
+          导出的 PDF 会带上<b>可搜索文字层</b>：页面里的文本框按下
+          ${this._exportMerge === false ? '（逐本导出时也会）' : ''}，以及已经 OCR 过的手写内容——在阅读器里 Ctrl+F 能搜到、能选中复制。
+        </p>
+        <div class="lib-row">
+          <button type="button" class="lib-btn primary" data-act="export-run">开始导出</button>
+          <span class="lib-hint" id="libExportStatus"></span>
+        </div>
+      </div>`;
   }
 
   /** 局部重绘：只更新主区与弹层，不动顶栏（避免搜索框失焦） */
@@ -972,6 +1003,14 @@ export class LibraryUI {
       case 'import': this.importBackup(); break;
       case 'panel-close': this._panel = null; this._renderLayer(); break;
       case 'remote-import': e.stopPropagation(); this.importRemote(rowId); break;
+      case 'sel-export':
+        if (!this.sel.size) { this.toast('先勾选要导出的笔记本'); break; }
+        this.sheet = { type: 'exportPdf', data: {} };
+        this._renderLayer();
+        break;
+      case 'export-quality': this._exportQ = hit.dataset.v || 'high'; this._renderLayer(); break;
+      case 'export-merge': this._exportMerge = hit.dataset.v !== '0'; this._renderLayer(); break;
+      case 'export-run': this.runBulkExport(); break;
 
       /* 卡片与行 */
       case 'open': if (!this.selecting && this.state.scope !== 'trash') this.openBook(rowId); break;
@@ -1495,6 +1534,51 @@ export class LibraryUI {
     this.render();
     this.toast(`已创建：${nb.title}`);
     this.openBook(nb.id);
+  }
+
+  /* ---------- 批量导出 PDF ---------- */
+
+  async runBulkExport() {
+    const ids = [...this.sel];
+    const books = ids.map((id) => this.store.get(id)).filter(Boolean);
+    if (!books.length) { this.toast('没有可导出的笔记本'); return; }
+    const qualityId = this._exportQ || 'high';
+    const merge = this._exportMerge !== false;
+    const status = () => {
+      const el = this.el && this.el.layer ? this.el.layer.querySelector('#libExportStatus') : null;
+      return el;
+    };
+    try {
+      const total = books.reduce((s, b) => s + (b.pages || []).length, 0);
+      this.toast(`开始导出 ${books.length} 本（共 ${total} 页）…`);
+      const res = await buildPdfFromNotebooks(books, {
+        qualityId,
+        merge,
+        title: books.length === 1 ? books[0].title : `笔记本合集-${books.length}本`,
+        onProgress: ({ done, total: tt, title }) => {
+          const msg = merge ? `生成中 ${done}/${tt}…` : `导出 ${done}/${tt}：${title}`;
+          this.toast(msg);
+          const el = status();
+          if (el) el.textContent = msg;
+        },
+      });
+      if (res.merged) {
+        downloadBlob(res.blob, `笔记本合集-${books.length}本-${qualityOf(qualityId).label.replace(/[（）]/g, '')}.pdf`);
+        this.toast(`已导出合并 PDF（${res.pages} 页 · ${(res.blob.size / 1048576).toFixed(1)} MB）`);
+      } else {
+        for (const f of res.files) {
+          downloadBlob(f.blob, `${String(f.title).replace(/[\\/:*?"<>|]+/g, '_')}.pdf`);
+          await new Promise((r) => setTimeout(r, 350));   // 给浏览器一点时间逐个下载
+        }
+        this.toast(`已逐本导出 ${res.files.length} 个 PDF（共 ${res.pages} 页）`);
+      }
+      this.sheet = null;
+      this.selecting = false;
+      this.sel.clear();
+      this.render();
+    } catch (err) {
+      this._fail(err);
+    }
   }
 
   /* ---------- 与仓库同步（笔记本也交给 git 管） ---------- */

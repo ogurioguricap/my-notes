@@ -9,6 +9,8 @@ import { Editor, gh, ink as inkApi } from './editor.mjs';
 import { InkLayer } from './ink.mjs';
 import { InstallGuide, isStandalone } from './install.mjs';
 import { NotebookStore, excerptAround } from './notebook/store.mjs';
+import { renderPage as renderBookPage } from './notebook/page.mjs';
+import { paperDims } from './notebook/paper.mjs';
 import { LibraryUI } from './notebook/library.mjs';
 import { NotebookView } from './notebook/viewer.mjs';
 import { renderDocument as renderDoc } from '../lib/markdown.mjs';
@@ -640,16 +642,38 @@ function runSearch(q) {
         const first = g.pages[0];
         const ex = excerptAround(first.excerpt || '', q);
         return `<a class="result result-book" href="#/book/${encodeURIComponent(id)}" style="${cover}">
-          <span class="result-title">${escapeHtml(g.title)}<span class="where">${nb ? nb.pages.length : '?'} 页 · 命中 ${g.pages.length} 处 · ${escapeHtml(first.source)}</span></span>
-          <span class="result-snippet">${highlight(ex.excerpt || '', [q])}</span>
+          <canvas class="result-thumb" data-book="${escapeHtml(id)}" data-page="${first.pageIndex}" width="1" height="1" aria-hidden="true"></canvas>
+          <span class="result-body">
+            <span class="result-title">${escapeHtml(g.title)}<span class="where">${nb ? nb.pages.length : '?'} 页 · 命中 ${g.pages.length} 处 · ${escapeHtml(first.source)}</span></span>
+            <span class="result-snippet">${highlight(ex.excerpt || '', [q])}</span>
+          </span>
         </a>`;
       }).join('')}
     </div>`;
   }
 
   $('#searchResults').innerHTML = noteHtml + bookHtml;
+  if (bookHtml) paintBookThumbs();
   setView('search');
   renderSidebar();
+}
+
+/** 给搜索结果里的笔记本条目画一张该页缩略图（最多 6 张，避免拖慢搜索） */
+function paintBookThumbs() {
+  if (!bookStore) return;
+  const canvases = $$('.result-thumb').slice(0, 6);
+  for (const c of canvases) {
+    const nb = bookStore.get(c.dataset.book);
+    const idx = Number(c.dataset.page) || 0;
+    const page = nb && nb.pages && nb.pages[idx];
+    if (!page) continue;
+    const paper = page.paper || nb.paper;
+    const dims = paperDims(paper);
+    const scale = Math.max(0.08, Math.min(0.3, 76 / Math.max(1, dims.w)));
+    try {
+      renderBookPage(c, { paper, items: page.items || [], scale, dpr: Math.min(2, window.devicePixelRatio || 1) });
+    } catch (e) { /* 缩略图失败不影响搜索 */ }
+  }
 }
 
 /** 笔记本封面配色（列表里用 --bk 上色） */

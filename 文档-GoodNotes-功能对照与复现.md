@@ -18,7 +18,15 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **199 项断言，当前全绿** |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **223 项断言，当前全绿** |
+
+### 第五批交付（PDF 可搜索文字层 / 批量导出 / 搜索结果缩略图）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **PDF 隐形文字层** | `study.mjs` 的 `textCodeMap / charsOfRuns / encodeTextHex / toUnicodeCMap / textRunsForPage / textContentStream / readTextLayer` | 导出的 PDF 现在**能 Ctrl+F、能选中复制**：文本框按它自己的位置/字号/对齐摆位（PDF 坐标已从左上角换算到左下角），已 OCR 的手写按行铺在页面左侧（视觉模型不给坐标，所以只为可搜索/可复制）；整本文档共用一张编码表（Identity-H，2 字节码）+ 自写 ToUnicode CMap（bfchar 每块 ≤100 条，符合规范），文字用 `3 Tr` 隐形绘制；`readTextLayer()` 能把文本层读回来做自检 |
+| **批量导出** | `study.mjs` 的 `collectNotebookPages / buildPdfFromNotebooks` + 资料库多选条「导出 PDF」 | 勾选多本 → 小面板选画质（三档）与输出方式（**合并成一个 PDF** / **每本一个 PDF**）→ 逐本下载带 350ms 间隔与进度提示；合并时保持「按本、按页」顺序，逐本时文件之间不会串内容 |
+| **搜索结果缩略图** | `app.js` 的 `paintBookThumbs` + `.result-thumb` 样式 | 首页搜索的笔记本结果左侧直接画出**命中那一页的缩略图**（最多 6 张，避免拖慢搜索）；缩略图用的是「导出/打印同一套渲染」，所以和笔记本里看到的一致 |
 
 ### 第四批交付（全局搜索合并 / 打印级导出）
 

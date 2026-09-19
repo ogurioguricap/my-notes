@@ -797,5 +797,86 @@ head('导出 PDF：画质档位、图片预加载、胶带与图层顺序');
   expect('像素擦的碎段可以直接进导出（不需要特殊处理）', Array.isArray(parts) && parts.length === 2 && parts.every((p) => p.kind === 'stroke'));
 }
 
+/* ============================ 9. PDF 文本层 + 批量导出 ============================ */
+head('PDF 可搜索文字层 / 批量导出');
+{
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 7, 7, 0xFF, 0xD9]);
+  // 编码表
+  const cmap = studyMod.textCodeMap('AB中中');
+  expect('编码表：同一个字只占一个码位', cmap.size === 3 && cmap.get('A') === 1 && cmap.get('中') === 3);
+  expect('编码成 Identity-H 的 2 字节十六进制', studyMod.encodeTextHex('AB', cmap) === '00010002');
+  expect('换行不参与编码', studyMod.encodeTextHex('A\nB', cmap) === '00010002');
+  const cMapText = studyMod.toUnicodeCMap(cmap);
+  expect('ToUnicode 映射是 bfchar 形式且含中文字', /beginbfchar/.test(cMapText) && /<0003> <4E2D>/.test(cMapText));
+  expect('ToUnicode 每块不超过 100 条（PDF 规范要求）', (() => {
+    const big = studyMod.textCodeMap(Array.from({ length: 250 }, (_, i) => String.fromCharCode(0x4E00 + i)).join(''));
+    const txt = studyMod.toUnicodeCMap(big);
+    const sizes = [...txt.matchAll(/(\d+) beginbfchar/g)].map((m) => Number(m[1]));
+    return sizes.every((n) => n <= 100) && txt.match(/beginbfchar/g).length === 3;
+  })());
+  // 文本行坐标（PDF 用户空间：原点左下）
+  const runs = studyMod.textRunsForPage({
+    items: [{ kind: 'text', id: 't', x: 0.1, y: 0.2, text: '第一行\n第二行', size: 0.026, color: '#000', align: 'left' }],
+    ocr: { text: '手写第一行\n手写第二行' },
+  }, { pageW: 800, pageH: 1000 });
+  expect('文本对象按下标定位（左上角 → PDF 左下角）', Math.abs(runs[0].x - 80) < 1e-6 && Math.abs(runs[0].y - (1000 - 200 - 20.8)) < 0.01);
+  expect('多行文字逐行铺开', runs.length >= 4 && runs[0].text === '第一行' && runs[1].text === '第二行');
+  expect('OCR 文字也进文本层（隐形，供搜索）', runs.some((r) => r.source === 'ocr' && r.text === '手写第一行'));
+  expect('可以关掉 OCR 文本层', studyMod.textRunsForPage({ items: [], ocr: { text: 'X' } }, { includeOcr: false }).length === 0);
+  // 生成 PDF 并「读回来」
+  const pageOne = {
+    paper: { template: 'lined', size: 'a4' },
+    items: [{ kind: 'text', id: 't1', x: 0.1, y: 0.1, text: '拉格朗日中值定理', size: 0.03, color: '#000' }],
+    ocr: { text: '手写的一行字' },
+  };
+  const pageTwo = { paper: { template: 'lined', size: 'a4' }, items: [], ocr: null };
+  const blob9 = await studyMod.buildPdf([pageOne, pageTwo], { waitImages: false, render: () => ({ jpeg, w: 794, h: 1123 }) });
+  const bytes9 = new Uint8Array(await blob9.arrayBuffer());
+  const latin9 = Buffer.from(bytes9).toString('latin1');
+  expect('PDF 里带上了 Type0 / Identity-H / ToUnicode 三件套',
+    latin9.includes('/Subtype /Type0') && latin9.includes('/Encoding /Identity-H') && latin9.includes('/ToUnicode'));
+  expect('文字是隐形绘制（3 Tr）', latin9.includes('BT 3 Tr'));
+  const back9 = studyMod.readTextLayer(bytes9);
+  expect('读回来能还原打字内容', back9.text.includes('拉格朗日中值定理'), JSON.stringify(back9.text.slice(0, 40)));
+  expect('读回来也能看到手写 OCR 内容', back9.text.includes('手写的一行字'));
+  expect('页面顺序没乱（两页各成一段）', back9.pages.length === 2);
+  expect('没有文字的页不会硬塞一个字体对象', (() => {
+    const noText = studyMod.pdfFromImages([{ jpeg, w: 100, h: 100 }], {});
+    return !Buffer.from(noText).toString('latin1').includes('/ToUnicode');
+  })());
+  expect('关掉文本层后 PDF 里没有字体对象', (() => {
+    const b = studyMod.pdfFromImages([{ jpeg, w: 100, h: 100 }], { textPages: [], toUnicode: '' });
+    return !Buffer.from(b).toString('latin1').includes('/Subtype /Type0');
+  })());
+  expect('带文本层的 PDF 结构依然正确（页数 / DCTDecode / startxref）', (() => {
+    const t = latin9;
+    const m = /startxref\n(\d+)\n/.exec(t);
+    return /\/Count 2/.test(t) && (t.match(/\/DCTDecode/g) || []).length === 2 && !!m && Number(m[1]) === t.indexOf('xref');
+  })());
+
+  // 批量导出
+  const books9 = [
+    { id: 'a', title: '甲本', pages: [{ paper: null, items: [{ kind: 'text', id: 'x', x: 0.1, y: 0.1, text: '甲的第一页', size: 0.03, color: '#000' }] }, { paper: null, items: [] }] },
+    { id: 'b', title: '乙本', pages: [{ paper: null, items: [{ kind: 'text', id: 'y', x: 0.1, y: 0.1, text: '乙的第一页', size: 0.03, color: '#000' }] }] },
+  ];
+  const flat = studyMod.collectNotebookPages(books9);
+  expect('摊平页序：按本、按页', flat.length === 3 && flat[0].bookId === 'a' && flat[2].bookId === 'b');
+  expect('摊平时会补上纸张默认值', !!flat[0].paper && flat[0].bookTitle === '甲本');
+  const merged9 = await studyMod.buildPdfFromNotebooks(books9, { merge: true, render: () => ({ jpeg, w: 794, h: 1123 }) });
+  expect('合并导出：页数 = 所有本之和', merged9.merged && merged9.pages === 3 && merged9.blob.size > 400);
+  const mergedText = studyMod.readTextLayer(new Uint8Array(await merged9.blob.arrayBuffer())).text;
+  expect('合并 PDF 的文字层含两本内容', mergedText.includes('甲的第一页') && mergedText.includes('乙的第一页'));
+  const split9 = await studyMod.buildPdfFromNotebooks(books9, { merge: false, render: () => ({ jpeg, w: 794, h: 1123 }), onProgress: () => {} });
+  expect('逐本导出：每本一个文件且页数对得上', !split9.merged && split9.files.length === 2 && split9.files[0].pages === 2 && split9.files[1].pages === 1);
+  const first9 = studyMod.readTextLayer(new Uint8Array(await split9.files[0].blob.arrayBuffer())).text;
+  expect('逐本导出的文件互不串内容', first9.includes('甲的第一页') && !first9.includes('乙的第一页'));
+  const seenTape = [];
+  await studyMod.buildPdfFromNotebooks(
+    [{ id: 'c', title: '丙', pages: [{ paper: null, items: [{ kind: 'tape', id: 't', x: 0, y: 0, w: 0.5, h: 0.05 }] }] }],
+    { merge: true, dropTape: true, render: (page) => { seenTape.push(page.items.length); return { jpeg, w: 100, h: 100 }; } },
+  );
+  expect('批量导出也支持撕掉胶带（渲染时只拿到 0 个对象）', seenTape[0] === 0);
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

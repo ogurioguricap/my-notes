@@ -116,6 +116,7 @@ export class NotebookView {
     this.ocrStatusText = '';
     this.pdfQuality = 'high';   // standard / high / print
     this.dropTape = false;      // 导出时是否撕掉胶带
+    this.textLayer = true;      // 导出 PDF 是否带可搜索文字层
     this.thumbMenu = -1;
     this.zoom = { on: false, fit: false };
 
@@ -170,6 +171,7 @@ export class NotebookView {
         <button type="button" data-act="exportPng">导出当前页 PNG（2×）</button>
         <button type="button" data-act="exportJson">导出此笔记本 JSON</button>
         <button type="button" data-act="toggleDropTape">导出时撕掉胶带</button>
+        <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
         <hr>
         <button type="button" data-act="print">打印</button>
       </div>
@@ -465,6 +467,13 @@ export class NotebookView {
     if (act === 'toggleDropTape') {
       this.dropTape = !this.dropTape;
       this.toast(this.dropTape ? '导出 PDF 时会撕掉胶带（看答案用）' : '导出 PDF 时保留胶带');
+      return true;
+    }
+    if (act === 'toggleTextLayer') {
+      this.textLayer = this.textLayer === false ? true : false;
+      this.toast(this.textLayer === false
+        ? '导出 PDF 不带文字层（体积更小，但不能搜、不能选）'
+        : '导出 PDF 带可搜索文字层（打字内容 + 已 OCR 的手写，Ctrl+F 能搜）');
       return true;
     }
     if (act === 'exportJson') {
@@ -2381,18 +2390,20 @@ export class NotebookView {
     const total = (this.nb.pages || []).length;
     this.toast(`正在生成 PDF（${q.label}，${total} 页）…`);
     try {
-      const pages = (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [] }));
+      const pages = (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [], ocr: p.ocr || null }));
       const blob = await buildPdf(pages, {
         title: this.nb.title || '笔记本',
         qualityId: q.id,
         dropTape: !!this.dropTape,
+        textLayer: this.textLayer !== false,
         renderPageImpl: renderPage,
         onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
       });
       if (!blob) { this.toast('PDF 生成失败'); return; }
       const mb = (blob.size / 1048576).toFixed(1);
       downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}.pdf`);
-      this.toast(`PDF 已导出（${total} 页 · ${q.label} · ${mb} MB${this.dropTape ? ' · 已撕掉胶带' : ''}）`);
+      const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}`;
+      this.toast(`PDF 已导出（${total} 页 · ${q.label} · ${mb} MB${extras}）`);
     } catch (e) {
       this.toast('导出 PDF 失败：' + ((e && e.message) || '未知错误'));
     }
