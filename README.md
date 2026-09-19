@@ -207,7 +207,9 @@ notes-site/
 │   ├── test-search.mjs         检索功能实测（28 项断言）
 │   ├── test-ink-editing.mjs    标注编辑实测（撤销 / 套索 / 双橡皮 / 形状识别 / Canvas 契约，101 项断言）
 │   ├── test-notebook.mjs       GoodNotes 模式实测（笔记本 / 页面 / 四种笔 / 闪卡 / 录音转写·分片·分段锚定 / 朗读 / PDF 文字层·目录页层级·内链·阅读版 / 长图 / 批量导出 / EPUB·单文件 HTML / OCR 定位·选区·原位替换 / 封面图 / 今日复习 / 命中高亮 / 模板库 / Markdown 导出 / 手势，405 项断言）
-│   └── test-ui-lib.mjs         资料库界面数据契约（23 项断言）
+│   ├── notebook-base.css       （↑ 14 张纸、6 种封面、工具条与页栈）
+│   ├── test-ui-lib.mjs         资料库界面数据契约（23 项断言）
+│   └── verify-live.mjs         线上校验：把 Pages 上的文件与本地逐字节比对（push 后确认真的上线了）
 │
 ├── docs/                       ← 构建产物，GitHub Pages 直接托管这一层
 │   ├── index.html
