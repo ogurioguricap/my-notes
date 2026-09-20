@@ -2079,5 +2079,110 @@ head('省纸排版（2 页拼一张 · 骑马钉）');
   expect('导出提示会写「N 页 → M 面」', /面/.test(viewerSrc4) && /sheets/.test(libSrc3));
 }
 
+/* ============================ 20. 识别质量回看（哪几页值得重跑） ============================ */
+head('识别质量回看');
+{
+  const stroke = (id, n = 150) => ({ kind: 'stroke', id, tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: Array.from({ length: n }, (_, i) => [0.1 + i * 0.01, 0.1 + i * 0.005]) });
+  const line = (text, box = null) => ({ text, box });
+
+  expect('手写量度量：笔迹点数 / 文本 / 贴纸都算进去，胶带不算', (() => {
+    const a = ocrMod.inkUnits({ items: [stroke('s', 30), { kind: 'text', text: '一二三四' }, { kind: 'sticker' }, { kind: 'tape', w: 1 }] });
+    const b = ocrMod.inkUnits({ items: [{ kind: 'tape' }] });
+    return a >= 10 && b === 0;
+  })());
+  expect('乱码比例：正常中文/英文/标点都算正常', ocrMod.lineGarbageRatio('这是正常的一行 English text, with punctuation.') === 0);
+  expect('乱码比例：符号噪声会算得很高', ocrMod.lineGarbageRatio('▚▞◤◥✱✲✳❂❃') >= 0.9);
+  expect('重复行比例：三行里两行重复 → 0.33，全重复 → 0.67', (() => {
+    const a = ocrMod.duplicateLineRatio([line('同一行内容'), line('同一行内容'), line('另起一行')]);
+    const b = ocrMod.duplicateLineRatio([line('同一行内容'), line('同一行内容'), line('同一行内容')]);
+    return Math.abs(a - 1 / 3) < 0.01 && Math.abs(b - 2 / 3) < 0.01;
+  })());
+  expect('重复行比例：少于 3 行不判（短页不该老是被怀疑）', ocrMod.duplicateLineRatio([line('同一行内容'), line('同一行内容')]) === 0);
+
+  // --- 各种「值得重跑」的长相 ---
+  const mk = (ocr, items = [stroke('s', 150)]) => ({ id: 'pg' + Math.random().toString(36).slice(2, 6), items, ocr });
+  const fewChars = ocrMod.ocrQualityOf(mk({ text: '两字', lines: [line('两字', [0.1, 0.1, 0.2, 0.2])] }));
+  expect('质量判定：手写很多但只识别出两个字 → 差（字数异常少）', fewChars.level === 'bad' && fewChars.reasons.some((r) => r.code === 'few-chars'));
+  const garbage = ocrMod.ocrQualityOf(mk({ text: '▚▞◤◥✱✲✳❂❃✴✵✶', lines: [line('▚▞◤◥✱✲✳'), line('❂❃✴✵✶✷✸')] }));
+  expect('质量判定：大半是怪符号 → 差（疑似乱码）', garbage.level === 'bad' && garbage.reasons.some((r) => r.code === 'garbage'));
+  const dup = ocrMod.ocrQualityOf(mk({ text: '同一行同一行同一行同一行', lines: [line('同一行内容'), line('同一行内容'), line('同一行内容'), line('同一行内容')] }));
+  expect('质量判定：同一行抄了四遍 → 差（内容重复）', dup.level === 'bad' && dup.reasons.some((r) => r.code === 'duplicate'));
+  const noBox = ocrMod.ocrQualityOf(mk({ text: '第一行内容\n第二行内容\n第三行内容', lines: [line('第一行内容'), line('第二行内容'), line('第三行内容')] }));
+  expect('质量判定：有文字但一行位置都没有 → 疑（缺少行位置）', noBox.level === 'warn' && noBox.reasons.some((r) => r.code === 'no-boxes') && noBox.metrics.boxRatio === 0);
+  const good = ocrMod.ocrQualityOf(mk({ text: '这是一段正常识别出来的课堂笔记内容', lines: [line('这是一段正常识别出来的课堂笔记内容', [0.1, 0.1, 0.9, 0.2])] }));
+  expect('质量判定：正常识别 → ok（不该乱报警）', good.level === 'ok' && good.reasons.length === 0);
+  const blank = ocrMod.ocrQualityOf(mk({ text: '', blank: true }));
+  expect('确认没字的页 → info（不算问题）', blank.level === 'info' && blank.state === 'blank');
+  const pending = ocrMod.ocrQualityOf({ items: [stroke('s', 60)] });
+  expect('还没识别的页 → info（不在质量清单里）', pending.level === 'info' && pending.state === 'pending');
+  const failed = ocrMod.ocrQualityOf({ items: [stroke('s', 60)], ocrError: { message: '429' } });
+  expect('上次失败的页 → 差（带失败原因）', failed.level === 'bad' && failed.reasons.some((r) => r.code === 'failed'));
+
+  // --- 全库清单 ---
+  const s14 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const A = s14.create({ title: '质量本 A' });
+  const B = s14.create({ title: '质量本 B' });
+  const addP = (bk, ocr) => { s14.addPage(bk.id, {}); const p = s14.get(bk.id).pages[s14.get(bk.id).pages.length - 1]; s14.setItems(bk.id, p.id, [stroke('s' + Math.random().toString(36).slice(2, 5), 200)]); if (ocr) s14.setPageOcr(bk.id, p.id, ocr); return p; };
+  addP(A, { text: '这是正常识别出来的一整行内容', lines: [line('这是正常识别出来的一整行内容', [0.1, 0.1, 0.9, 0.2])] });
+  addP(A, { text: '少', lines: [line('少', [0.1, 0.1, 0.2, 0.2])] });
+  addP(B, { text: '▚▞◤◥✱✲✳❂❃✴✵✶', lines: [line('▚▞◤◥✱✲✳'), line('❂❃✴✵✶✷✸')] });
+  const pFail = addP(B, null);
+  s14.setPageOcrError(B.id, pFail.id, { message: '500' });
+  const report = ocrMod.ocrQualityReport([s14.get(A.id), s14.get(B.id)], {});
+  expect('清单：只列值得看的页（正常页不进清单）', report.items.length === 3 && report.stats.ok === 1);
+  expect('清单：统计差 / 疑 / 正常 / 确认没字', report.stats.bad === 3 && report.stats.warn === 0 && report.stats.pages >= 4);
+  expect('清单：按理由汇总（界面上的小标签）', report.byReason['few-chars'] === 1 && report.byReason.garbage === 1 && report.byReason.failed === 1);
+  expect('清单：条目带本名 / 页号 / 理由 / 度量', (() => {
+    const it = report.items[0];
+    return !!it.bookTitle && Number.isFinite(it.pageIndex) && Array.isArray(it.reasons) && !!it.metrics && Number.isFinite(it.metrics.chars);
+  })());
+  expect('清单：差的排前面（先处理最糟的）', report.items[0].level === 'bad' && report.items[report.items.length - 1].level === 'bad');
+  expect('清单：能拿到要重跑的页 id（去重）', (() => {
+    const ids = ocrMod.qualityPageIds(report);
+    return ids.length === 3 && new Set(ids).size === 3;
+  })());
+  expect('质量规则表给了人话解释（界面直接渲染）', ocrMod.OCR_QUALITY_RULES.every((r) => r.code && r.label && r.hint));
+
+  // --- 强制重跑：已识别的页也会再跑一遍 ---
+  const s15 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const C = s15.create({ title: '重跑本' });
+  s15.addPage(C.id, {});
+  const pg = s15.get(C.id).pages[s15.get(C.id).pages.length - 1];
+  s15.setItems(C.id, pg.id, [stroke('c1', 200)]);
+  s15.setPageOcr(C.id, pg.id, { text: '这是第一次识别的旧结果', lines: [line('这是第一次识别的旧结果', [0.1, 0.1, 0.9, 0.2])] });
+  const planNormal = ocrMod.planOcrQueue([s15.get(C.id)], {});
+  expect('普通排队：已识别的页不再进队（不重复花钱）', planNormal.items.length === 0 && planNormal.stats.done === 1);
+  const planForce = ocrMod.planOcrQueue([s15.get(C.id)], { force: [pg.id] });
+  expect('强制排队：指定页会进队并标成 redo', planForce.items.length === 1 && planForce.items[0].state === 'redo' && planForce.stats.redo === 1);
+  expect('强制排队：force 里的页即使在「确认没字」状态也能重跑', (() => {
+    s15.markPageBlank(C.id, pg.id, { model: 'm' });
+    const p = ocrMod.planOcrQueue([s15.get(C.id)], { force: [pg.id] });
+    return p.items.length === 1 && p.items[0].state === 'redo';
+  })());
+  let calls = 0;
+  const redoFetch = async () => { calls++; return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '这是重跑之后的新结果，一行写满了一整页的课堂笔记内容，足够长所以不再被判定为可疑' } }] }) }; };
+  const q5 = await ocrMod.ocrQueue(s15, {
+    apiKey: 'sk-test', force: [pg.id], withBoxes: false,
+    renderPage: (c) => { if (c) c.toDataURL = () => 'data:image/jpeg;base64,QQ=='; return { w: 794, h: 1123 }; },
+    fetchImpl: redoFetch,
+  });
+  expect('强制重跑真的发了请求，并覆盖掉旧结果', calls === 1 && q5.done === 1 && /重跑之后/.test(s15.get(C.id).pages.find((p) => p.id === pg.id).ocr.text));
+  expect('重跑之后质量重新判定（新结果不再可疑）', ocrMod.ocrQualityOf(s15.get(C.id).pages.find((p) => p.id === pg.id)).level !== 'bad');
+  const q6 = await ocrMod.ocrQueue(s15, {
+    apiKey: 'sk-test', withBoxes: false,
+    renderPage: (c) => { if (c) c.toDataURL = () => 'data:image/jpeg;base64,QQ=='; return { w: 794, h: 1123 }; },
+    fetchImpl: redoFetch,
+  });
+  expect('不带 force 再跑一次：零请求（重跑只在你点的时候发生）', q6.total === 0 && calls === 1);
+
+  // --- 界面对接 ---
+  const libSrc4 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'app.js'), 'utf8');
+  expect('资料库有「识别质量清单」入口与面板', /data-act="ocr-quality"/.test(libSrc4) && /_sheetOcrQuality/.test(libSrc4));
+  expect('清单里能一键重跑（含「重跑并补行位置」）', /data-act="ocr-quality-rerun"/.test(libSrc4) && /data-act="ocr-quality-rerun-boxes"/.test(libSrc4) && /qualityPageIds/.test(libSrc4));
+  expect('清单条目能「去看看」（跳到那一页）', /data-act="ocr-quality-open"/.test(libSrc4) && /opts\.page|page: Number/.test(libSrc4));
+  expect('app.js 支持进本子后跳到指定页（pendingBookPage + gotoPage）', /pendingBookPage/.test(appSrc) && /gotoPage\(page\)/.test(appSrc) && /opts\.page/.test(appSrc));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

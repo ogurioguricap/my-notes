@@ -1087,6 +1087,25 @@
 .lib-review-done { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 14px; }
 .lib-review-done b { font-size: 16px; }
 .lib-review-done i { font-size: 13px; color: var(--text-soft); font-style: normal; }
+
+/* ============================ 识别质量清单 ============================ */
+.lib-qbadge {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px;
+  background: color-mix(in srgb, var(--line) 55%, transparent); color: var(--text-soft);
+}
+.lib-qbadge.bad { background: color-mix(in srgb, #C0392B 18%, transparent); color: #B03A2E; }
+.lib-qbadge.warn { background: color-mix(in srgb, #B7791F 20%, transparent); color: #96650F; }
+.lib-qlist { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+.lib-qrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.lib-qtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lib-qtext b { font-size: 13px; font-weight: 600; }
+.lib-qtext i { font-size: 12px; color: var(--text-soft); font-style: normal; }
+@media (max-width: 720px) {
+  .lib-qrow { align-items: flex-start; flex-wrap: wrap; }
+}
 @media (max-width: 720px) {
   .lib-resume { gap: 8px; }
   .lib-resume .lib-btn { flex: 1 1 auto; }

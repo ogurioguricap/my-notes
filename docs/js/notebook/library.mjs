@@ -34,6 +34,7 @@ import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSi
 import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, PDF_LAYOUTS, layoutOf, qualityOf, notebookToMarkdown, markdownSlug, ankiCsvFromStore } from './study.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, planOcrQueue, queueStats, resumeQueue, ocrQueue, queueProgressText,
+  ocrQualityReport, qualityPageIds, OCR_QUALITY_RULES,
 } from './ocr.mjs';
 import { renderPage } from './page.mjs';
 import { gh } from '../editor.mjs';
@@ -714,6 +715,7 @@ export class LibraryUI {
       ocrProgress: () => this._sheetOcrProgress(),
       reviewCenter: () => this._sheetReviewCenter(),
       reviewSession: () => this._sheetReviewSession(),
+      ocrQuality: () => this._sheetOcrQuality(),
     }[sh.type];
     if (!builder) return '';
     return `<div class="lib-sheet-mask" data-act="sheet-close">
@@ -847,6 +849,7 @@ export class LibraryUI {
         <div class="lib-row">
           <button type="button" class="lib-btn primary" data-act="ocr-run" ${plan.items.length && key ? '' : 'disabled'}>开始识别</button>
           <button type="button" class="lib-btn" data-act="ocr-enqueue" ${plan.items.length && key ? '' : 'disabled'} title="跑完之前关掉页面也不要紧：下次进资料库可以点「继续识别」">开始并记住队列</button>
+          <button type="button" class="lib-btn" data-act="ocr-quality" title="看看哪几页识别得可疑（字数异常少 / 乱码 / 重复行 / 没行位置），可以只重跑那几页">识别质量清单…</button>
           <span class="lib-hint" id="libOcrStatus"></span>
         </div>
         <div class="lib-bar" id="libOcrBar"><i style="width:0%"></i></div>
@@ -854,17 +857,18 @@ export class LibraryUI {
   }
 
   /** 队列主流程：入队 → 跑 → 就地写回（每页完成即落盘，所以随时可以停、可以接着跑） */
-  async runOcrQueue(bookIds = null) {
+  async runOcrQueue(bookIds = null, opts = {}) {
     if (this.ocrRunning) { this.toast('正在识别中：等这一轮跑完，或点「停止」再来'); return null; }
     const ids = bookIds && bookIds.length ? bookIds : [...this.sel];
     if (!ids.length) { this.toast('先勾选要识别的笔记本'); return null; }
     const key = getOcrKey();
     if (!key) { this.toast('先把 API Key 填上'); return null; }
     const model = this._ocrModel || OCR_MODELS[0].id;
+    const force = Array.isArray(opts.force) && opts.force.length ? opts.force : null;
     const books = ids.map((id) => this.store.get(id)).filter(Boolean);
-    const plan = planOcrQueue(books, { retryFailed: this._ocrRetryFailed !== false, bookIds: ids });
+    const plan = planOcrQueue(books, { retryFailed: this._ocrRetryFailed !== false, bookIds: ids, force });
     if (!plan.items.length) {
-      this.toast('这些笔记本都已经识别过了（没有需要识别的页）');
+      this.toast(force ? '这些页不需要重跑' : '这些笔记本都已经识别过了（没有需要识别的页）');
       return null;
     }
     this.store.enqueueOcr(ids);
@@ -890,6 +894,8 @@ export class LibraryUI {
         concurrency: this._ocrConcurrency || 3,
         retryFailed: this._ocrRetryFailed !== false,
         bookIds: ids,
+        force,
+        withBoxes: opts.withBoxes !== undefined ? !!opts.withBoxes : true,
         renderPage,
         signal: this.ocrStop ? this.ocrStop.signal : undefined,
         onProgress: ({ done, total, failed }) => {
@@ -1288,6 +1294,25 @@ export class LibraryUI {
         if (!ids.length) { this.toast('没有失败的页'); break; }
         this._ocrRetryFailed = true;
         this.runOcrQueue(ids);
+        break;
+      }
+      case 'ocr-quality':
+        this.sheet = { type: 'ocrQuality' };
+        this._renderLayer();
+        break;
+      case 'ocr-quality-open': {
+        // 去笔记本里看这一页（带页码，viewer 会跳到那页）
+        this.openBook(rowId, { page: Number(hit.dataset.page) || 0 });
+        break;
+      }
+      case 'ocr-quality-rerun': case 'ocr-quality-rerun-boxes': {
+        const books = this.store.notebooks({}).map((b) => this.store.get(b.id)).filter(Boolean);
+        const report = ocrQualityReport(books, {});
+        const pageIds = qualityPageIds(report);
+        if (!pageIds.length) { this.toast('没有需要重跑的页'); break; }
+        this._ocrBoxes = hit.dataset.act === 'ocr-quality-rerun-boxes';
+        const bookIds = [...new Set(report.items.filter((i) => pageIds.includes(i.pageId)).map((i) => i.bookId))];
+        this.runOcrQueue(bookIds, { force: pageIds, withBoxes: this._ocrBoxes });
         break;
       }
       case 'ocr-stop':
@@ -2064,6 +2089,45 @@ export class LibraryUI {
     downloadBlob(new Blob([res.csv], { type: 'text/csv;charset=utf-8' }), `闪卡-Anki-${stamp}.csv`);
     this.toast(`已导出 ${res.count} 张卡到 Anki CSV（导入时选「逗号分隔 + 允许 HTML」）`);
     return res.count;
+  }
+
+  /* ---------- 识别质量清单（哪几页值得重跑） ---------- */
+
+  /** 质量清单面板：按「值得重跑」的理由列出页，一键只重跑这些页 */
+  _sheetOcrQuality() {
+    const books = this.store.notebooks({}).map((b) => this.store.get(b.id)).filter(Boolean);
+    const report = ocrQualityReport(books, {});
+    const ids = qualityPageIds(report);
+    const key = getOcrKey();
+    const model = this._ocrModel || OCR_MODELS[0].id;
+    const s = report.stats;
+    const ruleOf = (code) => OCR_QUALITY_RULES.find((r) => r.code === code) || { label: code, hint: '' };
+    const rows = report.items.slice(0, 40).map((it) => `<div class="lib-qrow" data-role="qrow">
+      <span class="lib-qbadge ${it.level}">${it.level === 'bad' ? '差' : '疑'}</span>
+      <span class="lib-qtext">
+        <b>${bkEsc(it.bookTitle)} · 第 ${it.pageIndex + 1} 页${it.pageTitle ? ` · ${bkEsc(it.pageTitle)}` : ''}</b>
+        <i>${it.labels.map((l) => bkEsc(l)).join(' / ')} · 识别出 ${it.metrics.chars} 字 / ${it.metrics.lines} 行${it.metrics.boxes ? `（${it.metrics.boxes} 行带位置）` : ''} · 手写量约 ${it.metrics.ink}</i>
+      </span>
+      <button type="button" class="lib-btn ghost" data-act="ocr-quality-open" data-book="${bkEsc(it.bookId)}" data-page="${it.pageIndex}" title="去笔记本里看这一页">去看看</button>
+    </div>`).join('');
+    const reasonRows = Object.entries(report.byReason)
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, n]) => `<span class="lib-chip" title="${bkEsc(ruleOf(code).hint)}">${bkEsc(ruleOf(code).label)} ×${n}</span>`)
+      .join('');
+    return `<div class="lib-sheet-head"><h3>识别质量清单</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-hint">
+          扫过 <b>${s.pages} 页</b>：<b class="lib-qbadge bad">差 ${s.bad}</b> · <b class="lib-qbadge warn">疑 ${s.warn}</b> · 正常 ${s.ok} · 确认没字 ${s.blank}${s.pending ? ` · 还没识别 ${s.pending}` : ''}。
+          判定用的是「手写量 vs 识别出多少字 / 有多少是乱码 / 有没有重复行 / 有没有行位置」这几条机械规则——只是提示哪几页值得看一眼，不是判对错。
+        </div>
+        ${reasonRows ? `<div class="lib-row">${reasonRows}</div>` : ''}
+        <div class="lib-row">
+          <button type="button" class="lib-btn primary" data-act="ocr-quality-rerun" ${ids.length && key ? '' : 'disabled'}>重跑这些 ${ids.length} 页</button>
+          <button type="button" class="lib-btn" data-act="ocr-quality-rerun-boxes" ${ids.length && key ? '' : 'disabled'} title="一起打开「同时识别行位置」，顺手把行框补上">重跑并补行位置</button>
+          <span class="lib-hint">${key ? `当前模型：${(OCR_MODELS.find((m) => m.id === model) || {}).label || model}` : '还没填 API Key（去「识别手写」面板填一次）'}</span>
+        </div>
+        ${rows ? `<div class="lib-qlist">${rows}</div>` : '<p class="lib-hint">没有需要重看的页：识别质量看起来都正常。</p>'}
+      </div>`;
   }
 
   /* ---------- 模板与 Markdown 导出 ---------- */

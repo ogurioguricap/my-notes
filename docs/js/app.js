@@ -1292,6 +1292,7 @@ let bookStore = null;
 let bookLib = null;
 let bookView = null;
 let pendingBookPanel = '';   // 资料库点「开始复习」时，进本子后自动弹出的面板
+let pendingBookPage = -1;    // 资料库点「去看看」时，进本子后要跳到的页码（0 基，-1 = 不用跳）
 
 /** 数据层：整座笔记本资料库存在浏览器本地（可导出备份；不依赖后端） */
 function ensureBookStore() {
@@ -1313,6 +1314,7 @@ function renderBooks() {
       toast: (m) => showToast(m),
       onOpen: (id, opts) => {
         pendingBookPanel = (opts && opts.panel) || '';
+        pendingBookPage = opts && Number.isFinite(Number(opts.page)) ? Math.max(0, Math.round(Number(opts.page))) : -1;
         location.hash = `#/book/${encodeURIComponent(id)}`;
       },
       onGoMarkdown: () => { location.hash = '#/'; },
@@ -1349,6 +1351,11 @@ function openBook(id) {
     const panel = pendingBookPanel;
     pendingBookPanel = '';
     try { bookView.openPanel(panel); } catch (e) {}
+  }
+  if (pendingBookPage >= 0) {
+    const page = pendingBookPage;
+    pendingBookPage = -1;
+    try { bookView.gotoPage(page); } catch (e) {}
   }
   const nb = store.get(id);
   $('#breadcrumb').innerHTML = `<a href="#/books">笔记本</a> / <b>${escapeHtml(nb ? nb.title : '')}</b>`;

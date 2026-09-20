@@ -466,6 +466,28 @@ try {
     expect('复习中心渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
     nbStore.purge(bk.id);
   }
+
+  // 识别质量清单：真 DOM 里渲染一次（判定规则由 ocr.mjs 的纯函数保证，这里只要「画得出来」）
+  {
+    const bk = nbStore.create({ title: '质量测试本' });
+    nbStore.addPage(bk.id, {});
+    const pg = nbStore.get(bk.id).pages[nbStore.get(bk.id).pages.length - 1];
+    nbStore.setItems(bk.id, pg.id, [{ kind: 'stroke', id: 's', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: Array.from({ length: 200 }, (_, i) => [0.1 + i * 0.002, 0.1 + i * 0.002]) }]);
+    nbStore.setPageOcr(bk.id, pg.id, { text: '少', lines: [{ text: '少', box: [0.1, 0.1, 0.2, 0.2] }] });
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const lib3 = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    if (lib3) {
+      const sheet = lib3._sheetOcrQuality();
+      expect('质量清单面板能生成（统计 + 重跑按钮 + 条目）', sheet.includes('ocr-quality-rerun') && sheet.includes('lib-qrow') && /差 \d+/.test(sheet));
+      expect('质量清单能列出「字数异常少」那一页', sheet.includes('字数异常少') && sheet.includes('质量测试本'));
+    } else {
+      expect('质量清单面板能生成（统计 + 重跑按钮 + 条目）', /_sheetOcrQuality/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    expect('质量清单渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });

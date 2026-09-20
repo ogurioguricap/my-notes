@@ -319,6 +319,145 @@ export async function ocrOnePage(store, bookId, pageIndex, opts = {}) {
   return ocrNotebook(store, bookId, { ...opts, indices: [pageIndex], onlyMissing: false });
 }
 
+/* ============================ 识别质量回看（哪几页值得重跑） ============================ */
+
+/** 页面上「有多少手写内容」的粗略度量：笔迹点数 + 文字字数 + 图片/贴纸个数 */
+export function inkUnits(page) {
+  let units = 0;
+  for (const it of (page && page.items) || []) {
+    if (!it || it.kind === 'tape') continue;
+    if (it.kind === 'stroke' || it.kind === 'shape') units += Math.max(1, Math.round(((it.points || []).length) / 3));
+    else if (it.kind === 'text') units += Math.round(String(it.text || '').length / 4);
+    else if (it.kind === 'image' || it.kind === 'sticker') units += 6;
+    else units += 1;
+  }
+  return units;
+}
+
+/** 一行是不是「几乎全是符号/噪声」（模型胡说的典型长相） */
+export function lineGarbageRatio(text) {
+  const s = String(text == null ? '' : text);
+  if (!s) return 0;
+  let bad = 0;
+  for (const ch of s) {
+    if (/[\p{L}\p{N}]/u.test(ch)) continue;      // 字母 / 数字 / 汉字都算正常
+    if (/[\s，。、；：？！“”‘’（）《》【】…—·,.;:?!()"'\-+*/=%<>[\]{}#@&|~^$]/.test(ch)) continue;  // 常见标点算正常
+    bad++;
+  }
+  return bad / s.length;
+}
+
+/** 重复行比例（同一个模型幻觉会把一行抄好几遍） */
+export function duplicateLineRatio(lines) {
+  const list = (lines || []).map((l) => String((l && l.text) || '').trim()).filter((t) => t.length >= 2);
+  if (list.length < 3) return 0;
+  return 1 - new Set(list).size / list.length;
+}
+
+/** 质量规则（界面上的说明也从这里取，避免两处口径不一致） */
+export const OCR_QUALITY_RULES = [
+  { code: 'few-chars', level: 'bad', label: '字数异常少', hint: '这一页手写不少，却几乎没识别出字：多半是字迹太淡 / 图太小 / 模型没看清' },
+  { code: 'garbage', level: 'bad', label: '疑似乱码', hint: '识别结果里大半是不认识的符号：换个模型（32B）重跑通常能好' },
+  { code: 'duplicate', level: 'bad', label: '内容重复', hint: '同一行被抄了好几遍：模型幻觉，重跑一次即可' },
+  { code: 'no-boxes', level: 'warn', label: '缺少行位置', hint: '有文字但没给行框：PDF 里选中/复制不会贴原位（可开「同时识别行位置」重跑）' },
+  { code: 'short-lines', level: 'warn', label: '行太碎', hint: '识别结果被切得很碎（每行一两个字）：可以整页重跑一次看看' },
+];
+
+/**
+ * 一页的识别质量（纯函数）
+ * @returns {{ state:string, level:'ok'|'warn'|'bad'|'info', reasons:Array<{code,label,hint,level}>,
+ *             metrics:{chars,lines,boxes,boxRatio,ink,density,dupRatio,garbage,maxGarbage} }}
+ */
+export function ocrQualityOf(page) {
+  const ocr = (page && page.ocr) || null;
+  const chars = (ocr && ocr.text ? String(ocr.text).length : 0) || 0;
+  const lines = (ocr && Array.isArray(ocr.lines) ? ocr.lines : []).filter((l) => l && String(l.text || '').trim());
+  const boxed = lines.filter((l) => Array.isArray(l.box) && l.box.length >= 4).length;
+  const ink = inkUnits(page);
+  const state = pageOcrState(page);
+  const metrics = {
+    chars,
+    lines: lines.length,
+    boxes: boxed,
+    boxRatio: lines.length ? boxed / lines.length : 0,
+    ink,
+    density: Math.round((chars / Math.max(1, ink)) * 100) / 100,
+    dupRatio: duplicateLineRatio(lines),
+    garbage: lines.length ? Math.round((lines.map((l) => lineGarbageRatio(l.text)).reduce((a, b) => a + b, 0) / lines.length) * 100) / 100 : 0,
+    maxGarbage: lines.length ? Math.round(Math.max(...lines.map((l) => lineGarbageRatio(l.text))) * 100) / 100 : 0,
+  };
+  const reasons = [];
+  if (state === 'failed') reasons.push({ code: 'failed', level: 'bad', label: '上次识别失败', hint: '失败原因记在那一页上，点「重跑这些页」再试' });
+  if (state === 'done' || state === 'blank') {
+    if (chars > 0) {
+      if (chars < 12 && ink >= 30) reasons.push({ ...OCR_QUALITY_RULES[0], level: 'bad' });
+      if (metrics.garbage >= 0.5 && chars >= 6) reasons.push({ ...OCR_QUALITY_RULES[1], level: 'bad' });
+      if (metrics.dupRatio >= 0.4) reasons.push({ ...OCR_QUALITY_RULES[2], level: 'bad' });
+      if (lines.length >= 3 && metrics.boxRatio < 0.3) reasons.push({ ...OCR_QUALITY_RULES[3], level: 'warn' });
+      if (lines.length >= 6 && chars / lines.length < 2.5) reasons.push({ ...OCR_QUALITY_RULES[4], level: 'warn' });
+    } else if (!(ocr && ocr.blank)) {
+      reasons.push({ code: 'short-lines', level: 'warn', label: '识别结果为空', hint: '这一页记成了「已识别」但没文字，可以重跑一次' });
+    }
+  }
+  const level = reasons.some((r) => r.level === 'bad') ? 'bad'
+    : reasons.some((r) => r.level === 'warn') ? 'warn'
+      : state === 'blank' ? 'info'
+        : state === 'pending' ? 'info' : 'ok';
+  return { state, level, reasons, metrics };
+}
+
+/**
+ * 全库识别质量清单：只列值得看的页（默认 bad + warn）
+ * @param {Array} notebooks
+ * @param {object} o { onlySuspicious=true, minLevel='warn', includePending=false }
+ */
+export function ocrQualityReport(notebooks, { onlySuspicious = true, includePending = false } = {}) {
+  const items = [];
+  const stats = { pages: 0, bad: 0, warn: 0, ok: 0, blank: 0, pending: 0, books: 0, chars: 0, boxes: 0, boxed: 0 };
+  const byReason = {};
+  for (const nb of notebooks || []) {
+    if (!nb) continue;
+    let had = false;
+    (nb.pages || []).forEach((p, i) => {
+      const q = ocrQualityOf(p);
+      if (!pageHasInk(p) && q.state === 'pending') return;         // 空白页不用管
+      stats.pages++;
+      stats.chars += q.metrics.chars;
+      if (q.state === 'blank') stats.blank++;
+      else if (q.state === 'pending') stats.pending++;
+      if (q.level === 'bad') stats.bad++;
+      else if (q.level === 'warn') stats.warn++;
+      else if (q.level === 'ok') stats.ok++;
+      if (q.state === 'done') { stats.boxes++; stats.boxed += q.metrics.boxes; }
+      for (const r of q.reasons) byReason[r.code] = (byReason[r.code] || 0) + 1;
+      const interesting = q.level === 'bad' || q.level === 'warn' || (includePending && q.state === 'pending');
+      if ((onlySuspicious && !interesting) || q.state === 'blank') return;
+      if (!interesting) return;
+      had = true;
+      items.push({
+        bookId: nb.id,
+        bookTitle: nb.title || '未命名',
+        pageId: p.id,
+        pageIndex: i,
+        pageTitle: p.title || '',
+        level: q.level,
+        state: q.state,
+        reasons: q.reasons.map((r) => r.code),
+        labels: q.reasons.map((r) => r.label),
+        metrics: q.metrics,
+      });
+    });
+    if (had) stats.books++;
+  }
+  items.sort((a, b) => (a.level === b.level ? a.metrics.chars - b.metrics.chars : a.level === 'bad' ? -1 : 1));
+  return { items, stats, byReason };
+}
+
+/** 质量清单 → 要重跑的页 id（界面「重跑这些页」直接用） */
+export function qualityPageIds(report) {
+  return [...new Set(((report && report.items) || []).map((it) => it.pageId).filter(Boolean))];
+}
+
 /* ============================ 批量队列（跨本 · 可续跑） ============================ */
 
 /**
@@ -344,14 +483,16 @@ export function pageHasInk(page) {
  * 跨本排队：把「还需要识别」的页挑出来（纯函数，方便测）
  * @param {Array} notebooks 笔记本数组
  * @param {object} o { retryFailed=true 失败页要不要重试, includeBlank=false 要不要连没字的页也再跑一次,
- *                     includeEmptyPages=false 纯空白页（一个对象都没有）要不要跑, bookIds 限定这几本, max 上限 }
+ *                     includeEmptyPages=false 纯空白页（一个对象都没有）要不要跑, bookIds 限定这几本,
+ *                     max 上限, force=[] 强制重跑的页 id（质量清单里点「重跑这些页」用） }
  */
 export function planOcrQueue(notebooks, {
-  retryFailed = true, includeBlank = false, includeEmptyPages = false, bookIds = null, max = 0,
+  retryFailed = true, includeBlank = false, includeEmptyPages = false, bookIds = null, max = 0, force = null,
 } = {}) {
   const wanted = Array.isArray(bookIds) && bookIds.length ? new Set(bookIds) : null;
+  const forced = new Set((Array.isArray(force) ? force : []).filter(Boolean));
   const items = [];
-  const stats = { books: 0, pages: 0, pending: 0, failed: 0, blank: 0, done: 0, chars: 0, booksWithWork: 0 };
+  const stats = { books: 0, pages: 0, pending: 0, failed: 0, blank: 0, done: 0, chars: 0, booksWithWork: 0, redo: 0 };
   for (const nb of notebooks || []) {
     if (!nb) continue;
     if (wanted && !wanted.has(nb.id)) continue;
@@ -359,18 +500,23 @@ export function planOcrQueue(notebooks, {
     let work = 0;
     (nb.pages || []).forEach((p, i) => {
       const state = pageOcrState(p);
-      if (state === 'done') { stats.done++; stats.chars += (p.ocr && p.ocr.chars) || 0; return; }
-      if (state === 'blank') { stats.blank++; if (!includeBlank) return; }
-      if (state === 'failed' && !retryFailed) { stats.failed++; return; }
-      if (!includeEmptyPages && !pageHasInk(p)) return;
-      if (state === 'failed') stats.failed++; else stats.pending++;
+      const isForced = forced.has(p.id);
+      if (!isForced) {
+        if (state === 'done') { stats.done++; stats.chars += (p.ocr && p.ocr.chars) || 0; return; }
+        if (state === 'blank') { stats.blank++; if (!includeBlank) return; }
+        if (state === 'failed' && !retryFailed) { stats.failed++; return; }
+        if (!includeEmptyPages && !pageHasInk(p)) return;
+      }
+      if (isForced) stats.redo++;
+      else if (state === 'failed') stats.failed++;
+      else stats.pending++;
       items.push({
         bookId: nb.id,
         bookTitle: nb.title || '未命名',
         pageId: p.id,
         pageIndex: i,
         pageTitle: p.title || '',
-        state,
+        state: isForced ? 'redo' : state,
       });
       work++;
     });
@@ -406,15 +552,16 @@ export function queueProgressText(done, total, { failed = 0, bookTitle = '' } = 
  * @returns {Promise<{done:number, blank:number, failed:number, skipped:number, chars:number, total:number,
  *                    withBoxes:number, stopped:boolean, reason:string, errors:string[]}>}
  *   · done = 处理完成的页数（**含**判定为「这页没文字」的页），blank 是其中没文字的那些
+ *   · force = 要强制重跑的页 id 列表（质量清单里点「重跑这些页」用：这些页即使已识别也会再跑一遍）
  */
 export async function ocrQueue(store, {
   apiKey, model = OCR_MODELS[0].id, concurrency = 3, retryFailed = true, includeBlank = false,
-  includeEmptyPages = false, bookIds = null, max = 0, renderPage, fetchImpl, onProgress, signal,
+  includeEmptyPages = false, bookIds = null, max = 0, force = null, renderPage, fetchImpl, onProgress, signal,
   withBoxes = true, fatalStreak = 3, dryRun = false,
 } = {}) {
   const all = (typeof store.notebooks === 'function' ? store.notebooks({}) : []).map((b) => store.get(b.id)).filter(Boolean);   // 不含回收站
   const books = bookIds && bookIds.length ? bookIds.map((id) => store.get(id)).filter(Boolean) : all;
-  const plan = planOcrQueue(books, { retryFailed, includeBlank, includeEmptyPages, bookIds, max });
+  const plan = planOcrQueue(books, { retryFailed, includeBlank, includeEmptyPages, bookIds, max, force });
   const summary = { done: 0, blank: 0, failed: 0, skipped: 0, chars: 0, stopped: false, reason: '', errors: [], total: plan.items.length, withBoxes: 0 };
 
   // 每本记一条任务记录：界面据此显示「上次跑到哪、失败几页」
@@ -444,8 +591,8 @@ export async function ocrQueue(store, {
     const nb = store.get(item.bookId);
     const page = nb && nb.pages[item.pageIndex];
     if (!page) return { skipped: true };
-    // 别人（或另一次点）已经识别过 → 跳过，不重复花钱
-    if (pageOcrState(page) === 'done' && item.state !== 'done') return { skipped: true };
+    // 别人（或另一次点）已经识别过 → 跳过，不重复花钱；但 item.state === 'redo' 是「明确要求重跑」
+    if (pageOcrState(page) === 'done' && item.state !== 'done' && item.state !== 'redo') return { skipped: true };
     const jpeg = pageToJpeg(
       { paper: page.paper || nb.paper, items: page.items },
       { renderPage, scale: ocrRenderScale(paperDims(page.paper || nb.paper)), quality: 0.82 },
