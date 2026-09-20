@@ -1543,5 +1543,144 @@ head('识别替换 · 封面图 · 今日复习入口 · EPUB');
   }
 }
 
+/* ============================ 16. 跨本批量识别队列（可续跑 / 可重试 / 不重复花钱） ============================ */
+head('跨本批量识别队列');
+{
+  const jpegUrl = () => 'data:image/jpeg;base64,QQ==';
+
+  // --- 页状态判定 ---
+  expect('页状态：没识别过 = pending', ocrMod.pageOcrState({ items: [] }) === 'pending');
+  expect('页状态：有文字 = done', ocrMod.pageOcrState({ ocr: { text: 'a' } }) === 'done');
+  expect('页状态：确认没字 = blank（不再重复花钱）', ocrMod.pageOcrState({ ocr: { text: '', blank: true } }) === 'blank');
+  expect('页状态：上次失败 = failed', ocrMod.pageOcrState({ ocrError: { message: 'x' } }) === 'failed');
+  expect('页状态：没字又失败过 = failed（要重试）', ocrMod.pageOcrState({ ocr: { text: '', blank: true }, ocrError: { message: 'x' } }) === 'failed');
+  expect('有内容的页才算「值得识别」', ocrMod.pageHasInk({ items: [{ kind: 'stroke' }] }) === true && ocrMod.pageHasInk({ items: [{ kind: 'tape' }] }) === false);
+
+  const mkBook = (store, title, pages) => {
+    const b = store.create({ title });
+    for (const p of pages) {
+      store.addPage(b.id, {});
+      const page = store.get(b.id).pages[store.get(b.id).pages.length - 1];
+      if (p.items) store.setItems(b.id, page.id, p.items);
+      if (p.ocr) store.setPageOcr(b.id, page.id, p.ocr);
+      if (p.blank) store.markPageBlank(b.id, page.id, { model: 'm' });
+      if (p.error) store.setPageOcrError(b.id, page.id, { message: p.error });
+    }
+    return store.get(b.id);
+  };
+  const stroke = (id) => ({ kind: 'stroke', id, tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] });
+
+  const s8 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const A = mkBook(s8, 'A 本', [
+    { items: [stroke('a1')] },                                   // pending
+    { ocr: { text: '已有文字' }, items: [stroke('a2')] },          // done
+    { blank: true, items: [stroke('a3')] },                      // blank
+    { error: '上次 429', items: [stroke('a4')] },                 // failed
+  ]);
+  const B = mkBook(s8, 'B 本', [{ items: [] }, { items: [stroke('b1')] }]);   // 空页 + pending
+
+  const planAll = ocrMod.planOcrQueue([A, B], { retryFailed: true });
+  expect('排队：待识别 + 失败页（跳过已识别与「没字」页）', planAll.items.length === 3 && planAll.stats.pending === 2 && planAll.stats.failed === 1);
+  expect('排队：纯空白页不排（不白花钱）', !planAll.items.some((i) => i.bookId === B.id && i.pageIndex === 0));
+  expect('排队：条目带上本名 / 页号 / 状态（界面直接用）', planAll.items[0].bookTitle === 'A 本' && planAll.items[0].pageIndex === 1 && planAll.items[0].state === 'pending', JSON.stringify(planAll.items));
+  expect('排队：统计含已完成与没字的页数', planAll.stats.done === 1 && planAll.stats.blank === 1 && planAll.stats.booksWithWork === 2);
+  const planNoRetry = ocrMod.planOcrQueue([A, B], { retryFailed: false });
+  expect('不勾「重试失败」时失败页就不进队', planNoRetry.items.length === 2 && planNoRetry.stats.failed === 1);
+  const planMax = ocrMod.planOcrQueue([A, B], { retryFailed: true, max: 1 });
+  expect('max 限制本次最多跑几页（省流量的试跑）', planMax.items.length === 1 && planMax.stats.pages === 3);
+  expect('只排指定笔记本', ocrMod.planOcrQueue([A, B], { bookIds: [B.id] }).items.every((i) => i.bookId === B.id));
+  expect('连「没字」页也重跑要显式打开开关', ocrMod.planOcrQueue([A], { includeBlank: true }).items.length === 3);
+  expect('致命错误识别：密钥错 / 余额不足要立刻停', ocrMod.isFatalOcrError('密钥无效或没有权限（401）：去 cloud.siliconflow.cn 复制一个新的 API Key') && ocrMod.isFatalOcrError('账户余额不足：先去 SiliconFlow 充值，再重试') && !ocrMod.isFatalOcrError('识别服务暂时故障（503）：稍后重试'));
+  expect('队列进度文案带本名与失败数', /1\/3（33%）/.test(ocrMod.queueProgressText(1, 3, { failed: 1, bookTitle: 'B 本' })) && /失败 1/.test(ocrMod.queueProgressText(1, 3, { failed: 1 })));
+
+  // --- 队列真跑一遍：3 页要识别（其中 1 页上次失败），1 页返回「没有文字」 ---
+  const s9 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const C = mkBook(s9, 'C 本', [{ items: [stroke('c1')] }, { items: [stroke('c2')] }]);
+  const D = mkBook(s9, 'D 本', [{ items: [stroke('d1')] }, { error: '上次超时', items: [stroke('d2')] }]);
+  const seen = [];
+  const flaky = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const img = body.messages[0].content[1].image_url.url;
+    seen.push(img.slice(0, 22));
+    if (seen.length === 1) throw new Error('识别服务暂时故障（503）：稍后重试');   // 第一页失败
+    if (seen.length === 3) return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '（本页无文字）' } }] }) };
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: `第 ${seen.length} 页的手写内容` } }] }) };
+  };
+  const q1 = await ocrMod.ocrQueue(s9, { apiKey: 'sk-test', renderPage: (c) => { if (c) c.toDataURL = jpegUrl; return { w: 794, h: 1123 }; }, fetchImpl: flaky, concurrency: 1, withBoxes: false });
+  expect('队列跑通 4 页：成功 3（含 1 页没字）· 失败 1', q1.total === 4 && q1.done === 3 && q1.blank === 1 && q1.failed === 1);
+  const pagesOf = (b) => s9.get(b.id).pages;
+  const allPages = () => [C, D].flatMap((b) => pagesOf(b));
+  expect('失败页留了原因（界面能说清是哪一页）', (() => {
+    const bad = allPages().filter((p) => p.ocrError);
+    return bad.length === 1 && /503/.test(bad[0].ocrError.message);
+  })());
+  expect('识别结果进了页内搜索', allPages().filter((p) => p.ocr && /手写内容/.test(p.ocr.text)).length === 2);
+  expect('队列给每本记了任务记录（总数 / 成功 / 失败 / 是否跑完）', (() => {
+    const jobs = [s9.get(C.id).ocrJob, s9.get(D.id).ocrJob];
+    return jobs.every((j) => j && j.total === 2 && j.done + j.failed === 2 && j.finished === true)
+      && jobs.reduce((s, j) => s + j.failed, 0) === 1;
+  })());
+
+  // --- 续跑：已经识别的页不再重跑，只补失败的页 ---
+  let attempts = 0;
+  const counter = async () => { attempts++; return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '补跑成功' } }] }) }; };
+  const q2 = await ocrMod.ocrQueue(s9, { apiKey: 'sk-test', renderPage: (c) => { if (c) c.toDataURL = jpegUrl; return { w: 794, h: 1123 }; }, fetchImpl: counter, concurrency: 1, withBoxes: false });
+  expect('续跑只补剩下的页（已识别 / 没字的都不再请求）', attempts === 1 && q2.done === 1 && q2.total === 1);
+  expect('补跑成功后失败痕迹被清掉', !allPages().some((p) => p.ocrError) && allPages().filter((p) => p.ocr && p.ocr.text === '补跑成功').length === 1);
+  const q3 = await ocrMod.ocrQueue(s9, { apiKey: 'sk-test', renderPage: (c) => { if (c) c.toDataURL = jpegUrl; return { w: 794, h: 1123 }; }, fetchImpl: counter, withBoxes: false });
+  expect('全跑完之后再点一次：零请求（不重复花钱）', q3.total === 0 && q3.done === 0 && attempts === 1);
+
+  // --- 队列：入队 / 续跑入口 / 移出队列 ---
+  expect('入队与移出队列', (() => {
+    s9.enqueueOcr([C.id, D.id]);
+    const queued = s9.queuedOcrBooks();
+    s9.dequeueOcr([D.id]);
+    return queued.length === 2 && s9.queuedOcrBooks().length === 1;
+  })());
+  const s10 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const E = mkBook(s10, 'E 本', [{ items: [stroke('e1')] }, { items: [stroke('e2')] }]);
+  const F = mkBook(s10, 'F 本', [{ items: [stroke('f1')] }]);
+  s10.enqueueOcr([E.id]);
+  const resume = ocrMod.resumeQueue(s10.notebooks({}), {});
+  expect('「继续识别」只列已入队且还有活的笔记本', resume.books.join(',') === E.id && resume.items.length === 2);
+  s10.markPageBlank(E.id, resume.items[0].pageId, { model: 'm' });
+  s10.setPageOcr(E.id, resume.items[1].pageId, { text: '手写好了' });
+  expect('跑完的笔记本不再出现在「继续识别」里', ocrMod.resumeQueue(s10.notebooks({}), {}).items.length === 0);
+  expect('队列状态跟着笔记本走（备份 / 同步都带着）', (() => {
+    s10.recordOcrJob(E.id, { total: 2, done: 1, failed: 1, model: 'm' });
+    const dumped = JSON.parse(s10.exportJSON());
+    const found = (dumped.notebooks || []).find((n) => n.id === E.id);
+    return !!found && found.ocrQueued === true && !!found.ocrJob && found.ocrJob.total === 2 && found.ocrJob.failed === 1;
+  })());
+  expect('回收站里的笔记本不进队列', (() => {
+    s10.enqueueOcr([F.id]);
+    s10.trash(F.id);
+    return !ocrMod.planOcrQueue(s10.notebooks({}), {}).items.some((i) => i.bookId === F.id);
+  })());
+
+  // --- 致命错误（密钥错）要立刻停，不把剩下的页全烧一遍 ---
+  const s11 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const G = mkBook(s11, 'G 本', [{ items: [stroke('g1')] }, { items: [stroke('g2')] }, { items: [stroke('g3')] }, { items: [stroke('g4')] }, { items: [stroke('g5')] }]);
+  let tries = 0;
+  const deny = async () => { tries++; return { ok: false, status: 401, json: async () => ({ error: { message: 'invalid api key' } }) }; };
+  const q4 = await ocrMod.ocrQueue(s11, { apiKey: 'sk-bad', renderPage: (c) => { if (c) c.toDataURL = jpegUrl; return { w: 794, h: 1123 }; }, fetchImpl: deny, concurrency: 1, withBoxes: false });
+  expect('密钥错：立刻停（不会把 5 页全试一遍）', q4.stopped === true && tries < 5 && /密钥无效/.test(q4.reason));
+  expect('停下来的那些页仍是待识别状态（下次接着跑）', ocrMod.planOcrQueue([s11.get(G.id)], {}).items.length >= 1);
+  expect('任务记录里写了停止原因', /密钥无效/.test(s11.get(G.id).ocrJob.reason));
+
+  // --- 界面对接 ---
+  const libSrc = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  const viewerSrc = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const cssLibSrc = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-library.css'), 'utf8');
+  expect('资料库多选条有「识别手写」入口', /data-act="sel-ocr"/.test(libSrc) && /sel-ocr/.test(libSrc));
+  expect('资料库有队列小面板与进度条', /_sheetOcrQueue/.test(libSrc) && /libOcrBar/.test(libSrc) && /data-act="ocr-run"/.test(libSrc));
+  expect('资料库有「继续识别 / 移出队列」横幅', /data-act="ocr-resume"/.test(libSrc) && /data-act="ocr-unqueue"/.test(libSrc) && /_ocrBanner/.test(libSrc));
+  expect('资料库支持只重试失败页', /data-act="ocr-retry-failed"/.test(libSrc) && /_ocrRetryFailed/.test(libSrc));
+  expect('SEO/文案：资料库提示「已识别的页不会重跑」', /已经识别过的页不会重跑|已识别的页不会重跑/.test(libSrc));
+  expect('笔记本面板能只重试失败的页并列出失败原因', /data-act="ocrRunFailed"/.test(viewerSrc) && /失败的页/.test(viewerSrc) && /ocrRunFailed/.test(viewerSrc));
+  expect('笔记本面板显示「几页确认没字」', /确认没字/.test(viewerSrc));
+  expect('样式里有识别队列横幅与进度条', /\.lib-resume/.test(cssLibSrc) && /\.lib-bar/.test(cssLibSrc));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

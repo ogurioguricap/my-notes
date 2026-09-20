@@ -32,6 +32,10 @@ import {
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
 import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf, notebookToMarkdown, markdownSlug } from './study.mjs';
+import {
+  OCR_MODELS, getOcrKey, setOcrKey, planOcrQueue, queueStats, resumeQueue, ocrQueue, queueProgressText,
+} from './ocr.mjs';
+import { renderPage } from './page.mjs';
 import { gh } from '../editor.mjs';
 
 /* ============================ 常量 ============================ */
@@ -185,6 +189,16 @@ export class LibraryUI {
     this._hooks = [];
     this._menu = null;
     this._destroyed = false;
+
+    /* 批量手写识别的设置与状态（存在内存里，不落盘：密钥另有 localStorage） */
+    this._ocrModel = OCR_MODELS[0].id;
+    this._ocrConcurrency = 3;
+    this._ocrRetryFailed = true;
+    this.ocrRunning = false;
+    this.ocrStop = null;
+    this.ocrLastRes = null;
+    this.ocrLastDone = 0;
+    this.ocrLastTotal = 0;
 
     this.el = {};
     this._bind();
@@ -523,13 +537,36 @@ export class LibraryUI {
       </span>
       <button class="lib-btn primary" type="button" data-act="start-review">开始复习</button>
     </div>` : '';
+    const ocrBanner = (!filtering && this.state.scope === 'all') ? this._ocrBanner() : '';
     if (!list.length) {
-      body.innerHTML = banner + (filtering ? this._emptyHTML('search') : this._emptyHTML('new'));
+      body.innerHTML = banner + ocrBanner + (filtering ? this._emptyHTML('search') : this._emptyHTML('new'));
       return;
     }
-    body.innerHTML = banner + (this.state.viewMode === 'list'
+    body.innerHTML = banner + ocrBanner + (this.state.viewMode === 'list'
       ? `<div class="bk-list">${list.map((nb) => this._rowHTML(nb)).join('')}</div>`
       : `<div class="bk-grid">${list.map((nb) => this._cardHTML(nb)).join('')}</div>`);
+  }
+
+  /**
+   * 「识别队列还没跑完」的续跑横幅
+   * 依据：入过队（`nb.ocrQueued`）且这一本还有待识别 / 失败的页；跑完（没有待办）就不显示
+   * 这样「关掉页面 / 刷新 / 隔天再来」都能接着跑，不会白花钱重跑已识别的页
+   */
+  _ocrBanner() {
+    if (typeof resumeQueue !== 'function') return '';
+    let q = { items: [], stats: { pages: 0, failed: 0, booksWithWork: 0 } };
+    try { q = resumeQueue(this.store.notebooks({}), {}); } catch (e) { return ''; }
+    if (!q.items.length) return '';
+    const failed = q.items.filter((i) => i.state === 'failed').length;
+    return `<div class="lib-resume" data-role="ocr-resume">
+      <span class="lib-review-icon">🔎</span>
+      <span class="lib-review-text">
+        <b>手写识别队列还剩 ${q.items.length} 页</b>
+        <i>${q.stats.booksWithWork} 本笔记本${failed ? ` · 其中 ${failed} 页上次失败（会重试）` : ''} · 已识别的页不会重跑</i>
+      </span>
+      <button class="lib-btn primary" type="button" data-act="ocr-resume">继续识别</button>
+      <button class="lib-btn ghost" type="button" data-act="ocr-unqueue" title="移出队列（已经识别出来的文字会保留）">移出队列</button>
+    </div>`;
   }
 
   _renderTrash(body) {
@@ -665,6 +702,8 @@ export class LibraryUI {
       folder: () => this._sheetFolderName(sh.data),
       prompt: () => this._sheetConfirm(sh.data),
       exportPdf: () => this._sheetExportPdf(),
+      ocrQueue: () => this._sheetOcrQueue(sh.data),
+      ocrProgress: () => this._sheetOcrProgress(),
     }[sh.type];
     if (!builder) return '';
     return `<div class="lib-sheet-mask" data-act="sheet-close">
@@ -705,6 +744,7 @@ export class LibraryUI {
       { run: 'sync-pull', label: '从仓库拉取' },
       { run: 'save-template', label: '另存为模板' },
       { run: 'export-md', label: '导出 Markdown（下载）' },
+      { run: 'ocr-open', label: '识别手写文字…' },
       '-',
       { run: 'trash', label: '移到回收站', danger: true },
     ];
@@ -719,6 +759,7 @@ export class LibraryUI {
       <button type="button" class="lib-btn" data-act="sel-fav">收藏</button>
       <button type="button" class="lib-btn" data-act="sel-duplicate">复制</button>
       <button type="button" class="lib-btn" data-act="sel-export">导出 PDF</button>
+      <button type="button" class="lib-btn" data-act="sel-ocr" title="跨本批量识别手写：已识别的页不会重跑，中途可以停、可以接着跑">识别手写</button>
       <button type="button" class="lib-btn danger" data-act="sel-trash">移到回收站</button>
       <button type="button" class="lib-btn ghost" data-act="sel-cancel">取消</button>
     </div>`;
@@ -749,6 +790,129 @@ export class LibraryUI {
           <button type="button" class="lib-btn primary" data-act="export-run">开始导出</button>
           <span class="lib-hint" id="libExportStatus"></span>
         </div>
+      </div>`;
+  }
+
+  /* ---------- 批量手写识别（跨本队列：可暂停、可续跑、失败可重试） ---------- */
+
+  /** 队列小面板：模型 / 并发 / 失败重试 / 预计页数 + 进度条 */
+  _sheetOcrQueue(bookIds = null) {
+    const ids = bookIds && bookIds.length ? bookIds : [...this.sel];
+    const books = ids.map((id) => this.store.get(id)).filter(Boolean);
+    const model = this._ocrModel || OCR_MODELS[0].id;
+    const concurrency = this._ocrConcurrency || 3;
+    const retryFailed = this._ocrRetryFailed !== false;
+    const plan = planOcrQueue(books, { retryFailed, bookIds: ids.length ? ids : null });
+    const failed = plan.items.filter((i) => i.state === 'failed').length;
+    const key = getOcrKey();
+    const est = plan.items.length ? Math.max(1, Math.round((plan.items.length * (model.includes('32B') ? 70 : 20) * 1.0) / concurrency / 60)) : 0;
+    return `<div class="lib-sheet-head"><h3>识别手写文字</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-field">
+          <span>SiliconFlow API Key（cloud.siliconflow.cn 免费申请，填一次即可，只存在本机浏览器）</span>
+          <input class="lib-input" type="password" data-act="ocr-key" value="${bkEsc(key)}" placeholder="sk-...">
+        </div>
+        <div class="lib-field"><span>模型</span>
+          <div class="lib-row">
+            ${OCR_MODELS.map((m) => `<button type="button" class="lib-chip${model === m.id ? ' on' : ''}" data-act="ocr-model" data-v="${bkEsc(m.id)}" title="${bkEsc(m.hint)}">${bkEsc(m.label)}</button>`).join('')}
+          </div>
+        </div>
+        <div class="lib-field"><span>同时识别几页</span>
+          <div class="lib-row">
+            ${[2, 3, 4].map((c) => `<button type="button" class="lib-chip${concurrency === c ? ' on' : ''}" data-act="ocr-concurrency" data-v="${c}">${c}</button>`).join('')}
+            <button type="button" class="lib-chip${retryFailed ? ' on' : ''}" data-act="ocr-retry" title="上次失败的页要不要一起重试">重试上次失败的页</button>
+          </div>
+        </div>
+        <p class="lib-hint">
+          本次要识别 <b>${plan.items.length} 页</b>（${books.length} 本${failed ? ` · 含 ${failed} 页上次失败` : ''}）：
+          <b>已经识别过的页不会重跑</b>，判定为「这页没字」的页也不会再花钱；
+          ${est ? `按当前设置大约 ${est} 分钟。` : ''}<br>
+          页面图会发往 api.siliconflow.cn（第三方视觉模型）；密钥只存本机，介意就别开。
+        </p>
+        <div class="lib-row">
+          <button type="button" class="lib-btn primary" data-act="ocr-run" ${plan.items.length && key ? '' : 'disabled'}>开始识别</button>
+          <button type="button" class="lib-btn" data-act="ocr-enqueue" ${plan.items.length && key ? '' : 'disabled'} title="跑完之前关掉页面也不要紧：下次进资料库可以点「继续识别」">开始并记住队列</button>
+          <span class="lib-hint" id="libOcrStatus"></span>
+        </div>
+        <div class="lib-bar" id="libOcrBar"><i style="width:0%"></i></div>
+      </div>`;
+  }
+
+  /** 队列主流程：入队 → 跑 → 就地写回（每页完成即落盘，所以随时可以停、可以接着跑） */
+  async runOcrQueue(bookIds = null) {
+    if (this.ocrRunning) { this.toast('正在识别中：等这一轮跑完，或点「停止」再来'); return null; }
+    const ids = bookIds && bookIds.length ? bookIds : [...this.sel];
+    if (!ids.length) { this.toast('先勾选要识别的笔记本'); return null; }
+    const key = getOcrKey();
+    if (!key) { this.toast('先把 API Key 填上'); return null; }
+    const model = this._ocrModel || OCR_MODELS[0].id;
+    const books = ids.map((id) => this.store.get(id)).filter(Boolean);
+    const plan = planOcrQueue(books, { retryFailed: this._ocrRetryFailed !== false, bookIds: ids });
+    if (!plan.items.length) {
+      this.toast('这些笔记本都已经识别过了（没有需要识别的页）');
+      return null;
+    }
+    this.store.enqueueOcr(ids);
+    this.ocrRunning = true;
+    this.ocrStop = typeof AbortController === 'function' ? new AbortController() : null;
+    this.ocrLastRes = null;
+    this.ocrLastDone = 0;
+    this.ocrLastTotal = plan.items.length;
+    this._ocrIds = ids;
+    this.sheet = { type: 'ocrProgress' };
+    this.render();
+    const status = (t) => {
+      const el = this.el && this.el.layer ? this.el.layer.querySelector('#libOcrStatus') : null;
+      if (el) el.textContent = t;
+      const bar = this.el && this.el.layer ? this.el.layer.querySelector('#libOcrBar > i') : null;
+      if (bar && this.ocrLastTotal) bar.style.width = `${Math.round((this.ocrLastDone / this.ocrLastTotal) * 100)}%`;
+    };
+    status(queueProgressText(0, plan.items.length, {}));
+    try {
+      const res = await ocrQueue(this.store, {
+        apiKey: key,
+        model,
+        concurrency: this._ocrConcurrency || 3,
+        retryFailed: this._ocrRetryFailed !== false,
+        bookIds: ids,
+        renderPage,
+        signal: this.ocrStop ? this.ocrStop.signal : undefined,
+        onProgress: ({ done, total, failed }) => {
+          this.ocrLastDone = done;
+          this.ocrLastTotal = total;
+          this.toast(queueProgressText(done, total, { failed, bookTitle: '' }));
+          status(queueProgressText(done, total, { failed }));
+        },
+      });
+      const tail = res.stopped ? ` · 已提前停止：${res.reason}` : '';
+      this.toast(`识别完成：${res.done} 页成功${res.blank ? `（含 ${res.blank} 页无文字）` : ''}${res.failed ? ` · ${res.failed} 页失败` : ''}${res.skipped ? ` · 跳过 ${res.skipped} 页` : ''}${tail}`);
+      if (res.errors && res.errors.length) this.toast('第一处错误：' + res.errors[0]);
+      this.ocrLastRes = res;
+      this.refresh();
+      return res;
+    } catch (e) {
+      this._fail(e);
+      return null;
+    } finally {
+      this.ocrRunning = false;
+      if (this.sheet && this.sheet.type === 'ocrProgress') { this.sheet = null; this.refresh(); }
+    }
+  }
+
+  /** 队列进度面板（跑的时候显示，带「停止」与「重试失败页」） */
+  _sheetOcrProgress() {
+    const res = this.ocrLastRes || null;
+    const failed = res ? res.failed : 0;
+    const stats = queueStats(this.store.notebooks({}), {});
+    return `<div class="lib-sheet-head"><h3>正在识别手写文字</h3><button class="lib-btn ghost" type="button" data-act="ocr-stop">停止</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-bar" id="libOcrBar"><i style="width:${this.ocrLastTotal ? Math.round((this.ocrLastDone / this.ocrLastTotal) * 100) : 0}%"></i></div>
+        <div class="lib-row"><span class="lib-hint" id="libOcrStatus">识别中…</span></div>
+        <p class="lib-hint">
+          每页识别完就立刻存进笔记本，所以<b>现在关掉页面也不会白跑</b>：下次进资料库点「继续识别」接着来。<br>
+          已完成的不重跑；判定为「没有文字」的页会记住，不会重复花钱。当前全库还剩 ${stats.pages} 页待识别${stats.failed ? `（其中 ${stats.failed} 页失败）` : ''}。
+        </p>
+        ${failed ? `<div class="lib-row"><button type="button" class="lib-btn" data-act="ocr-retry-failed">只重试失败的 ${failed} 页</button></div>` : ''}
       </div>`;
   }
 
@@ -1052,6 +1216,47 @@ export class LibraryUI {
       case 'export-merge': this._exportMerge = hit.dataset.v !== '0'; this._renderLayer(); break;
       case 'export-run': this.runBulkExport(); break;
 
+      /* 批量手写识别（跨本队列） */
+      case 'sel-ocr':
+        if (!this.sel.size) { this.toast('先勾选要识别的笔记本'); break; }
+        this.sheet = { type: 'ocrQueue', data: [...this.sel] };
+        this._renderLayer();
+        break;
+      case 'ocr-open':
+        this.sheet = { type: 'ocrQueue', data: rowId ? [rowId] : [...this.sel] };
+        this._renderLayer();
+        break;
+      case 'ocr-model': this._ocrModel = hit.dataset.v || OCR_MODELS[0].id; this._renderLayer(); break;
+      case 'ocr-concurrency': this._ocrConcurrency = Number(hit.dataset.v) || 3; this._renderLayer(); break;
+      case 'ocr-retry': this._ocrRetryFailed = this._ocrRetryFailed === false; this._renderLayer(); break;
+      case 'ocr-run': this.runOcrQueue(this.sheet && this.sheet.data); break;
+      case 'ocr-enqueue': {
+        const ids = (this.sheet && this.sheet.data) || [];
+        if (ids.length) { this.store.enqueueOcr(ids); this.toast(`已记住这 ${ids.length} 本的识别队列：跑完之前关掉页面，下次点「继续识别」接着跑`); }
+        this.runOcrQueue(ids);
+        break;
+      }
+      case 'ocr-resume': this.runOcrQueue(resumeQueue(this.store.notebooks({}), {}).books); break;
+      case 'ocr-unqueue': {
+        const ids = resumeQueue(this.store.notebooks({}), {}).books;
+        this.store.dequeueOcr(ids);
+        this.toast(`已把 ${ids.length} 本移出识别队列（已识别的文字保留）`);
+        this.refresh();
+        break;
+      }
+      case 'ocr-retry-failed': {
+        const books = this.store.notebooks({});
+        const ids = [...new Set(planOcrQueue(books, { retryFailed: true }).items.filter((i) => i.state === 'failed').map((i) => i.bookId))];
+        if (!ids.length) { this.toast('没有失败的页'); break; }
+        this._ocrRetryFailed = true;
+        this.runOcrQueue(ids);
+        break;
+      }
+      case 'ocr-stop':
+        if (this.ocrStop) this.ocrStop.abort();
+        this.toast('正在停止…已经识别好的页都留着');
+        break;
+
       /* 卡片与行 */
       case 'open': if (!this.selecting && this.state.scope !== 'trash') this.openBook(rowId); break;
       case 'pick': this._pick(rowId); break;
@@ -1117,6 +1322,11 @@ export class LibraryUI {
     if (this._destroyed) return;
     const t = e.target;
     if (!t || !t.dataset) return;
+    if (t.dataset.act === 'ocr-key') {
+      if (setOcrKey(null, t.value)) this.toast(t.value ? '密钥已存在这台设备上（只存本机浏览器）' : '密钥已清掉');
+      this._renderLayer();
+      return;
+    }
     if (t.dataset.act === 'sort') { this.setSort(t.value); return; }
     if (t.dataset.act === 'cover-image') {
       const f = t.files && t.files[0];

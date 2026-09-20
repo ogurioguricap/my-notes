@@ -273,27 +273,35 @@ export async function ocrNotebook(store, bookId, {
 
   const { results } = await runPool(targets, async (idx) => {
     const page = store.get(bookId).pages[idx];
-    const jpeg = pageToJpeg({ paper: page.paper || nb.paper, items: page.items }, { renderPage, scale: scaleFor(page), quality: 0.82 });
-    if (dryRun) return { idx, text: '', dry: true };
-    const raw = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl, prompt: withBoxes ? OCR_BOX_PROMPT : undefined });
-    if (withBoxes) {
-      const parsed = parseOcrLines(raw);
-      if (parsed.lines.length) {
-        const text = linesToText(parsed.lines);
-        if (!text.trim()) return { idx, text: '', empty: true };
-        store.setPageOcr(bookId, page.id, { text, model, lines: parsed.lines });
-        return { idx, text, boxes: parsed.lines.filter((l) => l.box).length };
+    try {
+      const jpeg = pageToJpeg({ paper: page.paper || nb.paper, items: page.items }, { renderPage, scale: scaleFor(page), quality: 0.82 });
+      if (dryRun) return { idx, text: '', dry: true };
+      const raw = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl, prompt: withBoxes ? OCR_BOX_PROMPT : undefined });
+      if (withBoxes) {
+        const parsed = parseOcrLines(raw);
+        if (parsed.lines.length) {
+          const text = linesToText(parsed.lines);
+          if (!text.trim()) { store.markPageBlank(bookId, page.id, { model }); return { idx, text: '', empty: true }; }
+          store.setPageOcr(bookId, page.id, { text, model, lines: parsed.lines });
+          return { idx, text, boxes: parsed.lines.filter((l) => l.box).length };
+        }
+        // 模型没按格式回 → 退回纯文本（不丢结果）
+        const fallback = normalizeOcrText(raw);
+        if (!fallback) { store.markPageBlank(bookId, page.id, { model }); return { idx, text: '', empty: true }; }
+        store.setPageOcr(bookId, page.id, { text: fallback, model, lines: [] });
+        return { idx, text: fallback, boxes: 0, degraded: true };
       }
-      // 模型没按格式回 → 退回纯文本（不丢结果）
-      const fallback = normalizeOcrText(raw);
-      if (!fallback) return { idx, text: '', empty: true };
-      store.setPageOcr(bookId, page.id, { text: fallback, model, lines: [] });
-      return { idx, text: fallback, boxes: 0, degraded: true };
+      const text = raw;
+      if (!text || /^（?本页无文字）?$/.test(String(text).trim())) { store.markPageBlank(bookId, page.id, { model }); return { idx, text: '', empty: true }; }
+      store.setPageOcr(bookId, page.id, { text, model, lines: [] });
+      return { idx, text };
+    } catch (e) {
+      // 失败也要留痕：批量队列据此「只重试失败页」，界面也能说清是哪些页、为什么
+      if (!dryRun) {
+        try { store.setPageOcrError(bookId, page.id, { message: (e && e.message) || String(e), model }); } catch (e2) { /* store 不支持就算了 */ }
+      }
+      throw e;
     }
-    const text = raw;
-    if (!text || /^（?本页无文字）?$/.test(String(text).trim())) return { idx, text: '', empty: true };
-    store.setPageOcr(bookId, page.id, { text, model, lines: [] });
-    return { idx, text };
   }, { concurrency, onProgress, signal });
 
   results.forEach((r) => {
@@ -310,3 +318,208 @@ export async function ocrNotebook(store, bookId, {
 export async function ocrOnePage(store, bookId, pageIndex, opts = {}) {
   return ocrNotebook(store, bookId, { ...opts, indices: [pageIndex], onlyMissing: false });
 }
+
+/* ============================ 批量队列（跨本 · 可续跑） ============================ */
+
+/**
+ * 一页的识别状态
+ *   done    —— 有文字
+ *   blank   —— 识别过了，这一页真的没字（不再重复花钱）
+ *   failed  —— 上次失败（记了原因，可以只重试这些）
+ *   pending —— 还没识别过
+ */
+export function pageOcrState(page) {
+  if (!page) return 'pending';
+  if (page.ocr && page.ocr.text) return 'done';
+  if (page.ocr && page.ocr.blank) return page.ocrError ? 'failed' : 'blank';
+  return page.ocrError ? 'failed' : 'pending';
+}
+
+/** 一页有没有可识别的内容（标题也算，纯空白页不值得花钱） */
+export function pageHasInk(page) {
+  return !!((page && page.items) || []).filter((it) => it && it.kind !== 'tape').length;
+}
+
+/**
+ * 跨本排队：把「还需要识别」的页挑出来（纯函数，方便测）
+ * @param {Array} notebooks 笔记本数组
+ * @param {object} o { retryFailed=true 失败页要不要重试, includeBlank=false 要不要连没字的页也再跑一次,
+ *                     includeEmptyPages=false 纯空白页（一个对象都没有）要不要跑, bookIds 限定这几本, max 上限 }
+ */
+export function planOcrQueue(notebooks, {
+  retryFailed = true, includeBlank = false, includeEmptyPages = false, bookIds = null, max = 0,
+} = {}) {
+  const wanted = Array.isArray(bookIds) && bookIds.length ? new Set(bookIds) : null;
+  const items = [];
+  const stats = { books: 0, pages: 0, pending: 0, failed: 0, blank: 0, done: 0, chars: 0, booksWithWork: 0 };
+  for (const nb of notebooks || []) {
+    if (!nb) continue;
+    if (wanted && !wanted.has(nb.id)) continue;
+    stats.books++;
+    let work = 0;
+    (nb.pages || []).forEach((p, i) => {
+      const state = pageOcrState(p);
+      if (state === 'done') { stats.done++; stats.chars += (p.ocr && p.ocr.chars) || 0; return; }
+      if (state === 'blank') { stats.blank++; if (!includeBlank) return; }
+      if (state === 'failed' && !retryFailed) { stats.failed++; return; }
+      if (!includeEmptyPages && !pageHasInk(p)) return;
+      if (state === 'failed') stats.failed++; else stats.pending++;
+      items.push({
+        bookId: nb.id,
+        bookTitle: nb.title || '未命名',
+        pageId: p.id,
+        pageIndex: i,
+        pageTitle: p.title || '',
+        state,
+      });
+      work++;
+    });
+    if (work) stats.booksWithWork++;
+  }
+  stats.pages = items.length;
+  return { items: max > 0 ? items.slice(0, max) : items, stats };
+}
+
+/** 队列总览（资料库用：哪些本还有活、失败几页、跳过几页） */
+export function queueStats(notebooks, opts = {}) {
+  return planOcrQueue(notebooks, opts).stats;
+}
+
+/** 判断错误是否属于「再试也没用」（密钥错 / 余额不足）——遇到这种要立刻停，别把钱和时间烧在必败的请求上 */
+export function isFatalOcrError(message) {
+  const m = String(message || '');
+  return /密钥无效|没有权限|余额不足|401|402|403|30001|invalid.*key/i.test(m);
+}
+
+/** 进度文案（队列版） */
+export function queueProgressText(done, total, { failed = 0, bookTitle = '' } = {}) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return `${done}/${total}（${pct}%）${bookTitle ? ` · ${bookTitle}` : ''}${failed ? ` · 失败 ${failed}` : ''}`;
+}
+
+/**
+ * 跑队列：逐页渲染 → 识别 → 就地写回 store（所以**关掉页面/刷新后能接着跑**，不用额外保存进度）
+ *
+ * 恢复语义：每页完成就落盘（成功写文字、没字写 blank 标记、失败写原因），
+ * 所以「继续」= 重新排一次队（已完成与已标记没字的页自然不会再进来）。
+ *
+ * @returns {Promise<{done:number, blank:number, failed:number, skipped:number, chars:number, total:number,
+ *                    withBoxes:number, stopped:boolean, reason:string, errors:string[]}>}
+ *   · done = 处理完成的页数（**含**判定为「这页没文字」的页），blank 是其中没文字的那些
+ */
+export async function ocrQueue(store, {
+  apiKey, model = OCR_MODELS[0].id, concurrency = 3, retryFailed = true, includeBlank = false,
+  includeEmptyPages = false, bookIds = null, max = 0, renderPage, fetchImpl, onProgress, signal,
+  withBoxes = true, fatalStreak = 3, dryRun = false,
+} = {}) {
+  const all = (typeof store.notebooks === 'function' ? store.notebooks({}) : []).map((b) => store.get(b.id)).filter(Boolean);   // 不含回收站
+  const books = bookIds && bookIds.length ? bookIds.map((id) => store.get(id)).filter(Boolean) : all;
+  const plan = planOcrQueue(books, { retryFailed, includeBlank, includeEmptyPages, bookIds, max });
+  const summary = { done: 0, blank: 0, failed: 0, skipped: 0, chars: 0, stopped: false, reason: '', errors: [], total: plan.items.length, withBoxes: 0 };
+
+  // 每本记一条任务记录：界面据此显示「上次跑到哪、失败几页」
+  const perBook = new Map();
+  for (const it of plan.items) {
+    if (!perBook.has(it.bookId)) perBook.set(it.bookId, { total: 0, done: 0, failed: 0, blank: 0 });
+    perBook.get(it.bookId).total++;
+  }
+  const flushJob = (bookId, finished, reason = '') => {
+    const j = perBook.get(bookId);
+    if (!j) return;
+    store.recordOcrJob(bookId, { ...j, model, finished, reason });
+  };
+  for (const id of perBook.keys()) flushJob(id, false);
+
+  if (!plan.items.length) {
+    for (const id of perBook.keys()) flushJob(id, true);
+    return summary;
+  }
+
+  let streak = 0, fatal = '';
+  const before = new Map();
+  for (const [id] of perBook) before.set(id, { done: 0, failed: 0, chars: 0 });
+
+  await runPool(plan.items, async (item) => {
+    if (fatal) return { skipped: true };
+    const nb = store.get(item.bookId);
+    const page = nb && nb.pages[item.pageIndex];
+    if (!page) return { skipped: true };
+    // 别人（或另一次点）已经识别过 → 跳过，不重复花钱
+    if (pageOcrState(page) === 'done' && item.state !== 'done') return { skipped: true };
+    const jpeg = pageToJpeg(
+      { paper: page.paper || nb.paper, items: page.items },
+      { renderPage, scale: ocrRenderScale(paperDims(page.paper || nb.paper)), quality: 0.82 },
+    );
+    if (dryRun) return { dry: true };
+    try {
+      const raw = await ocrImageDataUrl(jpeg, { apiKey, model, fetchImpl, prompt: withBoxes ? OCR_BOX_PROMPT : undefined });
+      if (withBoxes) {
+        const parsed = parseOcrLines(raw);
+        if (parsed.lines.length) {
+          const text = linesToText(parsed.lines);
+          if (!text.trim()) { store.markPageBlank(item.bookId, page.id, { model }); return { blank: true, bookId: item.bookId }; }
+          store.setPageOcr(item.bookId, page.id, { text, model, lines: parsed.lines });
+          streak = 0;
+          return { text, boxes: parsed.lines.filter((l) => l.box).length, bookId: item.bookId };
+        }
+        const fallback = normalizeOcrText(raw);
+        if (!fallback) { store.markPageBlank(item.bookId, page.id, { model }); return { blank: true, bookId: item.bookId }; }
+        store.setPageOcr(item.bookId, page.id, { text: fallback, model, lines: [] });
+        streak = 0;
+        return { text: fallback, boxes: 0, bookId: item.bookId };
+      }
+      const text = normalizeOcrText(raw);
+      if (!text || /^（?本页无文字）?$/.test(text)) { store.markPageBlank(item.bookId, page.id, { model }); return { blank: true, bookId: item.bookId }; }
+      store.setPageOcr(item.bookId, page.id, { text, model, lines: [] });
+      streak = 0;
+      return { text, bookId: item.bookId };
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      store.setPageOcrError(item.bookId, page.id, { message: msg, model });
+      if (isFatalOcrError(msg)) {
+        fatal = msg;                        // 密钥错 / 余额不足：立刻停，剩余的统一记为「跳过的」
+        throw new Error(msg);
+      }
+      if (++streak >= Math.max(1, fatalStreak)) { fatal = `连续 ${streak} 页失败：${msg}`; throw new Error(msg); }
+      throw e;
+    }
+  }, {
+    concurrency,
+    signal,
+    onProgress: (p) => { if (onProgress) { try { onProgress({ ...p, total: plan.items.length }); } catch (e) {} } },
+  });
+
+  // 从 store 的真实状态汇总（不靠 worker 的返回值，因为失败/跳过都要算准）
+  for (const item of plan.items) {
+    const nb = store.get(item.bookId);
+    const page = nb && nb.pages[item.pageIndex];
+    const j = perBook.get(item.bookId);
+    if (!page) continue;
+    const state = pageOcrState(page);
+    if (state === 'done' || state === 'blank') {
+      if (page.ocrError) store.clearPageOcrError(item.bookId, page.id);
+      summary.done++;
+      summary.chars += (page.ocr && page.ocr.chars) || 0;
+      summary.withBoxes += (page.ocr && page.ocr.boxes) || 0;
+      if (page.ocr && page.ocr.blank) { summary.blank++; if (j) j.blank++; }
+      if (j) j.done++;
+    } else if (state === 'failed') {
+      summary.failed++;
+      if (summary.errors.length < 5) summary.errors.push((page.ocrError && page.ocrError.message) || '识别失败');
+      if (j) j.failed++;
+    } else {
+      summary.skipped++;
+    }
+  }
+  if (fatal) { summary.stopped = true; summary.reason = fatal; }
+  for (const [id] of perBook) flushJob(id, !fatal, fatal);
+  return summary;
+}
+
+/** 还有活要干的队列（资料库「继续识别」入口用）：已入队 + 还有待识别/失败的页 */
+export function resumeQueue(notebooks, opts = {}) {
+  const queued = (notebooks || []).filter((nb) => nb && nb.ocrQueued);
+  const plan = planOcrQueue(queued, { ...opts, retryFailed: opts.retryFailed !== false });
+  return { items: plan.items, stats: plan.stats, books: [...new Set(plan.items.map((i) => i.bookId))] };
+}
+

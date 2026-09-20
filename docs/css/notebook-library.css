@@ -1040,6 +1040,23 @@
 .lib-review-text b { font-size: 14px; }
 .lib-review-text i { font-size: 12px; color: var(--text-soft); font-style: normal; }
 
+/* ============================ 识别队列（续跑横幅 + 进度条） ============================ */
+.lib-resume {
+  display: flex; align-items: center; gap: 12px; margin: 0 0 16px;
+  padding: 12px 16px; border-radius: var(--radius-sm); flex-wrap: wrap;
+  background: color-mix(in srgb, var(--bg-elev) 88%, var(--accent));
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+.lib-bar {
+  height: 8px; border-radius: 999px; overflow: hidden; margin: 10px 0 4px;
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+}
+.lib-bar > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .3s ease; }
+@media (max-width: 720px) {
+  .lib-resume { gap: 8px; }
+  .lib-resume .lib-btn { flex: 1 1 auto; }
+}
+
 /* ============================ 自定义封面图 ============================ */
 .bk-cover.has-image { background-image: none !important; }
 .bk-cover-img {

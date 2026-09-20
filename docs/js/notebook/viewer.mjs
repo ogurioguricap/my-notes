@@ -34,6 +34,7 @@ import { makeSpeaker, pageSpeakText, splitSpeakSentences } from './tts.mjs';
 import { applyEdit } from '../../lib/site-build.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, hasOcrKey, ocrNotebook, ocrOnePage, ocrSummary, progressText, OCR_ENDPOINT, ocrImageDataUrl,
+  pageOcrState, planOcrQueue,
 } from './ocr.mjs';
 import { pushNotebook, pullNotebook, pushAll, fetchPublicIndex, pullFromPublicSite, PUBLIC_INDEX } from './sync.mjs';
 import { gh } from '../editor.mjs';
@@ -511,6 +512,13 @@ export class NotebookView {
     if (act === 'ocrRun') { this.runOcr({}); return true; }
     if (act === 'ocrRunPage') { this.runOcr({ indices: [this.cur] }); return true; }
     if (act === 'ocrRunAll') { this.runOcr({ all: true, indices: (this.nb.pages || []).map((_, i) => i) }); return true; }
+    if (act === 'ocrRunFailed') {
+      const plan = planOcrQueue([this.nb], { retryFailed: true });
+      const idx = plan.items.filter((i) => i.state === 'failed').map((i) => i.pageIndex);
+      if (!idx.length) { this.toast('没有失败的页'); return true; }
+      this.runOcr({ indices: idx });
+      return true;
+    }
     if (act === 'ocrClearPage') {
       this.store.clearPageOcr(this.bookId, this.nb.pages[this.cur].id);
       this.toast('已清掉本页的识别结果');
@@ -1826,6 +1834,9 @@ export class NotebookView {
     const st = this.store.ocrStats(nb.id);
     const key = getOcrKey();
     const model = this.ocrModel || OCR_MODELS[0].id;
+    const plan = planOcrQueue([nb], { retryFailed: true });
+    const failedIdx = plan.items.filter((i) => i.state === 'failed').map((i) => i.pageIndex);
+    const blankCount = (nb.pages || []).filter((p) => p.ocr && p.ocr.blank).length;
     return `${this.panelHead('识别手写文字（OCR）')}
       <div class="nb-panel-body">
         <div class="nb-hint">
@@ -1847,20 +1858,25 @@ export class NotebookView {
           <button class="nb-btn primary" type="button" data-act="ocrRun" ${key ? '' : 'disabled'}>识别未识别的页（${st.pending} 页）</button>
           <button class="nb-btn" type="button" data-act="ocrRunPage" ${key ? '' : 'disabled'}>只识别当前页</button>
           <button class="nb-btn" type="button" data-act="ocrRunAll" ${key ? '' : 'disabled'}>全部重识别</button>
+          ${failedIdx.length ? `<button class="nb-btn" type="button" data-act="ocrRunFailed" ${key ? '' : 'disabled'} title="只重跑上次失败的那几页">重试失败的 ${failedIdx.length} 页</button>` : ''}
           <button class="nb-btn danger" type="button" data-act="ocrClearPage">清掉本页识别结果</button>
           <button class="nb-btn" type="button" data-act="ocrToText" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr) ? '' : 'disabled'} title="把手写识别结果变成可编辑的文本框">识别结果转成文本框</button>
           <button class="nb-btn danger" type="button" data-act="ocrReplace" ${(nb.pages[this.cur] && nb.pages[this.cur].ocr && (nb.pages[this.cur].ocr.lines || []).length) ? '' : 'disabled'} title="删掉被识别到的笔迹，并在原位放文本（一次撤销可退回）">识别并替换手写</button>
         </div>
         <div class="nb-field">
           <span>进度</span>
-          <div class="nb-ocr-status" id="nbOcrStatus">共 ${st.pages} 页 · 已识别 ${st.done} 页 · 已入库 ${st.chars} 字</div>
+          <div class="nb-ocr-status" id="nbOcrStatus">共 ${st.pages} 页 · 已识别 ${st.done} 页${blankCount ? ` · ${blankCount} 页确认没字（不再重跑）` : ''} · 已入库 ${st.chars} 字</div>
         </div>
+        ${failedIdx.length ? `<div class="nb-field">
+          <span>失败的页（资料库里点「继续识别」也会自动重试这些页）</span>
+          <div class="nb-hint">${failedIdx.map((i) => `第 ${i + 1} 页：${nbEsc(((nb.pages[i] && nb.pages[i].ocrError && nb.pages[i].ocrError.message) || '识别失败').slice(0, 80))}`).join('<br>')}</div>
+        </div>` : ''}
         ${nb.pages && nb.pages[this.cur] && nb.pages[this.cur].ocr ? `
         <div class="nb-field">
           <span>本页识别结果（${(nb.pages[this.cur].ocr.text || '').length} 字）</span>
           <textarea class="nb-textarea" readonly>${nbEsc((nb.pages[this.cur].ocr.text || '').slice(0, 4000))}</textarea>
         </div>` : ''}
-        <div class="nb-hint">提示：8B 模型快（约 15~25 秒/页），公式与表格多的页建议切 32B 复核。识别要花钱，所以默认只跑没识别过的页。</div>
+        <div class="nb-hint">提示：8B 模型快（约 15~25 秒/页），公式与表格多的页建议切 32B 复核。识别要花钱，所以默认只跑没识别过的页；想一次跑好几本、中途还能停，用资料库多选条里的「识别手写」（带队列续跑）。</div>
       </div>`;
   }
 

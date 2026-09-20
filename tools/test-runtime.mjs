@@ -409,6 +409,30 @@ try {
     expect('「更多」菜单里有同步与 OCR 入口', hasSync || !!moreMenu, JSON.stringify(moreMenu));
   }
   expect('打开笔记本无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+
+  // 批量识别队列：横幅与面板要在真 DOM 里渲染得出来（写错了会整块资料库白屏）
+  {
+    const book2 = nbStore.create({ title: '队列测试本' });
+    nbStore.setItems(book2.id, book2.pages[0].id, [{ kind: 'stroke', id: 's', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] }]);
+    nbStore.enqueueOcr([book2.id]);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const bodyHtml2 = String((documentStub.getElementById('booksBody') || {}).innerHTML || '');
+    expect('资料库出「识别队列还剩 N 页」横幅（含继续 / 移出按钮）', bodyHtml2.includes('手写识别队列还剩') && bodyHtml2.includes('data-act="ocr-resume"') && bodyHtml2.includes('data-act="ocr-unqueue"'), `长度 ${bodyHtml2.length}`);
+    const lib = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    expect('资料库界面实例可被自动化拿到（window.__notes.library）', !!lib);
+    if (lib) {
+      const sheet = lib._sheetOcrQueue([book2.id]);
+      expect('识别小面板能生成（模型 / 并发 / 重试 / 开始）', sheet.includes('data-act="ocr-run"') && sheet.includes('data-act="ocr-model"') && sheet.includes('已经识别过的页不会重跑'));
+    } else {
+      expect('识别小面板能生成（模型 / 并发 / 重试 / 开始）', /data-act="ocr-run"/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    nbStore.dequeueOcr([book2.id]);
+    expect('移出队列后横幅消失（已识别内容不受影响）', !String((documentStub.getElementById('booksBody') || {}).innerHTML || '').includes('手写识别队列还剩') || nbStore.notebooks({}).every((x) => !x.ocrQueued));
+    expect('队列渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(book2.id);   // 收拾干净，后面的「测试笔记本已清理」断言还要用
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });

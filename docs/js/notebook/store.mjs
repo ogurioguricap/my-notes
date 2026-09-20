@@ -753,6 +753,90 @@ export class NotebookStore {
     };
   }
 
+  /** 记下「这一页识别失败」：批量队列据此重试，也让界面能告诉你是哪几页、为什么 */
+  setPageOcrError(bookId, pageId, { message, model } = {}) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    const prev = p.ocrError && Number(p.ocrError.count) || 0;
+    p.ocrError = {
+      message: String(message == null ? '' : message).slice(0, 300),
+      model: model || '',
+      count: prev + 1,
+      at: Date.now(),
+    };
+    this.touch(bookId);
+    return p;
+  }
+
+  clearPageOcrError(bookId, pageId) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    delete p.ocrError;
+    this.touch(bookId);
+    return p;
+  }
+
+  /**
+   * 标记「这一页确实没有文字」：不写 text，但记成已处理
+   * 意义：没有它的话，每次批量识别都会把空白页再烧一遍 token（并且永远显示「待识别」）
+   */
+  markPageBlank(bookId, pageId, { model } = {}) {
+    const p = this.page(bookId, pageId);
+    if (!p) return null;
+    p.ocr = { text: '', blank: true, model: model || '', chars: 0, lines: [], boxes: 0, at: Date.now() };
+    delete p.ocrError;
+    this.touch(bookId);
+    return p;
+  }
+
+  /* ---------- 批量识别队列（跨本，关掉页面也能接着跑） ---------- */
+
+  /** 把这几本加入识别队列（队列状态存在笔记本本体上，所以备份/同步都带着） */
+  enqueueOcr(bookIds) {
+    const ids = (Array.isArray(bookIds) ? bookIds : [bookIds]).filter(Boolean);
+    let n = 0;
+    for (const id of ids) {
+      const nb = this.get(id);
+      if (!nb) continue;
+      nb.ocrQueued = true;
+      this.touch(id);
+      n++;
+    }
+    return n;
+  }
+
+  dequeueOcr(bookIds) {
+    const ids = (Array.isArray(bookIds) ? bookIds : [bookIds]).filter(Boolean);
+    for (const id of ids) {
+      const nb = this.get(id);
+      if (!nb) continue;
+      delete nb.ocrQueued;
+      this.touch(id);
+    }
+  }
+
+  queuedOcrBooks() {
+    return this.notebooks({}).filter((nb) => nb.ocrQueued).map((nb) => this.get(nb.id)).filter(Boolean);
+  }
+
+  /** 记录队列进度（done/failed 由队列每页回写后汇总），finished=true 表示这一本跑完了 */
+  recordOcrJob(bookId, { total = 0, done = 0, failed = 0, blank = 0, model = '', finished = false, reason = '' } = {}) {
+    const nb = this.get(bookId);
+    if (!nb) return null;
+    nb.ocrJob = {
+      total: Number(total) || 0,
+      done: Number(done) || 0,
+      failed: Number(failed) || 0,
+      blank: Number(blank) || 0,
+      model: model || '',
+      finished: !!finished,
+      reason: String(reason || '').slice(0, 200),
+      at: Date.now(),
+    };
+    this.touch(bookId);
+    return nb.ocrJob;
+  }
+
   /* ---------- 对象（页内内容） ---------- */
 
   setItems(bookId, pageId, items) {
