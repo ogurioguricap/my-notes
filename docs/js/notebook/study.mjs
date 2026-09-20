@@ -718,10 +718,104 @@ function bytesToBase64(bytes) {
 }
 
 /** 笔记本 → EPUB（电子书，任意阅读器可打开；正文是可搜索文本 + 每页图片） */
-export function buildEpub(nb, { renderPage, scale = 1.5, quality = 0.85, plain = false, dropTape = false, author = '我的笔记' } = {}) {
+
+/** 页文件的固定名字（nav / ncx / 内链都按它拼，保证链接指向真的存在） */
+export function epubPageHref(pageIndex) { return `p${Number(pageIndex) + 1}.xhtml`; }
+
+/** 目录树 → nav.xhtml 里嵌套的 <ol>（EPUB3 的层级目录就靠嵌套 ol 表达） */
+export function navListHtml(nodes) {
+  if (!nodes || !nodes.length) return '';
+  return `<ol>${nodes.map((n) => {
+    const label = `<a href="${epubPageHref(n.pageIndex)}">${xmlEsc(n.title)}</a>`;
+    const kids = n.children && n.children.length ? navListHtml(n.children) : '';
+    return `<li>${label}${kids}</li>`;
+  }).join('')}</ol>`;
+}
+
+/**
+ * 目录树 → toc.ncx（EPUB2 阅读器只认它；有些老阅读器没有 ncx 就没有目录）
+ * playOrder 按先序编号，层级用嵌套 navPoint 表达
+ */
+export function ncxFromOutline(nodes, { uuid = 'urn:uuid:book', title = '目录', depth = 3 } = {}) {
+  let order = 0;
+  const point = (node, n, d) => {
+    const num = ++order;      // 先定下自己的序号（子节点递归会继续往后加，不能等拼串时再读）
+    const kids = (d < depth && node.children && node.children.length)
+      ? node.children.map((c, i) => point(c, `${n}-${i + 1}`, d + 1)).join('')
+      : '';
+    return `<navPoint id="nav${num}" playOrder="${num}"><navLabel><text>${xmlEsc(node.title)}</text></navLabel>`
+      + `<content src="${epubPageHref(node.pageIndex)}"/>${kids}</navPoint>`;
+  };
+  const body = (nodes || []).map((n, i) => point(n, `${i + 1}`, 1)).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+<head><meta name="dtb:uid" content="${xmlEsc(uuid)}"/><meta name="dtb:depth" content="${depth}"/></head>
+<docTitle><text>${xmlEsc(title)}</text></docTitle>
+<navMap>${body}</navMap>
+</ncx>`;
+}
+
+/**
+ * 把一段文字里的「见第 3 页」变成书内链接（EPUB 里点得动）
+ * @returns {{html:string, links:number}}
+ */
+export function linkifyPageRefs(text, { pageCount = 1 } = {}) {
+  const src = String(text == null ? '' : text);
+  const refs = findPageRefs(src, { pageCount });
+  if (!refs.length) return { html: xmlEsc(src).replace(/\n/g, '<br>'), links: 0 };
+  let out = '';
+  let at = 0;
+  for (const ref of refs) {
+    out += xmlEsc(src.slice(at, ref.at));
+    out += `<a class="ref" href="${epubPageHref(ref.page - 1)}">${xmlEsc(ref.label)}</a>`;
+    at = ref.at + ref.label.length;
+  }
+  out += xmlEsc(src.slice(at));
+  return { html: out.replace(/\n/g, '<br>'), links: refs.length };
+}
+
+/** 封面图：优先用笔记本自己的封面图（data URL），否则用配色封面画一张（可选，靠 renderCoverImpl） */
+export function epubCoverArt(nb, { renderCoverImpl, width = 794, height = 1123 } = {}) {
+  const custom = String((nb && nb.cover && nb.cover.image) || '');
+  if (/^data:image\/(jpeg|jpg|png|webp)/.test(custom)) {
+    const mime = /^data:image\/(\w+)/.exec(custom)[1].toLowerCase();
+    const ext = mime === 'jpeg' || mime === 'jpg' ? 'jpg' : mime === 'png' ? 'png' : 'webp';
+    const bytes = base64ToBytes(custom);
+    if (bytes.length) return { bytes, ext, mime: `image/${ext === 'jpg' ? 'jpeg' : ext}`, source: 'custom' };
+  }
+  if (typeof renderCoverImpl === 'function' && typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    try {
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const cv = (nb && nb.cover) || {};
+      // renderCoverImpl 的签名与 paper.mjs 的 renderCover(ctx, opts) 一致；
+      // 它可以直接返回 data URL（自定义实现 / 测试用），不返回就从 canvas 上取
+      const ret = renderCoverImpl(ctx, {
+        w: width, h: height, color: cv.color || '#8B5CF6', pattern: cv.pattern || 'plain', glyph: cv.glyph || '笔', title: (nb && nb.title) || '笔记本',
+      }, canvas);
+      const url = typeof ret === 'string' && ret.startsWith('data:image') ? ret : canvas.toDataURL('image/jpeg', 0.9);
+      const bytes = base64ToBytes(url);
+      if (bytes.length) return { bytes, ext: 'jpg', mime: 'image/jpeg', source: 'generated' };
+    } catch (e) { /* 画不出来就不放封面，别让导出失败 */ }
+  }
+  return null;
+}
+
+/**
+ * 笔记本 → EPUB
+ * @param {object} o { renderPage, renderCoverImpl, scale, quality, plain, dropTape, author,
+ *                     cover = true 是否放封面页, toc = true 是否用页标题/书签做层级目录, links = true 是否把「见第 3 页」变成链接 }
+ */
+export function buildEpub(nb, {
+  renderPage, renderCoverImpl, scale = 1.5, quality = 0.85, plain = false, dropTape = false,
+  author = '我的笔记', cover = true, toc = true, links = true,
+} = {}) {
   const pages = collectRenderablePages(nb, { renderPage, scale, quality, plain, dropTape });
   const title = (nb && nb.title) || '笔记本';
   const uuid = `urn:uuid:${String((nb && nb.id) || 'nb')}-${Date.now().toString(36)}`;
+  const pageCount = pages.length;
   const entries = [];
   entries.push({ name: 'mimetype', data: 'application/epub+zip' });
   entries.push({
@@ -729,17 +823,39 @@ export function buildEpub(nb, { renderPage, scale = 1.5, quality = 0.85, plain =
     data: '<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>\n</container>',
   });
   const manifest = [];
-  const spine = ['<itemref idref="nav"/>'];
+  const spine = [];
+
+  // 封面（放 spine 最前面；EPUB3 用 properties="cover-image"，EPUB2 认 <meta name="cover">）
+  const art = cover ? epubCoverArt(nb, { renderCoverImpl }) : null;
+  if (art) {
+    entries.push({ name: `OEBPS/cover.${art.ext}`, data: art.bytes });
+    manifest.push(`<item id="cover-image" href="cover.${art.ext}" media-type="${art.mime}" properties="cover-image"/>`);
+    entries.push({
+      name: 'OEBPS/cover.xhtml',
+      data: `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN" lang="zh-CN"><head><title>封面</title>
+<style>html,body{margin:0;padding:0;height:100%;background:#111}div{height:100%;display:flex;align-items:center;justify-content:center}img{max-width:100%;max-height:100%}</style>
+</head><body epub:type="cover" xmlns:epub="http://www.idpf.org/2007/ops"><div><img src="cover.${art.ext}" alt="${xmlEsc(title)}"/></div></body></html>`,
+    });
+    manifest.push('<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>');
+    spine.push('<itemref idref="cover" linear="yes"/>');
+  }
+
+  let linkTotal = 0;
   pages.forEach((p, i) => {
     const id = `p${i + 1}`;
-    const text = p.text ? `<div class="notes">${xmlEsc(p.text).replace(/\n/g, '<br>')}</div>` : '';
+    const notes = p.text
+      ? (links ? linkifyPageRefs(p.text, { pageCount }) : { html: xmlEsc(p.text).replace(/\n/g, '<br>'), links: 0 })
+      : { html: '', links: 0 };
+    linkTotal += notes.links;
+    const text = notes.html ? `<div class="notes">${notes.html}</div>` : '';
     const img = p.jpeg && p.jpeg.length ? `<img src="${id}.jpg" alt="第 ${i + 1} 页"/>` : '';
     entries.push({
       name: `OEBPS/${id}.xhtml`,
       data: `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN" lang="zh-CN"><head><title>第 ${i + 1} 页</title>
-<style>body{margin:0;padding:12px;font-family:sans-serif}img{width:100%;height:auto;display:block}.notes{margin-top:10px;font-size:13px;line-height:1.7;color:#333}</style>
-</head><body><h2>第 ${i + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</h2>${img}${text}</body></html>`,
+<style>body{margin:0;padding:12px;font-family:sans-serif}img{width:100%;height:auto;display:block}.notes{margin-top:10px;font-size:13px;line-height:1.7;color:#333}a.ref{color:#1a6;text-decoration:none;border-bottom:1px dashed #1a6}</style>
+</head><body><h2 id="page${i + 1}">第 ${i + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</h2>${img}${text}</body></html>`,
     });
     manifest.push(`<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml"/>`);
     if (p.jpeg && p.jpeg.length) {
@@ -748,14 +864,23 @@ export function buildEpub(nb, { renderPage, scale = 1.5, quality = 0.85, plain =
     }
     spine.push(`<itemref idref="${id}"/>`);
   });
-  const navList = pages.map((p) => `<li><a href="p${p.index + 1}.xhtml">第 ${p.index + 1} 页${p.title ? ` · ${xmlEsc(p.title)}` : ''}</a></li>`).join('');
+
+  // 目录：有标题/书签就用层级目录，否则退回「一页一条」的平铺目录
+  const outlineFlatItems = toc ? outlinesFromNotebook(nb) : [];
+  const tree = outlineFlatItems.length ? outlineTree(outlineFlatItems) : outlineTree(pages.map((p) => ({ title: `第 ${p.index + 1} 页`, pageIndex: p.index, level: 0 })));
+  const hasNcx = tree.length > 0;
   entries.push({
     name: 'OEBPS/nav.xhtml',
     data: `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN" lang="zh-CN"><head><title>目录</title></head>
-<body><nav epub:type="toc" id="toc"><h1>目录</h1><ol>${navList}</ol></nav></body></html>`,
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN" lang="zh-CN"><head><title>目录</title>
+<style>nav ol{padding-left:18px}nav a{color:#1a6;text-decoration:none}</style></head>
+<body><nav epub:type="toc" id="toc"><h1>目录</h1>${navListHtml(tree) || '<ol><li>（没有目录）</li></ol>'}</nav></body></html>`,
   });
   manifest.push('<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>');
+  if (hasNcx) {
+    entries.push({ name: 'OEBPS/toc.ncx', data: ncxFromOutline(tree, { uuid, title: '目录', depth: 3 }) });
+    manifest.push('<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>');
+  }
   entries.push({
     name: 'OEBPS/content.opf',
     data: `<?xml version="1.0" encoding="UTF-8"?>
@@ -766,13 +891,16 @@ export function buildEpub(nb, { renderPage, scale = 1.5, quality = 0.85, plain =
 <dc:creator>${xmlEsc(author)}</dc:creator>
 <dc:language>zh-CN</dc:language>
 <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta>
+${art ? '<meta name="cover" content="cover-image"/>' : ''}
 </metadata>
 <manifest>${manifest.join('')}</manifest>
-<spine>${spine.join('')}</spine>
+<spine${hasNcx ? ' toc="ncx"' : ''}>${spine.join('')}</spine>
 </package>`,
   });
-  return new Blob([zipStore(entries)], { type: 'application/epub+zip' });
+  const blob = new Blob([zipStore(entries)], { type: 'application/epub+zip' });
+  return blob;
 }
+
 
 /* ============================ 批量导出（资料库多选用） ============================ */
 

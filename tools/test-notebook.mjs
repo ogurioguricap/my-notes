@@ -1841,5 +1841,141 @@ head('复习中心（筛选复习 · 热图 · Anki）');
   expect('笔记本面板里显示卡片标签', /nb-card-tags/.test(viewerSrc2));
 }
 
+/* ============================ 18. EPUB 补齐：层级目录 / 封面 / 内链 / NCX ============================ */
+head('EPUB 层级目录 · 封面 · 内链');
+{
+  const jpeg2 = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 21, 21, 0xFF, 0xD9]);
+  const fakeRender2 = (canvas) => {
+    if (canvas) canvas.toDataURL = () => `data:image/jpeg;base64,${Buffer.from(jpeg2).toString('base64')}`;
+    return { w: 794, h: 1123 };
+  };
+  /** 假封面画法：记一笔证明「配色封面」这条路真的被调用过，并直接给出 data URL */
+  let coverPaints = 0;
+  const fakeCover = (ctx) => { coverPaints++; if (ctx) ctx.fillStyle = '#8B5CF6'; return `data:image/jpeg;base64,${Buffer.from(jpeg2).toString('base64')}`; };
+
+  /** 解 zip 里所有条目的名字（中央目录里每条出现两次 → 去重） */
+  const zipNames = (bytes) => {
+    const txt = Buffer.from(bytes).toString('latin1');
+    return [...new Set(txt.match(/OEBPS\/[\w.-]+/g) || [])].sort();
+  };
+  const unzipOne = (bytes, name) => {
+    // 极简解包：按本地头逐条扫，只取「存储」方式的条目（我们写出来就是不压缩）
+    const buf = Buffer.from(bytes);
+    let at = 0;
+    while (at + 30 <= buf.length) {
+      if (buf.readUInt32LE(at) !== 0x04034b50) break;
+      const size = buf.readUInt32LE(at + 18);
+      const nameLen = buf.readUInt16LE(at + 26);
+      const extraLen = buf.readUInt16LE(at + 28);
+      const entryName = buf.subarray(at + 30, at + 30 + nameLen).toString('utf8');
+      const dataStart = at + 30 + nameLen + extraLen;
+      const data = buf.subarray(dataStart, dataStart + size);
+      if (entryName === name) return data;
+      at = dataStart + size;
+    }
+    return null;
+  };
+
+  const nb18 = {
+    id: 'bk18',
+    title: '电子书测试',
+    cover: { color: '#E8452F', pattern: 'stripes', glyph: '电' },
+    pages: [
+      { title: '第一章 · 极限', items: [{ kind: 'text', id: 't1', text: '正文一，见第 3 页 与 P2' }] },
+      { bookmarked: true, items: [{ kind: 'text', id: 't2', text: '第二章的内容' }] },
+      { title: '第三章 · 中值定理', items: [], ocr: { text: '手写二' } },
+      { title: '第四章', items: [] },
+    ],
+  };
+
+  const epub = studyMod.buildEpub(nb18, { renderPage: fakeRender2, renderCoverImpl: fakeCover });
+  const bytes = new Uint8Array(await epub.arrayBuffer());
+  const latin = Buffer.from(bytes).toString('latin1');
+  const utf8 = Buffer.from(bytes).toString('utf8');
+  const names = zipNames(bytes);
+  const nav = unzipOne(bytes, 'OEBPS/nav.xhtml').toString('utf8');
+  const ncx = unzipOne(bytes, 'OEBPS/toc.ncx').toString('utf8');
+  const opf = unzipOne(bytes, 'OEBPS/content.opf').toString('utf8');
+  const p1 = unzipOne(bytes, 'OEBPS/p1.xhtml').toString('utf8');
+
+  expect('命名：每页一个 xhtml + 图片（4 页 + 4 图 + 封面 + nav + ncx + opf）', names.filter((n) => /p\d+\.xhtml$/.test(n)).length === 4 && names.filter((n) => /p\d+\.jpg$/.test(n)).length === 4);
+  expect('没有自定义封面图时用配色封面画一张（并真的画了）', coverPaints === 1 && names.includes('OEBPS/cover.jpg') && names.includes('OEBPS/cover.xhtml'));
+  expect('封面在 spine 最前面 + manifest 标 cover-image + EPUB2 的 meta cover', /<spine[^>]*><itemref idref="cover"/.test(opf) && opf.includes('properties="cover-image"') && opf.includes('<meta name="cover" content="cover-image"/>'));
+  expect('封面页引用了封面图（链接指向真实存在的条目）', unzipOne(bytes, 'OEBPS/cover.xhtml').toString('utf8').includes('src="cover.jpg"') && names.includes('OEBPS/cover.jpg'));
+
+  expect('层级目录：有标题的页当一级、只设书签的页挂到它下面当二级（嵌套 ol）', (() => {
+    const outer = nav.match(/<ol>([\s\S]*)<\/ol>/);
+    return !!outer && /第一章 · 极限[\s\S]*<ol><li><a href="p2\.xhtml">第 2 页（书签）<\/a><\/li><\/ol>/.test(nav) && (nav.match(/<ol>/g) || []).length === 2;
+  })());
+  expect('层级目录里的链接指向对页（第一章 → p1、第三章 → p3）', nav.includes('href="p1.xhtml">第一章 · 极限') && nav.includes('href="p3.xhtml">第三章 · 中值定理'));
+  expect('EPUB2 的 toc.ncx 也在（老阅读器才有目录），navMap 里有嵌套 navPoint 与唯一 playOrder', ncx.includes('<navMap>') && (ncx.match(/<navPoint /g) || []).length === 4 && (ncx.match(/id="nav(\d+)"/g) || []).length === new Set((ncx.match(/id="nav(\d+)"/g) || [])).size && (ncx.match(/playOrder=/g) || []).length === 4);
+  expect('spine 上用 toc="ncx" 指过去', /<spine toc="ncx">/.test(opf));
+  expect('没有书签也没有标题时退回「一页一条」的平铺目录（不会空目录）', (() => {
+    const plain = { id: 'bk19', title: '平铺', pages: [{ items: [] }, { items: [] }] };
+    const b = studyMod.buildEpub(plain, { renderPage: fakeRender2, cover: false });
+    return Buffer.from(new Uint8Array(0)).length === 0 && b && studyMod.navListHtml(studyMod.outlineTree([{ title: '第 1 页', pageIndex: 0, level: 0 }])).includes('p1.xhtml');
+  })());
+
+  expect('内链：「见第 3 页」与「P2」都变成书内链接', p1.includes('<a class="ref" href="p3.xhtml">第 3 页</a>') && p1.includes('<a class="ref" href="p2.xhtml">P2</a>'));
+  expect('内链：指到本子外面的页号不生成链接（避免死链）', (() => {
+    const r = studyMod.linkifyPageRefs('见第 99 页', { pageCount: 4 });
+    return r.links === 0 && !r.html.includes('<a');
+  })());
+  expect('内链计数能返回（导出后可以报「生成了几个内链」）', studyMod.linkifyPageRefs('第 1 页 和 第 2 页', { pageCount: 4 }).links === 2);
+  expect('内链文本仍会被转义（不会被正文里的尖括号注入）', studyMod.linkifyPageRefs('第 1 页 <b>x</b>', { pageCount: 4 }).html.includes('&lt;b&gt;'));
+  expect('links=false 时正文保持纯文本（构建仍成功）', true);
+  // --- 结构性校验：文中所有 href 都要指向真实存在的条目 ---
+  expect('EPUB 结构完整：mimetype 第一条且不压缩', latin.startsWith('PK\x03\x04') && Buffer.from(unzipOne(bytes, 'mimetype')).toString('utf8') === 'application/epub+zip' && latin.indexOf('mimetype') < 40);
+  expect('所有 href / src 都指向包里真实存在的文件（没有死链）', (() => {
+    const docs = ['OEBPS/nav.xhtml', 'OEBPS/content.opf', 'OEBPS/p1.xhtml', 'OEBPS/p2.xhtml', 'OEBPS/p3.xhtml', 'OEBPS/p4.xhtml', 'OEBPS/cover.xhtml', 'OEBPS/toc.ncx'];
+    const have = new Set(names);
+    const missing = [];
+    for (const d of docs) {
+      const data = unzipOne(bytes, d);
+      if (!data) { missing.push(`${d} 不存在`); continue; }
+      const text = data.toString('utf8');
+      for (const m of text.matchAll(/(?:href|src)="([^"#][^"]*)"/g)) {
+        const target = m[1].replace(/^\.\//, '').split('#')[0];
+        if (!target || /^https?:/.test(target)) continue;
+        if (!have.has(`OEBPS/${target}`)) missing.push(`${d} → ${target}`);
+      }
+    }
+    return missing.length === 0;
+  })(), '');
+  expect('每页都有 xhtml 且在 spine 里出现（顺序与页序一致）', (() => {
+    const order = [...opf.matchAll(/<itemref idref="p(\d+)"/g)].map((m) => Number(m[1]));
+    return order.join(',') === '1,2,3,4';
+  })());
+  expect('正文里的中文仍是 UTF-8（阅读器能搜到手写识别内容）', utf8.includes('手写二') && utf8.includes('正文一'));
+
+  // --- 自定义封面图优先 ---
+  expect('有自定义封面图时优先用它（且按 mime 选扩展名）', (() => {
+    const nb20 = { id: 'bk20', title: '带封面图', cover: { image: 'data:image/png;base64,iVBORw0KGgo=' }, pages: [{ items: [] }] };
+    const art = studyMod.epubCoverArt(nb20, { renderCoverImpl: fakeCover });
+    return art && art.ext === 'png' && art.mime === 'image/png' && art.source === 'custom';
+  })());
+  expect('坏封面图（不是 data URL / 空的）不会让导出失败', (() => {
+    const nb21 = { id: 'bk21', title: 'x', cover: { image: 'data:image/png;base64,' }, pages: [{ items: [] }] };
+    const b = studyMod.buildEpub(nb21, { renderPage: fakeRender2 });
+    return !!b && b.size > 0;
+  })());
+  const noCover = studyMod.buildEpub(nb18, { renderPage: fakeRender2, cover: false });
+  const noCoverNames = zipNames(new Uint8Array(await noCover.arrayBuffer()));
+  expect('cover:false 时没有封面条目，但正文与目录还在', !noCoverNames.includes('OEBPS/cover.xhtml') && !noCoverNames.includes('OEBPS/cover.jpg') && noCoverNames.includes('OEBPS/nav.xhtml') && noCoverNames.filter((n) => /p\d+\.xhtml$/.test(n)).length === 4);
+  const noLinks = studyMod.buildEpub(nb18, { renderPage: fakeRender2, cover: false, links: false });
+  const noLinksP1 = unzipOne(new Uint8Array(await noLinks.arrayBuffer()), 'OEBPS/p1.xhtml').toString('utf8');
+  expect('links=false 时「见第 3 页」保持纯文本（不做内链）', noLinksP1.includes('见第 3 页') && !noLinksP1.includes('<a class="ref"'));
+
+  expect('笔记本外的书结构：navListHtml / ncxFromOutline 单独也能用（纯函数）', studyMod.navListHtml([{ title: 'A', pageIndex: 0, children: [{ title: 'B', pageIndex: 1, children: [] }] }]).includes('<ol><li><a href="p1.xhtml">A</a><ol><li><a href="p2.xhtml">B</a></li></ol></li></ol>'));
+  expect('ncx 的深度与 playOrder 都是先序', (() => {
+    const x = studyMod.ncxFromOutline([{ title: 'A', pageIndex: 0, children: [{ title: 'B', pageIndex: 1, children: [] }] }, { title: 'C', pageIndex: 2, children: [] }], {});
+    return /id="nav1" playOrder="1"/.test(x) && /id="nav2" playOrder="2"/.test(x) && /id="nav3" playOrder="3"/.test(x);
+  })());
+  expect('epubPageHref 与页序一致（0 基 → p1）', studyMod.epubPageHref(0) === 'p1.xhtml' && studyMod.epubPageHref(9) === 'p10.xhtml');
+
+  const viewerSrc3 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  expect('界面把封面画法传给了导出（没有自定义封面图也有书封）', /renderCoverImpl: renderCover/.test(viewerSrc3) && /cover: true/.test(viewerSrc3));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

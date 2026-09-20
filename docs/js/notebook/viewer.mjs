@@ -23,7 +23,7 @@ import {
   TAPE_COLORS, ELEMENTS, FONTS, TEXT_SIZE_STEPS, findHitRects,
 } from './page.mjs';
 import {
-  PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS,
+  PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS, renderCover,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
 import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
@@ -1947,16 +1947,26 @@ export class NotebookView {
     this.toast('已把识别结果放成文本框（可拖动、可改样式，也可撤销）');
   }
 
-  /** 导出 EPUB（电子书）：每页图片 + 可搜索文本 + 目录 */
+  /** 导出 EPUB（电子书）：封面（自己的图或配色封面）+ 每页图片 + 可搜索文本 + 层级目录 + 内链 */
   async exportEpub() {
     if (!this.nb) return;
     this.flush();
     this.toast('正在生成 EPUB…');
     try {
-      const blob = buildEpub(this.nb, { renderPage, scale: 1.5, quality: 0.85, plain: !!this.plainPaper, dropTape: !!this.dropTape });
+      const blob = buildEpub(this.nb, {
+        renderPage,
+        renderCoverImpl: renderCover,     // 没有自定义封面图时，用配色封面画一张当书封
+        scale: 1.5,
+        quality: 0.85,
+        plain: !!this.plainPaper,
+        dropTape: !!this.dropTape,
+        cover: true,
+        toc: true,
+        links: this.textLayer !== false,  // 「见第 3 页」变书内链接
+      });
       if (!blob) { this.toast('EPUB 生成失败（当前环境不支持 canvas）'); return; }
       downloadBlob(blob, `${safeName(this.nb.title)}.epub`);
-      this.toast(`EPUB 已导出（${this.nb.pages.length} 页 · ${(blob.size / 1048576).toFixed(1)} MB）`);
+      this.toast(`EPUB 已导出（${this.nb.pages.length} 页 · 含封面与层级目录 · ${(blob.size / 1048576).toFixed(1)} MB）`);
     } catch (e) {
       this.toast('导出 EPUB 失败：' + ((e && e.message) || '未知错误'));
     }
