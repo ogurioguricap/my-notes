@@ -76,6 +76,18 @@ function asInt(v, d = 0) {
   return Number.isFinite(n) ? Math.round(n) : d;
 }
 
+/** 卡片标签：允许 "a,b" 字符串或数组；去重、去空、最多 8 个 */
+export function parseCardTags(v) {
+  const list = Array.isArray(v) ? v : String(v == null ? '' : v).split(/[,，、;；]/);
+  const out = [];
+  for (const it of list) {
+    const t = String(it || '').trim();
+    if (t && !out.includes(t)) out.push(t);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 /** 内存存储（Node 测试 / 无 localStorage 环境） */
 export function memoryStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
@@ -132,14 +144,61 @@ export function makeNotebook(patch = {}) {
     trashedAt: patch.trashedAt || null,
     pages: Array.isArray(patch.pages) && patch.pages.length ? patch.pages.map(makePage) : [makePage()],
     audio: Array.isArray(patch.audio) ? patch.audio : [],
-    study: Array.isArray(patch.study) ? patch.study : [],
+    study: Array.isArray(patch.study) ? patch.study.map(normalizeCard) : [],
     version: SCHEMA_VERSION,
   };
   return nb;
 }
 
+/* ---------- 复习热图的数据（按天记账，只留最近一段时间） ---------- */
+
+export const REVIEW_LOG_DAYS = 400;
+
+/** 当天 key（本地时区，和用户看的日历一致） */
+export function dayKey(ts = Date.now()) {
+  const d = new Date(Number(ts) || 0);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 旧数据兜底：只认合法形状，坏数据当空 */
+export function parseReviewLog(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+    const o = v && typeof v === 'object' ? v : {};
+    out[k] = { n: asInt(o.n, 0), ok: asInt(o.ok, 0), bad: asInt(o.bad, 0) };
+  }
+  return out;
+}
+
+/** 闪卡统一形状（老数据没有 tags / lapses 时补齐） */
+export function normalizeCard(c = {}) {
+  return {
+    id: c.id || nid('cd'),
+    front: String(c.front || ''),
+    back: String(c.back || ''),
+    tags: Array.isArray(c.tags) ? c.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8) : [],
+    box: asInt(c.box, 0),
+    due: asInt(c.due, Date.now()),
+    lapses: asInt(c.lapses, 0),
+    reviews: asInt(c.reviews, 0),
+    pageId: c.pageId || '',
+    createdAt: asInt(c.createdAt, Date.now()),
+    last: asInt(c.last, 0) || undefined,
+  };
+}
+
 function emptyLibrary() {
-  return { version: SCHEMA_VERSION, folders: [], notebooks: [], templates: [], settings: { sort: 'updated', view: 'grid' } };
+  return {
+    version: SCHEMA_VERSION,
+    folders: [],
+    notebooks: [],
+    templates: [],
+    settings: { sort: 'updated', view: 'grid' },
+    reviewLog: {},       // 复习热图：{ 'YYYY-MM-DD': { n, ok, bad } }
+  };
 }
 
 /** 内置模板：新建笔记本时可以直接套用（对齐 GoodNotes 的「可导入模板本」） */
@@ -227,6 +286,7 @@ export class NotebookStore {
       return nb;
     });
     out.settings = { sort: (j.settings && j.settings.sort) || 'updated', view: (j.settings && j.settings.view) || 'grid' };
+    out.reviewLog = parseReviewLog(j.reviewLog);
     out.templates = (Array.isArray(j.templates) ? j.templates : []).map((t) => ({
       id: t.id || nid('tpl'),
       name: String(t.name || '模板'),
@@ -861,6 +921,7 @@ export class NotebookStore {
       id: nid('cd'),
       front: String(front || '').trim(),
       back: String(back || '').trim(),
+      tags: parseCardTags(opts.tags),
       box: 0,
       due: now(),
       lapses: 0,
@@ -872,6 +933,15 @@ export class NotebookStore {
     nb.study.push(card);
     this.save();
     return card;
+  }
+
+  setCardTags(bookId, cardId, tags) {
+    const nb = this.get(bookId);
+    const c = nb && nb.study.find((x) => x.id === cardId);
+    if (!c) return null;
+    c.tags = parseCardTags(tags);
+    this.touch(bookId);
+    return c;
   }
 
   removeCard(bookId, cardId) {
@@ -903,14 +973,138 @@ export class NotebookStore {
     }
     c.reviews = (c.reviews || 0) + 1;
     c.last = now();
+    this.logReview(remembered);
     this.save();
     return c;
+  }
+
+  /** 记一次复习（热图用）：按天累计，超过 REVIEW_LOG_DAYS 天的自动清掉 */
+  logReview(remembered, at = now()) {
+    const log = this.data.reviewLog || (this.data.reviewLog = {});
+    const key = dayKey(at);
+    const row = log[key] || (log[key] = { n: 0, ok: 0, bad: 0 });
+    row.n++;
+    if (remembered) row.ok++; else row.bad++;
+    const cut = dayKey(at - REVIEW_LOG_DAYS * 86400000);
+    for (const k of Object.keys(log)) if (k < cut) delete log[k];
+    this.save();
+    return row;
+  }
+
+  /**
+   * 复习热图数据：最近 days 天，每天一格（含今天）
+   * @returns {{days:Array<{date:string, n:number, ok:number, bad:number, level:number}>, total:number,
+   *            active:number, streak:number, best:number, today:number, max:number}}
+   */
+  reviewHeat({ days = 182, at = now() } = {}) {
+    const log = this.data.reviewLog || {};
+    const out = [];
+    let total = 0, active = 0, max = 0, streak = 0, best = 0, run = 0;
+    const start = at - (Math.max(7, Math.min(730, days)) - 1) * 86400000;
+    for (let i = 0; i < Math.max(7, Math.min(730, days)); i++) {
+      const ts = start + i * 86400000;
+      const key = dayKey(ts);
+      const row = log[key] || { n: 0, ok: 0, bad: 0 };
+      const n = Number(row.n) || 0;
+      total += n;
+      if (n > 0) { active++; run++; if (run > best) best = run; } else run = 0;
+      if (n > max) max = n;
+      out.push({ date: key, n, ok: Number(row.ok) || 0, bad: Number(row.bad) || 0, level: n === 0 ? 0 : n < 5 ? 1 : n < 15 ? 2 : n < 30 ? 3 : 4 });
+    }
+    // 当前连续天数：从今天往回数（今天没复习就数到昨天为止）
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].n > 0) streak++;
+      else if (i === out.length - 1) continue;   // 今天还没复习不算断
+      else break;
+    }
+    return { days: out, total, active, streak, best, today: out[out.length - 1] ? out[out.length - 1].n : 0, max };
   }
 
   dueCards(bookId, at = now()) {
     const nb = this.get(bookId);
     if (!nb) return [];
     return nb.study.filter((c) => (c.due || 0) <= at).sort((a, b) => (a.box || 0) - (b.box || 0));
+  }
+
+  /**
+   * 带筛选的到期队列（跨本复习用）
+   * @param {object} o { tag 卡片标签, bookTag 笔记本标签, bookId, folder, at, limit, includeNotDue }
+   * @returns {Array<{bookId,bookTitle,cardId,front,back,tags,box,pageId,bookTags}>} 按盒子层数从小到大（先复习最生的）
+   */
+  dueQueue({ tag = '', bookTag = '', bookId = '', folder = '', at = now(), limit = 0, includeNotDue = false } = {}) {
+    const live = this.data.notebooks.filter((n) => !n.trashedAt);
+    const wantTag = String(tag || '').trim();
+    const wantBookTag = String(bookTag || '').trim();
+    const out = [];
+    for (const nb of live) {
+      if (bookId && nb.id !== bookId) continue;
+      if (folder && nb.folder !== folder) continue;
+      if (wantBookTag && !(nb.tags || []).includes(wantBookTag)) continue;
+      for (const c of nb.study || []) {
+        if (wantTag && !(c.tags || []).includes(wantTag)) continue;
+        if (!includeNotDue && (c.due || 0) > at) continue;
+        out.push({
+          bookId: nb.id,
+          bookTitle: nb.title,
+          bookTags: nb.tags || [],
+          cardId: c.id,
+          front: c.front || '',
+          back: c.back || '',
+          tags: c.tags || [],
+          box: c.box || 0,
+          lapses: c.lapses || 0,
+          pageId: c.pageId || '',
+          due: c.due || 0,
+        });
+      }
+    }
+    out.sort((a, b) => (a.box - b.box) || (a.due - b.due));
+    return limit > 0 ? out.slice(0, limit) : out;
+  }
+
+  /** 复习中心的筛选项：标签 / 笔记本各有多少到期卡（界面直接渲染按钮） */
+  dueFacets({ at = now() } = {}) {
+    const live = this.data.notebooks.filter((n) => !n.trashedAt);
+    const tagMap = new Map();
+    const bookTagMap = new Map();
+    const books = [];
+    let due = 0, total = 0;
+    for (const nb of live) {
+      const cards = nb.study || [];
+      if (!cards.length) continue;
+      const d = cards.filter((c) => (c.due || 0) <= at).length;
+      due += d;
+      total += cards.length;
+      if (d) books.push({ bookId: nb.id, title: nb.title, due: d, total: cards.length });
+      for (const c of cards) {
+        const isDue = (c.due || 0) <= at;
+        for (const t of c.tags || []) {
+          const row = tagMap.get(t) || { tag: t, due: 0, total: 0 };
+          row.total++; if (isDue) row.due++;
+          tagMap.set(t, row);
+        }
+        for (const t of nb.tags || []) {
+          const row = bookTagMap.get(t) || { tag: t, due: 0, total: 0 };
+          row.total++; if (isDue) row.due++;
+          bookTagMap.set(t, row);
+        }
+      }
+    }
+    const byDue = (a, b) => (b.due - a.due) || a.tag.localeCompare(b.tag);
+    books.sort((a, b) => b.due - a.due);
+    return {
+      due,
+      total,
+      books,
+      tags: [...tagMap.values()].sort(byDue),
+      bookTags: [...bookTagMap.values()].sort(byDue),
+    };
+  }
+
+  /** 全部闪卡（导出 Anki / 备份用） */
+  allCards() {
+    const live = this.data.notebooks.filter((n) => !n.trashedAt);
+    return live.flatMap((nb) => (nb.study || []).map((c) => ({ ...c, bookId: nb.id, bookTitle: nb.title, bookTags: nb.tags || [] })));
   }
 
   /** 全库「今天该复习」：总数 + 分布在哪些本子上（资料库首页入口用） */
@@ -1138,6 +1332,7 @@ export class NotebookStore {
       exportedAt: new Date().toISOString(),
       folders: this.data.folders,
       notebooks: pick.map((n) => clone(n)),
+      reviewLog: this.data.reviewLog || {},     // 复习热图（导入时按天合并取较大值，不会重复累加）
     }, null, 1);
   }
 
@@ -1165,6 +1360,17 @@ export class NotebookStore {
       if (!merge) this.data.notebooks = [];
       this.data.notebooks.unshift(nb);
       result.notebooks++;
+    }
+    // 热图数据按天取较大值合并（两边各自记过同一天时，不会累加成双倍）
+    const incoming = parseReviewLog(j.reviewLog);
+    const log = this.data.reviewLog || (this.data.reviewLog = {});
+    for (const [k, v] of Object.entries(incoming)) {
+      const cur = log[k] || { n: 0, ok: 0, bad: 0 };
+      log[k] = {
+        n: Math.max(Number(cur.n) || 0, v.n),
+        ok: Math.max(Number(cur.ok) || 0, v.ok),
+        bad: Math.max(Number(cur.bad) || 0, v.bad),
+      };
     }
     this.save();
     return result;

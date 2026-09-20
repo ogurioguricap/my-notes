@@ -1866,8 +1866,7 @@ export class NotebookView {
         <div class="nb-field">
           <span>进度</span>
           <div class="nb-ocr-status" id="nbOcrStatus">共 ${st.pages} 页 · 已识别 ${st.done} 页${blankCount ? ` · ${blankCount} 页确认没字（不再重跑）` : ''} · 已入库 ${st.chars} 字</div>
-        </div>
-        ${failedIdx.length ? `<div class="nb-field">
+        </div>        ${failedIdx.length ? `<div class="nb-field">
           <span>失败的页（资料库里点「继续识别」也会自动重试这些页）</span>
           <div class="nb-hint">${failedIdx.map((i) => `第 ${i + 1} 页：${nbEsc(((nb.pages[i] && nb.pages[i].ocrError && nb.pages[i].ocrError.message) || '识别失败').slice(0, 80))}`).join('<br>')}</div>
         </div>` : ''}
@@ -2237,17 +2236,19 @@ export class NotebookView {
         <div class="nb-row nb-card-add">
           <input class="nb-input" type="text" data-x="cardFront" placeholder="正面（问题）">
           <input class="nb-input" type="text" data-x="cardBack" placeholder="背面（答案）">
+          <input class="nb-input" type="text" data-x="cardTags" placeholder="标签（逗号分隔，可选）">
           <button class="nb-btn" type="button" data-act="cardAdd">加卡片</button>
         </div>
 
         ${all.length ? `<div class="nb-divider"></div>
         <div class="nb-cards-list">
           ${all.slice(-40).reverse().map((c) => `<div class="nb-cards-item">
-            <span class="nb-cards-text">${nbEsc(c.front)}${c.back ? ' —— ' + nbEsc(c.back) : ''}</span>
+            <span class="nb-cards-text">${nbEsc(c.front)}${c.back ? ' —— ' + nbEsc(c.back) : ''}${(c.tags || []).length ? ` <i class="nb-card-tags">${c.tags.map((t) => '#' + nbEsc(t)).join(' ')}</i>` : ''}</span>
             <span class="nb-chip">盒 ${c.box || 0}</span>
             <button class="nb-btn ghost icon" type="button" data-act="cardDelete" data-id="${nbEsc(c.id)}" title="删掉这张卡">🗑</button>
           </div>`).join('')}
         </div>` : ''}
+        <div class="nb-hint">想按标签筛着复习、看复习热图、或把闪卡导出到 Anki：回资料库点「复习中心」。</div>
       </div>`;
   }
 
@@ -2336,9 +2337,10 @@ export class NotebookView {
   addCardManual() {
     const f = (q(this.panelEl, '[data-x="cardFront"]') || {}).value || '';
     const b = (q(this.panelEl, '[data-x="cardBack"]') || {}).value || '';
+    const tg = (q(this.panelEl, '[data-x="cardTags"]') || {}).value || '';
     if (!String(f).trim()) { this.toast('正面至少要写点东西'); return; }
-    try { this.store.addCard(this.bookId, f, b, { pageId: (this.nb.pages[this.cur] || {}).id }); } catch (e) {}
-    this.toast('卡片已加入');
+    try { this.store.addCard(this.bookId, f, b, { pageId: (this.nb.pages[this.cur] || {}).id, tags: tg }); } catch (e) {}
+    this.toast(tg.trim() ? `卡片已加入（标签：${String(tg).trim()}）` : '卡片已加入');
     this.cardDraft = {};
     this.resetStudyQueue();
     this.renderPanel();

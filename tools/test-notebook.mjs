@@ -1682,5 +1682,164 @@ head('跨本批量识别队列');
   expect('样式里有识别队列横幅与进度条', /\.lib-resume/.test(cssLibSrc) && /\.lib-bar/.test(cssLibSrc));
 }
 
+/* ============================ 17. 复习中心：筛着复习 / 热图 / 导出 Anki ============================ */
+head('复习中心（筛选复习 · 热图 · Anki）');
+{
+  const DAY = 86400000;
+  const s12 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const H = s12.create({ title: '考研数学', tags: ['期末', '高数'] });
+  const I = s12.create({ title: '英语单词', tags: ['期末'] });
+  s12.addPage(H.id, {}); s12.addPage(I.id, {});
+
+  // --- 卡片标签 ---
+  expect('标签解析：逗号 / 顿号 / 分号都能拆，去重去空', storeMod.parseCardTags(' 高数，极限、导数; 极限 ').join('|') === '高数|极限|导数');
+  expect('标签解析：最多 8 个、超出的丢掉', storeMod.parseCardTags('a,b,c,d,e,f,g,h,i,j').length === 8);
+  const c1 = s12.addCard(H.id, '极限的定义', 'ε-δ 语言', { tags: '高数, 分析' });
+  const c2 = s12.addCard(H.id, '中值定理', '拉格朗日 / 罗尔', { tags: ['高数'] });
+  const c3 = s12.addCard(I.id, 'abandon', '放弃', { tags: '单词, 核心' });
+  const c4 = s12.addCard(I.id, 'brief', '简短的', { tags: '单词' });
+  expect('加卡时带标签', c1.tags.join('|') === '高数|分析' && c3.tags.join('|') === '单词|核心');
+  expect('改标签（setCardTags）', (() => {
+    s12.setCardTags(H.id, c2.id, '高数, 重点');
+    const got = s12.get(H.id).study.find((c) => c.id === c2.id).tags;
+    return got.join('|') === '高数|重点';
+  })());
+
+  // --- 复习记账 + 热图（单独一个 store，免得影响下面的「都到期」前提） ---
+  const s13 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const heat0 = s13.reviewHeat({ days: 30 });
+  expect('热图：默认 30 天、今天还没复习时连续天数为 0', heat0.days.length === 30 && heat0.total === 0 && heat0.today === 0 && heat0.streak === 0);
+  s13.logReview(true);
+  s13.logReview(false);
+  expect('复习一次就记一次（热图当天计数 + 记住/忘了分开记）', (() => {
+    const h = s13.reviewHeat({ days: 30 });
+    return h.today === 2 && h.days[h.days.length - 1].ok === 1 && h.days[h.days.length - 1].bad === 1 && h.streak === 1;
+  })());
+  expect('热图分级：0/1~4/5~14/15~29/30+ 五档', (() => {
+    const lv = (n) => {
+      const s = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+      for (let i = 0; i < n; i++) s.logReview(true);
+      const d = s.reviewHeat({ days: 7 });
+      return d.days[d.days.length - 1].level;
+    };
+    return lv(0) === 0 && lv(3) === 1 && lv(6) === 2 && lv(20) === 3 && lv(40) === 4;
+  })());
+  expect('连续天数：昨天+今天连着算 2 天；今天没复习不断连胜', (() => {
+    const s = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const t = Date.now();
+    s.logReview(true, t - DAY);
+    s.logReview(true, t - 2 * DAY);
+    const h1 = s.reviewHeat({ days: 30, at: t });
+    return h1.streak === 2 && h1.best === 2 && h1.today === 0;
+  })());
+  expect('热图只留最近 REVIEW_LOG_DAYS 天（老数据自动清）', (() => {
+    const s = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    s.logReview(true, Date.now() - 900 * DAY);
+    s.logReview(true);
+    return Object.keys(s.data.reviewLog).length === 1;
+  })());
+  expect('坏数据不炸：非法日期 / 非法计数被忽略', (() => {
+    const log = storeMod.parseReviewLog({ '2024-01-01': { n: 3, ok: 3 }, 'x': { n: 5 }, '2024-13-99': { n: 2 }, '2024-02-02': 'oops' });
+    return Object.keys(log).length === 3 && log['2024-01-01'].n === 3 && log['2024-02-02'].n === 0;
+  })());
+  expect('热图写进备份（导出 JSON 里有 reviewLog）', (() => {
+    const j = JSON.parse(s13.exportJSON());
+    return !!j.reviewLog && Object.keys(j.reviewLog).length >= 1;
+  })());
+  expect('导入备份时热图按天取较大值合并（不会翻倍）', (() => {
+    const a = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    for (let i = 0; i < 3; i++) a.logReview(true);
+    for (let i = 0; i < 2; i++) b.logReview(true);
+    a.importJSON(b.exportJSON());
+    const k = Object.keys(a.data.reviewLog)[0];
+    return a.data.reviewLog[k].n === 3;
+  })());
+
+  // --- 筛选队列 ---
+  expect('到期队列：默认只出到期的（刚加的卡都到期）', s12.dueQueue().length === 4);
+  expect('到期队列：按卡片标签筛', s12.dueQueue({ tag: '高数' }).length === 2 && s12.dueQueue({ tag: '单词' }).length === 2);
+  expect('到期队列：按笔记本标签筛（考研数学 2 张 + 英语单词 2 张）', s12.dueQueue({ bookTag: '期末' }).length === 4 && s12.dueQueue({ bookTag: '不存在' }).length === 0);
+  expect('到期队列：按笔记本筛', s12.dueQueue({ bookId: I.id }).length === 2);
+  expect('到期队列：条目带本名 / 卡面 / 标签 / 盒子（界面直接用）', (() => {
+    const it = s12.dueQueue({ bookId: I.id })[0];
+    return it.bookTitle === '英语单词' && !!it.cardId && !!it.front && Array.isArray(it.tags) && typeof it.box === 'number';
+  })());
+  expect('到期队列：先复习最生的（盒子低的排前面）', (() => {
+    const s = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const bk = s.create({ title: '排序本' });
+    const fast = s.addCard(bk.id, '熟的', '');
+    s.reviewCard(bk.id, fast.id, true);
+    s.reviewCard(bk.id, fast.id, true);
+    s.addCard(bk.id, '生的', '');
+    const q = s.dueQueue({});
+    return q[0].front === '生的';
+  })());
+  expect('到期队列：limit 生效', s12.dueQueue({ limit: 2 }).length === 2);
+
+  // --- 筛选项（facets）在「全部到期」的状态下算 ---
+  const facets = s12.dueFacets({});
+  expect('筛选面：卡片标签带到期数（高数 2 / 单词 2 / 分析 1）', (() => {
+    const t = (k) => (facets.tags.find((x) => x.tag === k) || {}).due;
+    return t('高数') === 2 && t('单词') === 2 && t('分析') === 1;
+  })());
+  expect('筛选面：笔记本标签与笔记本各自统计', facets.bookTags.find((x) => x.tag === '期末').due === 4 && facets.books.length === 2);
+  expect('筛选面：总到期数与 dueStats 一致', facets.due === s12.dueStats().due && facets.due === 4 && facets.total === 4);
+
+  expect('复习完后这张卡就不再出现在到期队列里', (() => {
+    s12.reviewCard(H.id, c1.id, true);
+    return !s12.dueQueue({}).some((x) => x.cardId === c1.id);
+  })());
+  expect('includeNotDue 能把没到期的也拉出来（导全量用）', s12.dueQueue({ includeNotDue: true }).length === 4);
+  expect('回收站里的笔记本不进复习队列', (() => {
+    s12.trash(I.id);
+    const n = s12.dueQueue({}).length;
+    s12.restore(I.id);
+    return n === 1 && s12.dueQueue({}).length === 3;
+  })());
+
+  // --- Anki CSV ---
+  expect('CSV 转义：含逗号 / 引号 / 换行的字段加引号', studyMod.csvField('a,b') === '"a,b"' && studyMod.csvField('say "hi"') === '"say ""hi"""' && studyMod.csvField('a\nb') === '"a\nb"' && studyMod.csvField('plain') === 'plain');
+  expect('Anki 字段：换行转 <br>、HTML 转义（不会把卡面当 HTML 执行）', studyMod.ankiHtml('第一行\n第二行 <b>x</b>') === '第一行<br>第二行 &lt;b&gt;x&lt;/b&gt;');
+  const cards12 = s12.allCards();
+  expect('allCards 汇总全库闪卡并带上所属笔记本', cards12.length === 4 && cards12.every((c) => !!c.bookId && !!c.bookTitle));
+  const csv = studyMod.cardsToAnkiCsv(cards12, { deckName: '我的笔记' });
+  expect('Anki CSV：带三行表头（分隔符 / HTML / 标签列）+ 牌组名', csv.startsWith('#separator:Comma\n#html:true\n#tags column:3\n#deck:我的笔记\n'));
+  expect('Anki CSV：一行一张卡 + 字段行', csv.trim().split('\n').length === 4 + 5 && csv.includes('正面,背面,标签'));
+  expect('Anki CSV：标签列含卡片标签与「本_笔记本名」', /高数/.test(csv) && /本_考研数学/.test(csv) && /本_英语单词/.test(csv));
+  expect('Anki CSV：换行的卡面变成 <br>（不会把 CSV 撑破）', (() => {
+    const one = studyMod.cardsToAnkiCsv([{ front: 'A\nB', back: 'C', tags: [] }], {});
+    const body = one.trim().split('\n').slice(4);
+    return body.length === 1 && body[0].includes('A<br>B');
+  })());
+  expect('Anki CSV：没有正面的卡直接跳过（空行不进 Anki）', studyMod.cardsToAnkiCsv([{ front: '  ', back: 'x' }, { front: 'ok', back: '' }], {}).trim().split('\n').length === 5);
+  expect('Anki CSV：能按标签只导一部分', (() => {
+    const r = studyMod.ankiCsvFromStore(s12, { tag: '单词', includeNotDue: true });
+    return r.count === 2 && r.csv.includes('abandon') && !r.csv.includes('极限的定义');
+  })());
+  expect('Anki CSV：includeNotDue=false 时只导到期卡', (() => {
+    const r = studyMod.ankiCsvFromStore(s12, { includeNotDue: false });
+    return r.count < 4;
+  })());
+  expect('Anki CSV：没有卡时给空 CSV（表头仍在）', (() => {
+    const empty = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    return studyMod.ankiCsvFromStore(empty, {}).count === 0;
+  })());
+
+  // --- 界面对接 ---
+  const libSrc2 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  const cssLib2 = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-library.css'), 'utf8');
+  const viewerSrc2 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  expect('资料库有「复习中心」入口与会话', /data-act="review-center"/.test(libSrc2) && /_sheetReviewCenter/.test(libSrc2) && /_sheetReviewSession/.test(libSrc2));
+  expect('复习中心有筛选 chips（全部 / 标签 / 笔记本标签 / 笔记本）', /chip\('review-filter'/.test(libSrc2) && /data-key="\$\{key\}"/.test(libSrc2) && /facets\.bookTags/.test(libSrc2));
+  expect('复习会话有翻面 / 记住 / 忘了 / 跳过', /data-act="review-ok"/.test(libSrc2) && /data-act="review-bad"/.test(libSrc2) && /data-act="review-skip"/.test(libSrc2) && /data-act="review-flip"/.test(libSrc2));
+  expect('复习中心有 Anki 导出（全部 / 只导到期）', /data-act="review-anki"/.test(libSrc2) && /data-act="review-anki-due"/.test(libSrc2) && /ankiCsvFromStore/.test(libSrc2));
+  expect('资料库横幅显示连续天数', /连续 \$\{heat\.streak\} 天/.test(libSrc2) || /连续 \$\{heat\.streak\}/.test(libSrc2));
+  expect('热图样式齐备（26 周格子 + 5 档颜色 + 图例）', /\.lib-heat\b/.test(cssLib2) && /\.lib-heat-cell\.lv4/.test(cssLib2) && /\.lib-heat-scale/.test(cssLib2));
+  expect('复习卡面样式齐备（卡面 / 背面 / 结束页）', /\.lib-card-face/.test(cssLib2) && /\.lib-card-back/.test(cssLib2) && /\.lib-review-done/.test(cssLib2));
+  expect('笔记本面板加卡片时能填标签', /data-x="cardTags"/.test(viewerSrc2) && /tags: tg/.test(viewerSrc2));
+  expect('笔记本面板里显示卡片标签', /nb-card-tags/.test(viewerSrc2));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

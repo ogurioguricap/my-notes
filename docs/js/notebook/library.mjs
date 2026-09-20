@@ -31,7 +31,7 @@ import {
   templateGroups,
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
-import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf, notebookToMarkdown, markdownSlug } from './study.mjs';
+import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf, notebookToMarkdown, markdownSlug, ankiCsvFromStore } from './study.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, planOcrQueue, queueStats, resumeQueue, ocrQueue, queueProgressText,
 } from './ocr.mjs';
@@ -199,6 +199,10 @@ export class LibraryUI {
     this.ocrLastRes = null;
     this.ocrLastDone = 0;
     this.ocrLastTotal = 0;
+
+    /* 复习中心的状态 */
+    this._reviewFilter = { tag: '', bookTag: '', bookId: '', folder: '' };
+    this._review = null;
 
     this.el = {};
     this._bind();
@@ -529,13 +533,17 @@ export class LibraryUI {
     const review = (!filtering && this.state.scope === 'all' && typeof this.store.dueStats === 'function')
       ? this.store.dueStats()
       : { due: 0, list: [] };
+    const heat = (typeof this.store.reviewHeat === 'function') ? this.store.reviewHeat({ days: 182 }) : null;
+    const streak = heat && heat.streak ? `<i>连续 ${heat.streak} 天${heat.today ? ` · 今天已复习 ${heat.today} 次` : ''}</i>` : '';
     const banner = review.due > 0 ? `<div class="lib-review" data-role="review">
       <span class="lib-review-icon">🎴</span>
       <span class="lib-review-text">
         <b>今天该复习 ${review.due} 张卡</b>
         <i>分布在 ${review.notebooks} 本笔记本 · 已掌握 ${review.mastered}/${review.total}${review.todayReviews ? ` · 今天已复习 ${review.todayReviews} 次` : ''}</i>
+        ${streak}
       </span>
       <button class="lib-btn primary" type="button" data-act="start-review">开始复习</button>
+      <button class="lib-btn" type="button" data-act="review-center" title="按标签 / 笔记本筛着复习，看复习热图，导出到 Anki">复习中心</button>
     </div>` : '';
     const ocrBanner = (!filtering && this.state.scope === 'all') ? this._ocrBanner() : '';
     if (!list.length) {
@@ -704,6 +712,8 @@ export class LibraryUI {
       exportPdf: () => this._sheetExportPdf(),
       ocrQueue: () => this._sheetOcrQueue(sh.data),
       ocrProgress: () => this._sheetOcrProgress(),
+      reviewCenter: () => this._sheetReviewCenter(),
+      reviewSession: () => this._sheetReviewSession(),
     }[sh.type];
     if (!builder) return '';
     return `<div class="lib-sheet-mask" data-act="sheet-close">
@@ -1202,6 +1212,28 @@ export class LibraryUI {
       case 'import': this.importBackup(); break;
       case 'panel-close': this._panel = null; this._renderLayer(); break;
       case 'start-review': this.startReview(); break;
+
+      /* 复习中心（筛选 / 热图 / Anki） */
+      case 'review-center':
+        this.sheet = { type: 'reviewCenter' };
+        this._renderLayer();
+        break;
+      case 'review-filter': {
+        const f = this._reviewFilter || (this._reviewFilter = { tag: '', bookTag: '', bookId: '', folder: '' });
+        const key = hit.dataset.key;
+        if (key === 'all') { f.tag = ''; f.bookTag = ''; f.bookId = ''; }
+        else f[key] = f[key] === hit.dataset.v ? '' : hit.dataset.v;   // 再点一下取消筛选
+        this._renderLayer();
+        break;
+      }
+      case 'review-start': this.startReviewSession(); break;
+      case 'review-flip': case 'review-ok': case 'review-bad': case 'review-skip':
+        this._reviewStep(hit.dataset.act.replace('review-', ''));
+        break;
+      case 'review-in-book': this.startReview(); break;
+      case 'review-again': this.startReviewSession({ filter: (this._review && this._review.filter) || this._reviewFilter }); break;
+      case 'review-anki': this.exportAnki({ onlyDue: false }); break;
+      case 'review-anki-due': this.exportAnki({ onlyDue: true }); break;
       case 'tpl-del':
         e.stopPropagation();
         if (this.store.removeTemplate(rowId)) { this.toast('模板已删除'); this._renderLayer(); }
@@ -1369,7 +1401,7 @@ export class LibraryUI {
     this.onOpen(id, opts);
   }
 
-  /** 「今天该复习」入口：直接打开有到期卡片的那一本并弹出学习集面板 */
+  /** 「今天该复习」入口：直接打开有到期卡片的那一本并弹出学习集面板（带页面上下文的那种复习） */
   startReview() {
     const list = typeof this.store.dueNotebooks === 'function' ? this.store.dueNotebooks() : [];
     const first = list[0];
@@ -1881,6 +1913,148 @@ export class LibraryUI {
     } catch (err) {
       this._fail(err);
     }
+  }
+
+  /* ---------- 复习中心（筛着复习 / 热图 / 导出 Anki） ---------- */
+
+  /** 复习中心：筛选（标签 / 笔记本）→ 看还剩多少 → 开始复习；顺手把热图与 Anki 导出放这儿 */
+  _sheetReviewCenter() {
+    const f = this._reviewFilter || (this._reviewFilter = { tag: '', bookTag: '', bookId: '', folder: '' });
+    const facets = this.store.dueFacets ? this.store.dueFacets({}) : { due: 0, total: 0, books: [], tags: [], bookTags: [] };
+    const queue = this.store.dueQueue ? this.store.dueQueue(f) : [];
+    const heat = this.store.reviewHeat ? this.store.reviewHeat({ days: 182 }) : null;
+    const chip = (act, key, value, label, active, extra = '') => `<button type="button" class="lib-chip${active ? ' on' : ''}" data-act="${act}" data-key="${key}" data-v="${bkEsc(value)}" ${extra}>${bkEsc(label)}</button>`;
+    return `<div class="lib-sheet-head"><h3>复习中心</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-field"><span>筛哪一批（现在到期 <b>${queue.length}</b> 张）</span>
+          <div class="lib-row">
+            ${chip('review-filter', 'all', '', `全部到期（${facets.due}）`, !f.tag && !f.bookTag && !f.bookId)}
+            ${facets.tags.slice(0, 8).map((t) => chip('review-filter', 'tag', t.tag, `#${t.tag}（${t.due}）`, f.tag === t.tag)).join('')}
+          </div>
+          ${facets.bookTags.length ? `<div class="lib-row">
+            ${facets.bookTags.slice(0, 8).map((t) => chip('review-filter', 'bookTag', t.tag, `🏷 ${t.tag}（${t.due}）`, f.bookTag === t.tag)).join('')}
+          </div>` : ''}
+          ${facets.books.length ? `<div class="lib-row">
+            ${facets.books.slice(0, 6).map((b) => chip('review-filter', 'bookId', b.bookId, `${b.title}（${b.due}）`, f.bookId === b.bookId)).join('')}
+          </div>` : ''}
+        </div>
+        <div class="lib-row">
+          <button type="button" class="lib-btn primary" data-act="review-start" ${queue.length ? '' : 'disabled'}>开始复习（${queue.length} 张）</button>
+          <button type="button" class="lib-btn" data-act="review-in-book" title="打开最该复习的那一本，在页面上下文中复习（能看到卡片来自哪一页）">进本子复习</button>
+          <button type="button" class="lib-btn" data-act="review-anki" title="导出 Anki 可导入的 CSV（正面 / 背面 / 标签）">导出 Anki CSV</button>
+          <button type="button" class="lib-btn" data-act="review-anki-due" title="只导出当前筛选下到期的卡">只导到期</button>
+        </div>
+        <div class="lib-field"><span>复习热图（最近 26 周）</span>
+          ${this._heatHTML(heat)}
+        </div>
+        <div class="lib-hint">
+          队列按「盒子层数」从小到大排（最不熟的先来）；「忘了」这张卡会在 10 分钟后再出现。
+          Anki CSV 带标签（卡片标签 + <code>本_笔记本名</code>），导入 Anki 时选「逗号分隔、允许 HTML」即可。
+        </div>
+      </div>`;
+  }
+
+  /** 热图：26 列 × 7 行的小方块（列 = 周，行 = 星期几），颜色深浅按当天复习次数 */
+  _heatHTML(heat) {
+    if (!heat || !heat.days || !heat.days.length) return '<p class="lib-hint">还没有复习记录。</p>';
+    // 让最后一列落在「本周」，前面补空格对齐星期几
+    const days = heat.days;
+    const firstDow = new Date(`${days[0].date}T00:00:00`).getDay();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push('<i class="lib-heat-cell empty"></i>');
+    for (const d of days) cells.push(`<i class="lib-heat-cell lv${d.level}" title="${d.date}：复习 ${d.n} 次${d.bad ? `（忘了 ${d.bad}）` : ''}"></i>`);
+    return `<div class="lib-heat-wrap">
+      <div class="lib-heat">${cells.join('')}</div>
+      <p class="lib-heat-legend">
+        最近 ${days.length} 天复习 ${heat.total} 次 · 有复习的天数 ${heat.active} · 当前连续 ${heat.streak} 天 · 最长连续 ${heat.best} 天
+        <span class="lib-heat-scale"><i class="lib-heat-cell lv0"></i><i class="lib-heat-cell lv1"></i><i class="lib-heat-cell lv2"></i><i class="lib-heat-cell lv3"></i><i class="lib-heat-cell lv4"></i></span>
+      </p>
+    </div>`;
+  }
+
+  /** 复习会话：一张一张过（卡面 → 翻面 → 记住 / 忘了），跨本可用 */
+  _sheetReviewSession() {
+    const s = this._review || { queue: [], i: 0, flipped: false, ok: 0, bad: 0 };
+    const card = s.queue[s.i];
+    if (!card) {
+      return `<div class="lib-sheet-head"><h3>复习结束</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+        <div class="lib-sheet-body">
+          <div class="lib-review-done">
+            <b>这一轮复习完了</b>
+            <i>记住 ${s.ok} 张 · 忘了 ${s.bad} 张${s.bad ? '（忘了的会在 10 分钟后再到期）' : ''}</i>
+          </div>
+          <div class="lib-row">
+            <button type="button" class="lib-btn primary" data-act="review-again">再复习一轮到期卡</button>
+            <button type="button" class="lib-btn" data-act="sheet-close">结束</button>
+          </div>
+        </div>`;
+    }
+    const total = s.queue.length;
+    const pct = Math.round((s.i / total) * 100);
+    return `<div class="lib-sheet-head"><h3>复习 ${s.i + 1} / ${total}</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-bar"><i style="width:${pct}%"></i></div>
+        <div class="lib-card-face${s.flipped ? ' flipped' : ''}" data-act="review-flip">
+          <div class="lib-card-meta">${bkEsc(card.bookTitle)}${card.tags && card.tags.length ? ` · ${card.tags.map((t) => '#' + bkEsc(t)).join(' ')}` : ''} · 盒子 ${card.box}/5${card.lapses ? ` · 忘过 ${card.lapses} 次` : ''}</div>
+          <div class="lib-card-front">${bkEsc(card.front)}</div>
+          <div class="lib-card-back">${s.flipped ? bkEsc(card.back || '（这张卡没有背面）') : '<span class="lib-hint">点一下看答案</span>'}</div>
+        </div>
+        <div class="lib-row">
+          ${s.flipped
+            ? `<button type="button" class="lib-btn primary" data-act="review-ok">记住了（+1 盒）</button>
+               <button type="button" class="lib-btn danger" data-act="review-bad">忘了（10 分钟后重来）</button>`
+            : '<button type="button" class="lib-btn primary" data-act="review-flip">看答案</button>'}
+          <button type="button" class="lib-btn ghost" data-act="review-skip">跳过这张</button>
+          <span class="lib-hint">已记住 ${s.ok} · 忘了 ${s.bad}</span>
+        </div>
+      </div>`;
+  }
+
+  /** 开始复习：把筛选结果做成队列，复制一份（复习过程中卡片到期时间会变，队列不变） */
+  startReviewSession(opts = {}) {
+    const filter = opts.filter || this._reviewFilter || {};
+    const queue = this.store.dueQueue ? this.store.dueQueue({ ...filter, limit: opts.limit || 60 }) : [];
+    if (!queue.length) { this.toast('这个筛选下没有到期的卡'); return null; }
+    this._review = { queue: queue.map((c) => ({ ...c })), i: 0, flipped: false, ok: 0, bad: 0, filter: { ...filter } };
+    this.sheet = { type: 'reviewSession' };
+    this.render();
+    return this._review;
+  }
+
+  /** 翻面 / 判定 / 跳过 */
+  _reviewStep(kind) {
+    const s = this._review;
+    if (!s || !s.queue.length) { this.sheet = null; this.refresh(); return; }
+    const card = s.queue[s.i];
+    if (kind === 'flip') { s.flipped = !s.flipped; }
+    else if (kind === 'skip') { s.i++; s.flipped = false; }
+    else {
+      const remembered = kind === 'ok';
+      this.store.reviewCard(card.bookId, card.cardId, remembered);
+      if (remembered) s.ok++; else s.bad++;
+      s.i++;
+      s.flipped = false;
+    }
+    if (s.i >= s.queue.length) {
+      this.toast(`复习完成：记住 ${s.ok} 张${s.bad ? `，忘了 ${s.bad} 张` : ''}`);
+      // 全过完了 → 清掉会话态，露出结束页
+    }
+    this._renderLayer();
+  }
+
+  /** 导出 Anki CSV（按当前筛选；`onlyDue` 时只导到期卡） */
+  exportAnki({ onlyDue = false } = {}) {
+    const f = this._reviewFilter || {};
+    const res = ankiCsvFromStore(this.store, {
+      tag: f.tag || '', bookTag: f.bookTag || '', bookId: f.bookId || '', folder: f.folder || '',
+      includeNotDue: !onlyDue,
+      deckName: '我的笔记',
+    });
+    if (!res.count) { this.toast('没有可导出的闪卡'); return 0; }
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadBlob(new Blob([res.csv], { type: 'text/csv;charset=utf-8' }), `闪卡-Anki-${stamp}.csv`);
+    this.toast(`已导出 ${res.count} 张卡到 Anki CSV（导入时选「逗号分隔 + 允许 HTML」）`);
+    return res.count;
   }
 
   /* ---------- 模板与 Markdown 导出 ---------- */

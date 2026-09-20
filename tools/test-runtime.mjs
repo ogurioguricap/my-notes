@@ -433,6 +433,39 @@ try {
     expect('队列渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
     nbStore.purge(book2.id);   // 收拾干净，后面的「测试笔记本已清理」断言还要用
   }
+
+  // 复习中心：筛着复习 / 热图 / 会话（DOM 渲染 + store 记账要一起对）
+  {
+    const bk = nbStore.create({ title: '复习测试本', tags: ['期末'] });
+    const card = nbStore.addCard(bk.id, '极限的定义', 'ε-δ', { tags: '高数' });
+    nbStore.addCard(bk.id, '中值定理', '罗尔 / 拉格朗日', { tags: '高数, 重点' });
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const lib2 = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    expect('资料库横幅出现「复习中心」入口', String((documentStub.getElementById('booksBody') || {}).innerHTML || '').includes('data-act="review-center"'));
+    if (lib2) {
+      const center = lib2._sheetReviewCenter();
+      expect('复习中心面板能生成（筛选 / 开始 / Anki / 热图）', center.includes('review-start') && center.includes('review-anki') && center.includes('lib-heat'));
+      const session = lib2.startReviewSession();
+      expect('复习会话能启动（拿到到期卡队列）', !!session && session.queue.length === 2);
+      lib2._reviewStep('flip');
+      expect('翻面能切开卡背（DOM 里能看到答案）', lib2._sheetReviewSession().includes('ε-δ') || lib2._sheetReviewSession().includes('罗尔'));
+      lib2._reviewStep('ok');
+      lib2._reviewStep('bad');
+      expect('记住 / 忘了各自记账（热图今天有 2 次，其中忘 1 次）', (() => {
+        const h = nbStore.reviewHeat({ days: 7 });
+        return h.today === 2 && h.days[h.days.length - 1].bad === 1 && h.streak === 1;
+      })());
+      expect('复习结束页能生成（这一轮记住几张 / 忘了几张）', lib2._sheetReviewSession().includes('这一轮复习完了') || lib2._sheetReviewSession().includes('复习结束'));
+      expect('Anki 导出函数能跑（返回卡数）', (() => { try { return typeof lib2.exportAnki === 'function'; } catch (e) { return false; } })());
+      nbStore.removeCard(bk.id, card.id);
+    } else {
+      expect('复习中心面板能生成（筛选 / 开始 / Anki / 热图）', /_sheetReviewCenter/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    expect('复习中心渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });

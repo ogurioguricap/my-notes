@@ -1311,3 +1311,58 @@ export function deckStats(store, bookId) {
 export function deckQueue(store, bookId, limit = 20) {
   return store.dueCards(bookId).slice(0, limit);
 }
+
+/* ============================ 导出到 Anki（CSV） ============================ */
+
+/** Anki 的文本导入头：逗号分隔、按 HTML 解析（换行才能变成 <br>）、标签在第 3 列 */
+export const ANKI_HEADER = ['#separator:Comma', '#html:true', '#tags column:3'];
+
+/** 字段转义：包含逗号 / 引号 / 换行时加引号，内部引号翻倍 */
+export function csvField(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** 卡面/卡背里换行改 <br>（Anki 开了 html:true 才认），同时去掉会打断导入的裸换行 */
+export function ankiHtml(text) {
+  return String(text == null ? '' : text)
+    .replace(/\r\n?/g, '\n')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+/**
+ * 闪卡 → Anki 可导入的 CSV（字段：正面, 背面, 标签）
+ * @param {Array} cards 卡片（带 bookTitle / bookTags / tags）
+ * @param {object} o { withBookTag=true 把笔记本名当标签, extraTags 额外标签, deckName }
+ */
+export function cardsToAnkiCsv(cards, { withBookTag = true, extraTags = [], deckName = '' } = {}) {
+  const lines = [...ANKI_HEADER];
+  if (deckName) lines.push(`#deck:${String(deckName).replace(/[,:\n]/g, ' ')}`);
+  lines.push('正面,背面,标签');
+  for (const c of cards || []) {
+    if (!c || !String(c.front || '').trim()) continue;
+    const tags = [];
+    for (const t of c.tags || []) tags.push(String(t).replace(/\s+/g, '_'));
+    if (withBookTag && c.bookTitle) tags.push(`本_${String(c.bookTitle).replace(/[\s,]+/g, '_')}`);
+    for (const t of extraTags || []) tags.push(String(t).replace(/\s+/g, '_'));
+    const uniq = [...new Set(tags.filter(Boolean))];
+    lines.push([csvField(ankiHtml(c.front)), csvField(ankiHtml(c.back)), csvField(uniq.join(' '))].join(','));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** 从 store 直接导出（资料库「导出 Anki CSV」用）：可带筛选 */
+export function ankiCsvFromStore(store, { tag = '', bookTag = '', bookId = '', folder = '', includeNotDue = true, deckName = '', extraTags = [] } = {}) {
+  const cards = typeof store.allCards === 'function'
+    ? store.allCards().filter((c) => {
+      if (bookId && c.bookId !== bookId) return false;
+      if (tag && !(c.tags || []).includes(tag)) return false;
+      if (bookTag && !(c.bookTags || []).includes(bookTag)) return false;
+      if (folder) { const nb = store.get(c.bookId); if (!nb || nb.folder !== folder) return false; }
+      if (!includeNotDue && (c.due || 0) > Date.now()) return false;
+      return true;
+    })
+    : [];
+  return { csv: cardsToAnkiCsv(cards, { deckName, extraTags }), count: cards.length };
+}
