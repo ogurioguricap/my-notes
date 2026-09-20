@@ -211,6 +211,8 @@ notes-site/
 │   ├── test-notebook.mjs       GoodNotes 模式实测（笔记本 / 页面 / 四种笔 / 闪卡·复习中心（筛选 / 热图 / Anki）/ 录音转写·分片·分段锚定 / 朗读 / PDF 文字层·目录页层级·内链·阅读版 / 长图 / 批量导出 / EPUB（层级目录·封面·内链·NCX）·单文件 HTML / OCR 定位·选区·原位替换·跨本批量队列 / 封面图 / 命中高亮 / 模板库 / Markdown 导出 / 手势，515 项断言）
 │   ├── notebook-base.css       （↑ 14 张纸、6 种封面、工具条与页栈）
 │   ├── test-ui-lib.mjs         资料库界面数据契约（23 项断言）
+│   ├── push-api.mjs            备用推送：按文件走 Contents API（不留本地 git 历史）
+│   ├── push-exact.mjs          精确推送：走 Git Data API 把本地那条提交原样推上去（同 sha，git 连不上时用）
 │   └── verify-live.mjs         线上校验：把 Pages 上的文件与本地逐字节比对（push 后确认真的上线了）
 │
 ├── docs/                       ← 构建产物，GitHub Pages 直接托管这一层
