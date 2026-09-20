@@ -31,7 +31,7 @@ import {
   templateGroups,
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
-import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, qualityOf, notebookToMarkdown, markdownSlug, ankiCsvFromStore } from './study.mjs';
+import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, PDF_LAYOUTS, layoutOf, qualityOf, notebookToMarkdown, markdownSlug, ankiCsvFromStore } from './study.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, planOcrQueue, queueStats, resumeQueue, ocrQueue, queueProgressText,
 } from './ocr.mjs';
@@ -792,6 +792,11 @@ export class LibraryUI {
             <button type="button" class="lib-chip${this._exportMerge === false ? ' on' : ''}" data-act="export-merge" data-v="0">每本一个 PDF</button>
           </div>
         </div>
+        <div class="lib-field"><span>打印排版（省纸）</span>
+          <div class="lib-row">
+            ${PDF_LAYOUTS.map((L) => `<button type="button" class="lib-chip${(this._exportLayout || 'single') === L.id ? ' on' : ''}" data-act="export-layout" data-v="${L.id}" title="${bkEsc(L.hint)}">${bkEsc(L.label)}</button>`).join('')}
+          </div>
+        </div>
         <p class="lib-hint">
           导出的 PDF 会带上<b>可搜索文字层</b>：页面里的文本框按下
           ${this._exportMerge === false ? '（逐本导出时也会）' : ''}，以及已经 OCR 过的手写内容——在阅读器里 Ctrl+F 能搜到、能选中复制。
@@ -1246,6 +1251,7 @@ export class LibraryUI {
         break;
       case 'export-quality': this._exportQ = hit.dataset.v || 'high'; this._renderLayer(); break;
       case 'export-merge': this._exportMerge = hit.dataset.v !== '0'; this._renderLayer(); break;
+      case 'export-layout': this._exportLayout = layoutOf(hit.dataset.v).id; this._renderLayer(); break;
       case 'export-run': this.runBulkExport(); break;
 
       /* 批量手写识别（跨本队列） */
@@ -1888,6 +1894,7 @@ export class LibraryUI {
       const res = await buildPdfFromNotebooks(books, {
         qualityId,
         merge,
+        layoutId: this._exportLayout || 'single',
         title: books.length === 1 ? books[0].title : `笔记本合集-${books.length}本`,
         onProgress: ({ done, total: tt, title }) => {
           const msg = merge ? `生成中 ${done}/${tt}…` : `导出 ${done}/${tt}：${title}`;
@@ -1896,15 +1903,17 @@ export class LibraryUI {
           if (el) el.textContent = msg;
         },
       });
+      const lay = layoutOf(this._exportLayout || 'single');
+      const tail = lay.id === 'single' ? '' : `-${lay.id}`;
       if (res.merged) {
-        downloadBlob(res.blob, `笔记本合集-${books.length}本-${qualityOf(qualityId).label.replace(/[（）]/g, '')}.pdf`);
-        this.toast(`已导出合并 PDF（${res.pages} 页 · ${(res.blob.size / 1048576).toFixed(1)} MB）`);
+        downloadBlob(res.blob, `笔记本合集-${books.length}本-${qualityOf(qualityId).label.replace(/[（）]/g, '')}${tail}.pdf`);
+        this.toast(`已导出合并 PDF（${res.pages} 页${lay.id === 'single' ? '' : ` → ${res.sheets} 面`} · ${(res.blob.size / 1048576).toFixed(1)} MB）`);
       } else {
         for (const f of res.files) {
-          downloadBlob(f.blob, `${String(f.title).replace(/[\\/:*?"<>|]+/g, '_')}.pdf`);
+          downloadBlob(f.blob, `${String(f.title).replace(/[\\/:*?"<>|]+/g, '_')}${tail}.pdf`);
           await new Promise((r) => setTimeout(r, 350));   // 给浏览器一点时间逐个下载
         }
-        this.toast(`已逐本导出 ${res.files.length} 个 PDF（共 ${res.pages} 页）`);
+        this.toast(`已逐本导出 ${res.files.length} 个 PDF（共 ${res.pages} 页${lay.id === 'single' ? '' : ` → 共 ${res.files.reduce((s, f) => s + (f.sheets || f.pages), 0)} 面`}）`);
       }
       this.sheet = null;
       this.selecting = false;

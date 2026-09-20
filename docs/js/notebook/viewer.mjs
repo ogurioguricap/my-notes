@@ -26,7 +26,7 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS, renderCover,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, PDF_LAYOUTS, layoutOf, layoutHint, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
 import {
   ASR_MODELS, transcribeAudio, transcribeAudioFull, transcribeChunked, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
 } from './asr.mjs';
@@ -136,6 +136,7 @@ export class NotebookView {
     this.textLayer = true;      // 导出 PDF 是否带可搜索文字层
     this.pdfToc = true;         // 导出 PDF 是否自动插一页目录
     this.plainPaper = false;    // 阅读版：导出时去格线
+    this.pdfLayout = 'single';  // 省纸排版：single / nup2h / nup2v / booklet
     this.searchIndex = 0;       // 笔记本内搜索当前高亮的命中
     this.speaker = null;        // 朗读器（浏览器 TTS）
     this.speak = { sentences: [], index: -1 };
@@ -203,6 +204,8 @@ export class NotebookView {
         <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
         <button type="button" data-act="toggleToc">PDF 自动目录页</button>
         <button type="button" data-act="togglePlain">阅读版（去格线，省墨）</button>
+        <hr>
+        ${PDF_LAYOUTS.map((L) => `<button type="button" data-act="toggleLayout" data-note="${L.id}" title="${nbEsc(L.hint)}">${this.pdfLayout === L.id ? '✓ ' : ''}排版：${nbEsc(L.label)}</button>`).join('')}
         <hr>
         <button type="button" data-act="print">打印</button>
       </div>
@@ -572,6 +575,19 @@ export class NotebookView {
     if (act === 'togglePlain') {
       this.plainPaper = !this.plainPaper;
       this.toast(this.plainPaper ? '阅读版：导出 PDF 时去掉格线/横线（省墨）' : '恢复正常纸张：导出 PDF 带格线');
+      return true;
+    }
+    if (act === 'toggleLayout') {
+      this.pdfLayout = note && layoutOf(note) ? note : 'single';
+      const L = layoutOf(this.pdfLayout);
+      // 菜单里的 ✓ 就地更新（菜单是静态模板，不用整块重绘）
+      try {
+        (this.root.querySelectorAll('[data-act="toggleLayout"]') || []).forEach((btn) => {
+          const id = btn.dataset ? btn.dataset.note : '';
+          btn.textContent = `${this.pdfLayout === id ? '✓ ' : ''}排版：${(layoutOf(id) || {}).label || id}`;
+        });
+      } catch (e) { /* 拿不到就算了，功能不受影响 */ }
+      this.toast(this.pdfLayout === 'single' ? '排版：一页一张' : `排版：${L.label} —— ${layoutHint(this.pdfLayout, (this.nb && this.nb.pages || []).length)}`);
       return true;
     }
     if (act === 'exportJson') {
@@ -2849,15 +2865,19 @@ export class NotebookView {
         plain: !!this.plainPaper,
         toc,
         outlines,
+        layoutId: this.pdfLayout || 'single',
         renderPageImpl: renderPage,
         onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
       });
       if (!blob) { this.toast('PDF 生成失败'); return; }
       const mb = (blob.size / 1048576).toFixed(1);
-      downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}${this.plainPaper ? '-阅读版' : ''}.pdf`);
+      const lay = layoutOf(this.pdfLayout || 'single');
+      downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}${this.plainPaper ? '-阅读版' : ''}${lay.id === 'single' ? '' : `-${lay.id}`}.pdf`);
       const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}`
-        + `${toc ? ` · 目录 ${toc.entries.length} 项` : ''}${this.plainPaper ? ' · 阅读版' : ''}`;
-      this.toast(`PDF 已导出（${pdfPageCount(pages, { toc })} 页 · ${q.label} · ${mb} MB${extras}）`);
+        + `${toc ? ` · 目录 ${toc.entries.length} 项` : ''}${this.plainPaper ? ' · 阅读版' : ''}`
+        + `${lay.id === 'single' ? '' : ` · 排版 ${lay.label}`}`;
+      const sheets = pdfPageCount(pages, { toc, layoutId: lay.id });
+      this.toast(`PDF 已导出（${lay.id === 'single' ? `${sheets} 页` : `${total} 页 → ${sheets} 面`} · ${q.label} · ${mb} MB${extras}）`);
     } catch (e) {
       this.toast('导出 PDF 失败：' + ((e && e.message) || '未知错误'));
     }

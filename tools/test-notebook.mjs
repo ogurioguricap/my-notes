@@ -1977,5 +1977,107 @@ head('EPUB 层级目录 · 封面 · 内链');
   expect('界面把封面画法传给了导出（没有自定义封面图也有书封）', /renderCoverImpl: renderCover/.test(viewerSrc3) && /cover: true/.test(viewerSrc3));
 }
 
+/* ============================ 19. 省纸排版（2 页拼一张 / 骑马钉小册子） ============================ */
+head('省纸排版（2 页拼一张 · 骑马钉）');
+{
+  const im = (w, h) => ({ jpeg: new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 7, 7, 0xFF, 0xD9]), w, h });
+  const pdfText = (bytes) => Buffer.from(bytes).toString('latin1');
+  /** 极简：从写出来的 PDF 里取出每页的 MediaBox 与内容流里的 cm 矩阵 */
+  const mediaBoxes = (bytes) => [...pdfText(bytes).matchAll(/\/MediaBox \[0 0 (\d+) (\d+)\]/g)].map((m) => [+m[1], +m[2]]);
+  const contentStreams = (bytes) => [...pdfText(bytes).matchAll(/stream\n([\s\S]*?)\nendstream/g)].map((m) => m[1]);
+
+  expect('排版档位齐全（一页一张 / 横版并排 / 竖版上下 / 骑马钉）', studyMod.PDF_LAYOUTS.map((L) => L.id).join(',') === 'single,nup2h,nup2v,booklet');
+  expect('layoutOf 认不出的 id 退回一页一张', studyMod.layoutOf('nope').id === 'single' && studyMod.layoutOf('nup2h').id === 'nup2h');
+
+  // --- 骑马钉页序（最容易排错的一块） ---
+  expect('骑马钉页序：4 页 → 正面 [4,1]、背面 [2,3]', JSON.stringify(studyMod.bookletOrder(4)) === '[[4,1],[2,3]]');
+  expect('骑马钉页序：8 页 → [8,1] [2,7] [6,3] [4,5]', JSON.stringify(studyMod.bookletOrder(8)) === '[[8,1],[2,7],[6,3],[4,5]]');
+  expect('骑马钉页序：6 页会补空白凑到 4 的倍数（越界记 0，不画）', (() => {
+    const o = studyMod.bookletOrder(6);
+    return o.length === 4 && JSON.stringify(o) === '[[0,1],[2,0],[6,3],[4,5]]';
+  })());
+  expect('骑马钉页序：每页只出现一次（不会漏页/重复）', (() => {
+    for (const n of [4, 5, 6, 7, 8, 11, 12]) {
+      const seen = studyMod.bookletOrder(n).flat().filter((x) => x >= 1);
+      if (seen.length !== n || new Set(seen).size !== n) return false;
+    }
+    return true;
+  })());
+
+  // --- 排版几何 ---
+  const plan2 = studyMod.planSheets([{ w: 595, h: 842 }, { w: 595, h: 842 }, { w: 595, h: 842 }, { w: 595, h: 842 }], { layoutId: 'nup2h', gap: 10 });
+  expect('横版 2 页拼一张：4 页 → 2 张纸，每张 2 格', plan2.sheets.length === 2 && plan2.sheets[0].draws.length === 2 && plan2.per === 2);
+  expect('横版 2 页拼一张：纸是 A4 横版（842×595）', plan2.mediaW === 842 && plan2.mediaH === 595);
+  expect('排版会等比缩放并居中（A4 竖版放进半张横版 A4 → 约 0.707 倍）', (() => {
+    const d = plan2.sheets[0].draws[0];
+    const noGap = studyMod.planSheets([{ w: 595, h: 842 }, { w: 595, h: 842 }], { layoutId: 'nup2h', gap: 0 }).sheets[0].draws[0];
+    return Math.abs(noGap.scale - 595 / 842) < 0.02 && Math.abs(d.scale - 0.699) < 0.01 && Math.abs(d.w - 416) < 3;
+  })());
+  expect('左右两格不重叠、都落在纸内', (() => {
+    const [a, b] = plan2.sheets[0].draws;
+    return b.x > a.x + a.w - 1 && a.x >= 0 && b.x + b.w <= 842 + 0.5 && a.y >= 0 && a.y + a.h <= 595 + 0.5;
+  })());
+  expect('竖版 2 页拼一张：上下两格、纸是 A4 竖版', (() => {
+    const p = studyMod.planSheets([{ w: 595, h: 842 }, { w: 595, h: 842 }], { layoutId: 'nup2v' });
+    const [a, b] = p.sheets[0].draws;
+    return p.mediaW === 595 && p.mediaH === 842 && b.y > a.y + a.h - 1 && a.x >= 0;
+  })());
+  expect('一页一张：纸张尺寸跟着每一页自己走（不同尺寸混排也不会互相污染）', (() => {
+    const p = studyMod.planSheets([{ w: 595, h: 842 }, { w: 842, h: 595 }], { layoutId: 'single' });
+    const box2 = mediaBoxes(studyMod.pdfFromImages([im(595, 842), im(842, 595)], {}));
+    return p.sheets.length === 2 && box2[0].join('x') === '595x842' && box2[1].join('x') === '842x595';
+  })());
+  expect('骑马钉：8 页 → 4 面（A3 折页，2 页/面）', (() => {
+    const p = studyMod.planSheets(Array.from({ length: 8 }, () => ({ w: 595, h: 842 })), { layoutId: 'booklet' });
+    return p.sheets.length === 4 && p.mediaW === 1191 && p.mediaH === 842 && p.sheets.every((s) => s.draws.length === 2);
+  })());
+  expect('排版说明能算出「几页 → 几面、几张纸」', /8 页 → 4 面/.test(studyMod.layoutHint('nup2h', 8)) && /双面打印约 2 张纸/.test(studyMod.layoutHint('nup2h', 8)));
+
+  // --- 真写 PDF：结构仍然合法 ---
+  const four = [im(595, 842), im(595, 842), im(595, 842), im(595, 842)];
+  const nup = studyMod.pdfFromImages(four, { layoutId: 'nup2h' });
+  const nupTxt = pdfText(nup);
+  expect('2 页拼一张：PDF 页数变成 2（Pages /Count 与 MediaBox 都对）', /\/Count 2\b/.test(nupTxt) && mediaBoxes(nup).length === 2 && mediaBoxes(nup).every((b) => b.join('x') === '842x595'));
+  expect('2 页拼一张：每面画两张图（Im0 / Im1 都在内容流里）', contentStreams(nup).some((s) => /\/Im0 Do/.test(s) && /\/Im1 Do/.test(s)));
+  expect('2 页拼一张：缩放的 cm 矩阵写进去了（不是原尺寸硬贴）', contentStreams(nup).some((s) => /q 0\.699\d* 0 0 0\.699\d* [\d.]+ [\d.]+ cm/.test(s)));
+  expect('2 页拼一张：xref / startxref 偏移仍然自洽（能打开才算数）', (() => {
+    const at = Number(/startxref\n(\d+)/.exec(nupTxt)[1]);
+    return at > 0 && nupTxt.slice(at, at + 4) === 'xref' && nupTxt.trimEnd().endsWith('%%EOF');
+  })());
+  expect('省纸排版也带可搜索文字层（文字按原来的页面坐标写，缩放靠 CTM）', (() => {
+    const withText = studyMod.pdfFromImages(four, { layoutId: 'nup2h', textPages: ['BT 3 Tr /F1 12 Tf 1 0 0 1 40 700 Tm <0041> Tj ET', '', '', ''], toUnicode: 'x' });
+    const s = contentStreams(withText);
+    return s.some((x) => x.includes('3 Tr')) && /\/Font << \/F1/.test(pdfText(withText));
+  })());
+  expect('省纸排版的页内链接：矩形跟着缩放 + 格位偏移挪到正确位置', (() => {
+    const nx = studyMod.pdfFromImages(four, { layoutId: 'nup2h', linkPages: [[{ rect: [10, 20, 60, 40], target: 2 }], [], [], []] });
+    const m = /\/Rect \[([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)\]/.exec(pdfText(nx));
+    const d = plan2.sheets[0].draws[0];
+    const ex = d.x + 10 * d.scale, ey = d.y + 20 * d.scale;
+    return !!m && Math.abs(Number(m[1]) - ex) < 0.5 && Math.abs(Number(m[2]) - ey) < 0.5;
+  })());
+  expect('省纸排版的链接目标指向「那一页所在的纸」（不是原始页号）', (() => {
+    // 第 3 页在第 2 张纸上 → 目标页对象号应该与第 1 张不同
+    const nx = studyMod.pdfFromImages(four, { layoutId: 'nup2h', linkPages: [[{ rect: [1, 2, 3, 4], target: 3 }], [], [], []] });
+    const dest = /\/Dest \[(\d+) 0 R/.exec(pdfText(nx));
+    const firstPageObj = 3;
+    return !!dest && Number(dest[1]) !== firstPageObj;
+  })());
+  expect('骑马钉真写一遍：8 页 → 4 面，且每面两张图', (() => {
+    const eight = Array.from({ length: 8 }, () => im(595, 842));
+    const b = studyMod.pdfFromImages(eight, { layoutId: 'booklet' });
+    return /\/Count 4\b/.test(pdfText(b)) && mediaBoxes(b).every((x) => x.join('x') === '1191x842') && contentStreams(b).filter((s) => /\/Im0 Do/.test(s)).length === 4;
+  })());
+  expect('pdfPageCount 会把排版算进去（8 页拼成 4 面）', studyMod.pdfPageCount(new Array(8).fill({}), { layoutId: 'nup2h' }) === 4 && studyMod.pdfPageCount(new Array(8).fill({}), { layoutId: 'booklet' }) === 4 && studyMod.pdfPageCount(new Array(5).fill({}), {}) === 5);
+  expect('文字层自检函数在拼版后仍然读得出来（readTextLayer）', typeof studyMod.readTextLayer === 'function');
+
+  const libSrc3 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  const viewerSrc4 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  expect('笔记本导出菜单里有排版选项（带 ✓ 标记）', /data-act="toggleLayout"/.test(viewerSrc4) && /PDF_LAYOUTS\.map/.test(viewerSrc4));
+  expect('选排版后菜单就地打勾、不再需要重开菜单', /querySelectorAll\('\[data-act="toggleLayout"\]'\)/.test(viewerSrc4));
+  expect('资料库批量导出也能选排版', /data-act="export-layout"/.test(libSrc3) && /_exportLayout/.test(libSrc3));
+  expect('导出提示会写「N 页 → M 面」', /面/.test(viewerSrc4) && /sheets/.test(libSrc3));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

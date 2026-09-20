@@ -52,10 +52,107 @@ export function base64ToBytes(b64) {
   return new Uint8Array(0);
 }
 
+/* ============================ 省纸排版（一页一张 / 2 页拼一张 / 骑马钉） ============================ */
+
+/**
+ * 打印排版档位。media 是「纸」的大小（PDF 点，1pt = 1/72 英寸）：
+ *   A4 竖版 595×842 · A4 横版 842×595 · A3 横版 1191×842
+ */
+export const PDF_LAYOUTS = [
+  { id: 'single', label: '一页一张', cols: 1, rows: 1, media: null, hint: '保持原始页面大小（默认）' },
+  { id: 'nup2h', label: '2 页拼一张（A4 横版）', cols: 2, rows: 1, media: { w: 842, h: 595 }, hint: '左右并排，字号约 71%，双面打印省一半纸' },
+  { id: 'nup2v', label: '2 页拼一张（A4 竖版）', cols: 1, rows: 2, media: { w: 595, h: 842 }, hint: '上下排，字号约 50%，纸面留白较多' },
+  { id: 'booklet', label: '骑马钉小册子（A3 折页）', cols: 2, rows: 1, media: { w: 1191, h: 842 }, booklet: true, hint: 'A3 双面折成 A4 小册子：页序自动重排，装订后按顺序翻' },
+];
+
+export function layoutOf(id) { return PDF_LAYOUTS.find((x) => x.id === id) || PDF_LAYOUTS[0]; }
+
+/**
+ * 骑马钉页序（saddle stitch）：把 1..n 页排成「一张纸的两面」，
+ * 返回每张 PDF 页的 [左页, 右页]（1 基；0 表示这一格是空白，用来凑 4 的倍数）
+ * n=4 → [4,1] / [2,3]；n=8 → [8,1] / [2,7] / [6,3] / [4,5]
+ */
+export function bookletOrder(count) {
+  const n = Math.max(0, Math.round(Number(count) || 0));
+  const total = Math.ceil(n / 4) * 4;
+  const out = [];
+  const at = (p) => (p >= 1 && p <= n ? p : 0);     // 越界 → 空白格
+  for (let s = 0; s < total / 4; s++) {
+    out.push([at(total - 2 * s), at(1 + 2 * s)]);
+    out.push([at(2 + 2 * s), at(total - 1 - 2 * s)]);
+  }
+  return out.filter((pair) => pair.some((p) => p >= 1));
+}
+
+/**
+ * 把「每页多大」排成「每张纸怎么放」（纯函数，导出前算好，方便测）
+ * @param {Array<{w:number,h:number}>} sizes 每一页的原始尺寸
+ * @param {object} o { layoutId, gap=10, margin=0 }
+ * @returns {{ id, mediaW, mediaH, per, sheets: Array<{ draws: Array<{page, x, y, w, h, scale}> }> }}
+ */
+export function planSheets(sizes, { layoutId = 'single', gap = 10, margin = 0 } = {}) {
+  const list = (sizes || []).map((s) => ({
+    w: Math.max(1, Number(s && s.w) || 595),
+    h: Math.max(1, Number(s && s.h) || 842),
+  }));
+  const lay = layoutOf(layoutId);
+  if (lay.id === 'single' || !lay.media) {
+    return {
+      id: 'single',
+      mediaW: 0, mediaH: 0, per: 1,
+      sheets: list.map((s, i) => ({ draws: [{ page: i, x: 0, y: 0, w: s.w, h: s.h, scale: 1 }] })),
+    };
+  }
+  const cols = lay.cols, rows = lay.rows, per = cols * rows;
+  const mediaW = lay.media.w, mediaH = lay.media.h;
+  const g = Math.max(0, Number(gap) || 0);
+  const m = Math.max(0, Number(margin) || 0);
+  const slotW = (mediaW - 2 * m - (cols - 1) * g) / cols;
+  const slotH = (mediaH - 2 * m - (rows - 1) * g) / rows;
+
+  // 每张纸要放哪几页（1 基；0 / 越界 = 空白）
+  const chunks = [];
+  if (lay.booklet) {
+    for (const pair of bookletOrder(list.length)) chunks.push(pair);
+  } else {
+    for (let i = 0; i < list.length; i += per) chunks.push(Array.from({ length: per }, (_, k) => i + k + 1));
+  }
+
+  const sheets = chunks.map((chunk) => {
+    const draws = [];
+    chunk.forEach((oneBased, idx) => {
+      if (!(oneBased >= 1) || oneBased > list.length) return;
+      const s = list[oneBased - 1];
+      const scale = Math.min(slotW / s.w, slotH / s.h);
+      const w = s.w * scale, h = s.h * scale;
+      const col = idx % cols, row = Math.floor(idx / cols);
+      const slotX = m + col * (slotW + g);
+      const slotY = m + row * (slotH + g);
+      draws.push({
+        page: oneBased - 1,
+        x: slotX + (slotW - w) / 2,
+        y: slotY + (slotH - h) / 2,     // PDF 坐标原点在左下角
+        w, h, scale,
+      });
+    });
+    return { draws };
+  });
+  return { id: lay.id, mediaW, mediaH, per, sheets, booklet: !!lay.booklet };
+}
+
+/** 省纸排版的人话说明（界面上提示用） */
+export function layoutHint(layoutId, pageCount = 0) {
+  const lay = layoutOf(layoutId);
+  if (lay.id === 'single' || !pageCount) return lay.hint;
+  const plan = planSheets(Array.from({ length: pageCount }, () => ({ w: 595, h: 842 })), { layoutId });
+  const sheets = plan.sheets.length;
+  return `${lay.hint} · 共 ${pageCount} 页 → ${sheets} 面${sheets > 1 ? '（双面打印约 ' + Math.ceil(sheets / 2) + ' 张纸）' : ''}`;
+}
+
 /**
  * 用「每页一张 JPEG」拼出 PDF
  * @param {Array<{jpeg: Uint8Array, w: number, h: number}>} images
- * @param {object} o { title }
+ * @param {object} o { title, textPages, toUnicode, outlines, linkPages, layoutId, layoutGap, layoutMargin }
  * @returns {Uint8Array}
  */
 export function pdfFromImages(images, o = {}) {
@@ -64,7 +161,25 @@ export function pdfFromImages(images, o = {}) {
   const pages = images.filter((im) => im && im.jpeg && im.jpeg.length);
   const n = Math.max(1, pages.length);
 
-  // 对象编号：1 目录 / 2 页树 / 之后每页 3 个对象（Page、Contents、Image）
+  // 排版计划：默认「一页一张」，也可以 2 页拼一张 / 骑马钉小册子
+  const plan = planSheets(pages.map((im) => ({ w: im.w || 595, h: im.h || 842 })), {
+    layoutId: o.layoutId || 'single',
+    gap: o.layoutGap,
+    margin: o.layoutMargin,
+  });
+  const single = plan.id === 'single';
+  const sheetPlans = single
+    ? plan.sheets.map((s) => {
+      const d = s.draws[0];
+      const im = d ? pages[d.page] : null;
+      return { mediaW: Math.max(1, Math.round((im && im.w) || 595)), mediaH: Math.max(1, Math.round((im && im.h) || 842)), draws: s.draws };
+    })
+    : plan.sheets.map((s) => ({ mediaW: Math.round(plan.mediaW), mediaH: Math.round(plan.mediaH), draws: s.draws }));
+  const sheetCount = Math.max(1, sheetPlans.length);
+  const sheetOfPage = new Array(n).fill(0);
+  sheetPlans.forEach((s, si) => s.draws.forEach((d) => { if (d.page >= 0 && d.page < n && !sheetOfPage[d.page]) sheetOfPage[d.page] = si; }));
+
+  // 对象编号：1 目录 / 2 页树 / 每张纸 (Page + Contents + 每个图)
   // 有文本层再补 3 个文档级对象（Type0 字体 / 后代 CIDFont / ToUnicode），有书签再补 1+N 个
   const textPages = Array.isArray(o.textPages) ? o.textPages : [];
   const hasText = textPages.some((s) => s && String(s).trim());
@@ -72,7 +187,10 @@ export function pdfFromImages(images, o = {}) {
     .filter((x) => x && x.title && Number.isFinite(Number(x.pageIndex)))
     .slice(0, 200);
   const hasOutlines = outlineList.length > 0;
-  const baseCount = 2 + n * 3;
+  const sheetBase = [];
+  let cursor = 3;
+  for (const s of sheetPlans) { sheetBase.push(cursor); cursor += 2 + s.draws.length; }
+  const baseCount = cursor - 1;
   const fontNum = baseCount + 1;
   const descNum = baseCount + 2;
   const uniNum = baseCount + 3;
@@ -83,12 +201,19 @@ export function pdfFromImages(images, o = {}) {
   // 页内链接：每页一组，对象编号接在目录后面
   const linkPages = (Array.isArray(o.linkPages) ? o.linkPages : []).map((arr) => (Array.isArray(arr) ? arr : []));
   const linksFlat = [];
-  for (let i = 0; i < n; i++) {
-    (linkPages[i] || []).forEach((l) => {
-      if (!l || !Array.isArray(l.rect) || !(Number(l.target) >= 1)) return;
-      linksFlat.push({ ...l, fromPage: i });
-    });
-  }
+  sheetPlans.forEach((s, si) => {
+    for (const d of s.draws) {
+      const src = linkPages[d.page] || [];
+      src.forEach((l) => {
+        if (!l || !Array.isArray(l.rect) || !(Number(l.target) >= 1)) return;
+        // 矩形要从「原始页坐标」换算到「这张纸的坐标」
+        const rect = d.scale === 1
+          ? l.rect.slice(0, 4).map(Number)
+          : [d.x + Number(l.rect[0]) * d.scale, d.y + Number(l.rect[1]) * d.scale, d.x + Number(l.rect[2]) * d.scale, d.y + Number(l.rect[3]) * d.scale];
+        linksFlat.push({ ...l, rect, fromSheet: si });
+      });
+    }
+  });
   const linkStartNum = baseCount + textCount + outlineCount + 1;
   linksFlat.forEach((x, idx) => { x.objNum = linkStartNum + idx; });
   const objCount = baseCount + textCount + outlineCount + linksFlat.length;
@@ -99,32 +224,49 @@ export function pdfFromImages(images, o = {}) {
 
   buf.push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
 
-  const kids = [];
-  for (let i = 0; i < n; i++) kids.push(`${3 + i * 3} 0 R`);
+  const kids = sheetBase.map((num) => `${num} 0 R`);
   push(1, `<< /Type /Catalog /Pages 2 0 R${hasOutlines ? ` /Outlines ${outlineRootNum} 0 R /PageMode /UseOutlines` : ''} >>`);
-  push(2, `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${n} >>`);
+  push(2, `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${sheetCount} >>`);
 
-  for (let i = 0; i < n; i++) {
-    const pageNum = 3 + i * 3;
+  sheetPlans.forEach((sheet, si) => {
+    const pageNum = sheetBase[si];
     const contentNum = pageNum + 1;
-    const imageNum = pageNum + 2;
-    const im = pages[i] || { jpeg: new Uint8Array(0), w: 595, h: 842 };
-    const w = Math.max(1, Math.round(im.w || 595));
-    const h = Math.max(1, Math.round(im.h || 842));
-    const text = textPages[i] && String(textPages[i]).trim() ? String(textPages[i]) : '';
-    const myLinks = linksFlat.filter((x) => x.fromPage === i).map((x) => x.objNum);
+    const w = sheet.mediaW, h = sheet.mediaH;
+    const myLinks = linksFlat.filter((x) => x.fromSheet === si).map((x) => x.objNum);
     const annots = myLinks.length ? ` /Annots [${myLinks.map((num) => `${num} 0 R`).join(' ')}]` : '';
-    const res = text
-      ? `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /Font << /F1 ${fontNum} 0 R >> /ProcSet [/PDF /Text /ImageC] >>`
-      : `/Resources << /XObject << /Im0 ${imageNum} 0 R >> /ProcSet [/PDF /ImageC] >>`;
+    const usesText = sheet.draws.some((d) => textPages[d.page] && String(textPages[d.page]).trim());
+    const xobjs = sheet.draws.map((d, k) => `/Im${k} ${pageNum + 2 + k} 0 R`).join(' ');
+    const res = usesText
+      ? `/Resources << /XObject << ${xobjs} >> /Font << /F1 ${fontNum} 0 R >> /ProcSet [/PDF /Text /ImageC] >>`
+      : `/Resources << /XObject << ${xobjs} >> /ProcSet [/PDF /ImageC] >>`;
     push(pageNum, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] ${res}${annots} /Contents ${contentNum} 0 R >>`);
-    const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q` + (text ? `\n${text}` : '');
+    // 每格：先把坐标系放到这一格（平移 + 缩放），再按「原始页坐标」画图和文字层，最后恢复
+    const parts = [];
+    sheet.draws.forEach((d, k) => {
+      const im = pages[d.page];
+      const iw = Math.max(1, Math.round(im.w || 595));
+      const ih = Math.max(1, Math.round(im.h || 842));
+      const text = textPages[d.page] && String(textPages[d.page]).trim() ? String(textPages[d.page]) : '';
+      if (d.scale === 1 && d.x === 0 && d.y === 0) {
+        parts.push(`q ${iw} 0 0 ${ih} 0 0 cm /Im${k} Do Q`);
+      } else {
+        parts.push(`q ${d.scale.toFixed(5)} 0 0 ${d.scale.toFixed(5)} ${d.x.toFixed(2)} ${d.y.toFixed(2)} cm q ${iw} 0 0 ${ih} 0 0 cm /Im${k} Do Q${text ? `\n${text}` : ''} Q`);
+      }
+      if (text && d.scale === 1 && d.x === 0 && d.y === 0) parts.push(text);
+    });
+    const content = parts.join('\n');
     push(contentNum, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-    offsets[imageNum] = buf.length;
-    buf.push(`${imageNum} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>\nstream\n`);
-    buf.push(im.jpeg);
-    buf.push('\nendstream\nendobj\n');
-  }
+    sheet.draws.forEach((d, k) => {
+      const im = pages[d.page];
+      const iw = Math.max(1, Math.round(im.w || 595));
+      const ih = Math.max(1, Math.round(im.h || 842));
+      const imageNum = pageNum + 2 + k;
+      offsets[imageNum] = buf.length;
+      buf.push(`${imageNum} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${iw} /Height ${ih} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>\nstream\n`);
+      buf.push(im.jpeg);
+      buf.push('\nendstream\nendobj\n');
+    });
+  });
 
   if (hasText) {
     push(fontNum, `<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [${descNum} 0 R] /ToUnicode ${uniNum} 0 R >>`);
@@ -140,15 +282,15 @@ export function pdfFromImages(images, o = {}) {
     const rootCount = flat.length;
     push(outlineRootNum, `<< /Type /Outlines${flat.length ? ` /First ${flat[0].num} 0 R /Last ${flat.filter((x) => x.parent === outlineRootNum).slice(-1)[0].num} 0 R` : ''} /Count ${rootCount} >>`);
     for (const node of flat) {
-      const pageNum = 3 + Math.min(n - 1, Math.max(0, node.pageIndex)) * 3;
+      const pageNum = sheetBase[sheetOfPage[Math.min(n - 1, Math.max(0, node.pageIndex))]] || sheetBase[0];
       const parts = [
         `/Title ${pdfTitleHex(node.title)}`,
         `/Parent ${node.parent || outlineRootNum} 0 R`,
         `/Dest [${pageNum} 0 R /Fit]`,
       ];
       if (node.children.length) {
-        const kids = flat.filter((x) => x.parent === node.num);
-        parts.push(`/First ${kids[0].num} 0 R`, `/Last ${kids[kids.length - 1].num} 0 R`, `/Count ${kids.length}`);
+        const kidsOf = flat.filter((x) => x.parent === node.num);
+        parts.push(`/First ${kidsOf[0].num} 0 R`, `/Last ${kidsOf[kidsOf.length - 1].num} 0 R`, `/Count ${kidsOf.length}`);
       }
       const sibs = flat.filter((x) => x.parent === node.parent);
       const pos = sibs.findIndex((x) => x.num === node.num);
@@ -160,7 +302,7 @@ export function pdfFromImages(images, o = {}) {
 
   if (linksFlat.length) {
     for (const l of linksFlat) {
-      const targetPageNum = 3 + Math.min(n - 1, Math.max(0, Math.round(Number(l.target)) - 1)) * 3;
+      const targetPageNum = sheetBase[sheetOfPage[Math.min(n - 1, Math.max(0, Math.round(Number(l.target)) - 1))]] || sheetBase[0];
       const r = l.rect.slice(0, 4).map((v) => Number(v).toFixed(2));
       push(l.objNum, `<< /Type /Annot /Subtype /Link /Rect [${r.join(' ')}] /Border [0 0 0] /Dest [${targetPageNum} 0 R /Fit] >>`);
     }
@@ -247,9 +389,10 @@ export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage,
 /**
  * 整本笔记本 → PDF Blob（打印级）
  * @param {Array} pages [{ paper, items }]
- * @param {object} o { title, quality|scale, quality 值, render, renderPageImpl, dropTape, onProgress, waitImages }
+ * @param {object} o { title, quality|scale, quality 值, render, renderPageImpl, dropTape, onProgress, waitImages, layoutId }
  *   · dropTape=true 时导出会跳过胶带（看答案用）
  *   · 导出前会先等图片加载完，避免 PDF 里出现占位框
+ *   · layoutId 见 PDF_LAYOUTS：single / nup2h / nup2v / booklet（省纸排版）
  */
 export async function buildPdf(pages, o = {}) {
   const q = qualityOf(o.qualityId);
@@ -310,6 +453,9 @@ export async function buildPdf(pages, o = {}) {
     textPages,
     toUnicode: cmap,
     outlines: o.outlines || [],
+    layoutId: o.layoutId || 'single',
+    layoutGap: o.layoutGap,
+    layoutMargin: o.layoutMargin,
     linkPages: o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => [
       ...(page.extraLinks || []),
       ...pageRefLinks(
@@ -321,10 +467,13 @@ export async function buildPdf(pages, o = {}) {
   return new Blob([bytes], { type: 'application/pdf' });
 }
 
-/** 目录页会额外占一页，导出前想知道最终页数用这个 */
+/** 目录页会额外占一页、省纸排版会把几页拼成一面 —— 想知道「最终 PDF 有几面」用这个 */
 export function pdfPageCount(pages, o = {}) {
-  const n = (pages || []).filter((p) => p).length;
-  return n + (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length ? 1 : 0);
+  const n = (pages || []).filter((p) => p).length + (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length ? 1 : 0);
+  const lay = layoutOf(o.layoutId || 'single');
+  if (lay.id === 'single' || !n) return n;
+  if (lay.booklet) return bookletOrder(n).length;
+  return Math.ceil(n / (lay.cols * lay.rows));
 }
 
 /* ============================ 导出 Markdown（进全站检索） ============================ */
@@ -929,21 +1078,21 @@ export function collectNotebookPages(notebooks, { paperForPage } = {}) {
  */
 export async function buildPdfFromNotebooks(notebooks, {
   qualityId = 'high', merge = true, title = '', onProgress, textLayer = true, dropTape = false,
-  renderPageImpl, render, waitImages = true,
+  layoutId = 'single', renderPageImpl, render, waitImages = true,
 } = {}) {
   const books = (notebooks || []).filter(Boolean);
   const flat = collectNotebookPages(books);
-  const common = { qualityId, textLayer, dropTape, renderPageImpl, render, waitImages };
+  const common = { qualityId, textLayer, dropTape, layoutId, renderPageImpl, render, waitImages };
   if (merge) {
     const blob = await buildPdf(flat, { ...common, title: title || '笔记本合集', onProgress });
-    return { merged: true, blob, pages: flat.length, files: [] };
+    return { merged: true, blob, pages: flat.length, sheets: pdfPageCount(flat, { layoutId }), files: [] };
   }
   const files = [];
   for (let i = 0; i < books.length; i++) {
     const nb = books[i];
     const pages = collectNotebookPages([nb]);
     const blob = await buildPdf(pages, { ...common, title: nb.title });   // eslint-disable-line no-await-in-loop
-    files.push({ title: nb.title, blob, pages: pages.length });
+    files.push({ title: nb.title, blob, pages: pages.length, sheets: pdfPageCount(pages, { layoutId }) });
     if (onProgress) { try { onProgress({ done: i + 1, total: books.length, title: nb.title }); } catch (e) {} }
   }
   return { merged: false, blob: null, pages: flat.length, files };
