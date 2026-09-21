@@ -402,22 +402,96 @@ export function defaultRenderJpeg(page, { scale = 1, quality = 0.86, renderPage,
 }
 
 /**
+ * 打印检查单（纯函数）：导出/打印前先算清楚「要几张纸、哪几页是白打的」
+ * @param {Array} pages [{ items, ocr, title, paper }]
+ * @param {object} o { layoutId, qualityId, doubleSided=true, dropTape=false }
+ * @returns {{ pages:number, sheets:number, paperSheets:number, perPage:Array, warnings:Array,
+ *             estBytes:number, estMb:number, inkPages:number, blankPages:number, tapeOnlyPages:number }}
+ */
+export function printCheck(pages, { layoutId = 'single', qualityId = 'high', doubleSided = true, dropTape = false } = {}) {
+  const list = (pages || []).filter(Boolean);
+  const perPage = list.map((p, i) => {
+    const items = ((p && p.items) || []).filter((it) => !(dropTape && it && it.kind === 'tape'));
+    const strokes = items.filter((it) => it && (it.kind === 'stroke' || it.kind === 'shape'));
+    const points = strokes.reduce((s, it) => s + ((it.points || []).length || 0), 0);
+    const texts = items.filter((it) => it && it.kind === 'text' && String(it.text || '').trim());
+    const chars = texts.reduce((s, it) => s + String(it.text).length, 0);
+    const ocrChars = (p && p.ocr && p.ocr.text ? String(p.ocr.text).length : 0);
+    const tapeOnly = items.length > 0 && items.every((it) => it && it.kind === 'tape');
+    const blank = items.length === 0;
+    return {
+      index: i,
+      title: String((p && p.title) || ''),
+      items: items.length,
+      points,
+      chars,
+      ocrChars,
+      blank,
+      tapeOnly,
+      inkScore: points / 10 + chars / 20,
+    };
+  });
+  const blankPages = perPage.filter((p) => p.blank).map((p) => p.index);
+  const tapeOnlyPages = perPage.filter((p) => p.tapeOnly).map((p) => p.index);
+  const noOcrPages = perPage.filter((p) => !p.blank && p.points >= 30 && !p.ocrChars).map((p) => p.index);
+  const heavyPages = perPage.filter((p) => p.inkScore >= 40).map((p) => p.index);
+  const n = list.length;
+  const sheets = pdfPageCount(list.map(() => 1), { layoutId });
+  const warnings = [];
+  if (blankPages.length) warnings.push({ code: 'blank', level: 'warn', label: `${blankPages.length} 页完全空白`, hint: '这些页会照样占纸；导出时可以勾「跳过空白页」', pages: blankPages });
+  if (tapeOnlyPages.length) warnings.push({ code: 'tape-only', level: 'warn', label: `${tapeOnlyPages.length} 页只有胶带`, hint: '是不是忘了写内容？或者导出时勾「撕掉胶带」就会变成空白页', pages: tapeOnlyPages });
+  if (noOcrPages.length) warnings.push({ code: 'no-ocr', level: 'info', label: `${noOcrPages.length} 页有手写但没识别`, hint: '导出的 PDF 里这些页的文字搜不到（想搜就先跑一次识别）', pages: noOcrPages });
+  if (heavyPages.length) warnings.push({ code: 'heavy', level: 'info', label: `${heavyPages.length} 页内容很密`, hint: '打印前建议先看一页，或换「标准」画质省墨', pages: heavyPages });
+  const perPageBytes = qualityOf(qualityId).scale >= 3 ? 900 * 1024 : qualityOf(qualityId).scale >= 2 ? 420 * 1024 : 130 * 1024;
+  const estBytes = sheets * perPageBytes;
+  return {
+    pages: n,
+    sheets,
+    paperSheets: doubleSided ? Math.ceil(sheets / 2) : sheets,
+    perPage,
+    warnings,
+    estBytes,
+    estMb: Math.round((estBytes / 1048576) * 10) / 10,
+    inkPages: perPage.filter((p) => !p.blank).length,
+    blankPages: blankPages.length,
+    tapeOnlyPages: tapeOnlyPages.length,
+    noOcrPages: noOcrPages.length,
+  };
+}
+
+/** 打印检查单的一句话总结（界面提示用） */
+export function printCheckLine(check) {
+  if (!check || !check.pages) return '这本笔记本还没有页面';
+  return `${check.pages} 页 → ${check.sheets} 面 · 双面打印约 ${check.paperSheets} 张纸 · 约 ${check.estMb} MB`;
+}
+
+/**
  * 整本笔记本 → PDF Blob（打印级）
  * @param {Array} pages [{ paper, items }]
  * @param {object} o { title, quality|scale, quality 值, render, renderPageImpl, dropTape, onProgress, waitImages, layoutId }
  *   · dropTape=true 时导出会跳过胶带（看答案用）
  *   · 导出前会先等图片加载完，避免 PDF 里出现占位框
  *   · layoutId 见 PDF_LAYOUTS：single / nup2h / nup2v / booklet（省纸排版）
+ *   · dropBlank=true 时跳过完全空白的页（书签/目录/内链里的页号会一起重编号）
  */
 export async function buildPdf(pages, o = {}) {
   const q = qualityOf(o.qualityId);
   const scale = Number(o.scale) > 0 ? Number(o.scale) : q.scale;
   const jpegQuality = Number(o.quality) > 0 ? Number(o.quality) : q.quality;
-  const list = (pages || []).map((p) => ({
+  const all = (pages || []).map((p) => ({
     paper: p && p.paper,
     items: ((p && p.items) || []).filter((it) => !(o.dropTape && it && it.kind === 'tape')),
     ocr: (p && p.ocr) || null,
   }));
+  // 跳过空白页：记下「原页序 → 新页序」的映射，书签 / 目录 / 内链都要跟着重编号
+  const keep = [];
+  all.forEach((p, i) => { if (!(o.dropBlank && !p.items.length)) keep.push(i); });
+  const remap = new Map(keep.map((from, to) => [from, to]));
+  const list = keep.map((i) => all[i]);
+  const mapIndex = (idx) => (remap.has(Math.round(Number(idx) || 0)) ? remap.get(Math.round(Number(idx) || 0)) : -1);
+  const dropped = all.length - list.length;
+  /** 原页序 i 之前有多少页被跳掉了（目录页码要减掉它） */
+  const droppedBefore = (i) => Math.round(Number(i) || 0) - keep.filter((k) => k < Math.round(Number(i) || 0)).length;
 
   if (o.waitImages !== false) {
     try { await preloadImages(list, { ImageImpl: o.ImageImpl, timeoutMs: o.imageTimeoutMs }); } catch (e) { /* 图挂了也照样导 */ }
@@ -436,8 +510,20 @@ export async function buildPdf(pages, o = {}) {
   // 自动目录页（可选）：插在最前面，条目自带隐形文字层与可点链接
   let tocInfo = null;
   if (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length && !o.render) {
+    // 跳过空白页时，目录里的页号与跳转目标都要按「新页序」重编（不然页码全是错的）
+    let entries = o.toc.entries;
+    if (dropped) {
+      entries = entries
+        .map((e) => {
+          const to = mapIndex(e.pageIndex);
+          if (to < 0) return null;
+          const number = Number(e.number);
+          return { ...e, pageIndex: to, number: Number.isFinite(number) ? number - droppedBefore(e.pageIndex) : e.number };
+        })
+        .filter(Boolean);
+    }
     const firstPaper = (list[0] && list[0].paper) || { template: 'lined', size: 'a4' };
-    const toc = renderTocPage(o.toc.entries, { paper: firstPaper, title: o.toc.title || '目录', scale, quality: jpegQuality });
+    const toc = renderTocPage(entries, { paper: firstPaper, title: o.toc.title || '目录', scale, quality: jpegQuality });
     if (toc) {
       tocInfo = { entries: toc.entries };      rendered.unshift({
         im: { jpeg: toc.jpeg, w: toc.w, h: toc.h },
@@ -463,21 +549,40 @@ export async function buildPdf(pages, o = {}) {
     cmap = codeMap.size ? toUnicodeCMap(codeMap) : '';
   }
 
+  // 跳过空白页时：书签与内链的页号也要按新页序重编（指向被跳掉那页的条目直接丢掉）
+  const rawOutlines = o.outlines || [];
+  const outlineList = dropped
+    ? rawOutlines.map((e) => {
+      const to = mapIndex(e.pageIndex);
+      return to < 0 ? null : { ...e, pageIndex: to };
+    }).filter(Boolean)
+    : rawOutlines;
+  const linkPagesFinal = dropped
+    ? rendered.map(({ page }) => page).map((page, i) => {
+      // linkPages 是按「原页序」给的，这里按原页序取；目标页号重编，指到被跳掉的页就不生成
+      const src = Array.isArray(o.linkPages) ? (o.linkPages[keep[i]] || []) : [];
+      return src.map((l) => {
+        const to = mapIndex(Number(l && l.target) - 1);
+        return to < 0 ? null : { ...l, target: to + 1 };
+      }).filter(Boolean);
+    })
+    : null;
+
   const bytes = pdfFromImages(rendered.map((r) => r.im), {
     title: o.title,
     textPages,
     toUnicode: cmap,
-    outlines: o.outlineAnchors === false ? (o.outlines || []) : attachOutlineAnchors(o.outlines || [], list),
+    outlines: o.outlineAnchors === false ? outlineList : attachOutlineAnchors(outlineList, list),
     layoutId: o.layoutId || 'single',
     layoutGap: o.layoutGap,
     layoutMargin: o.layoutMargin,
-    linkPages: o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => [
+    linkPages: linkPagesFinal || (o.linkPages || (o.links === false ? [] : rendered.map(({ im, page }) => [
       ...(page.extraLinks || []),
       ...pageRefLinks(
         { items: page.items, ocr: page.ocr },
         { pageW: im.w || 794, pageH: im.h || 1123, pageCount: rendered.length },
       ),
-    ])),
+    ]))),
   });
   return new Blob([bytes], { type: 'application/pdf' });
 }

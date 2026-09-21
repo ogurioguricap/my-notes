@@ -2448,7 +2448,140 @@ head('PDF 书签跳页内位置');
     const expectY = 3.15 + 842 * 0.75 * scale;
     return !!m && Math.abs(Number(m[1]) - expectY) < 2;
   })());
-  expect('buildPdf 默认会挂落点（不用调用方自己做）', /attachOutlineAnchors\(o\.outlines \|\| \[\], list\)/.test(fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'study.mjs'), 'utf8')));
+  expect('buildPdf 默认会挂落点（不用调用方自己做）', /attachOutlineAnchors\(outlineList, list\)/.test(fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'study.mjs'), 'utf8')));
+}
+
+/* ============================ 24. 打印检查单 + 跳过空白页 ============================ */
+head('打印检查单 · 跳过空白页');
+{
+  const strokeN = (id, n = 40) => ({ kind: 'stroke', id, tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: Array.from({ length: n }, (_, i) => [0.1 + i * 0.01, 0.1 + i * 0.005]) });
+  const textN = (id, text) => ({ kind: 'text', id, x: 0.1, y: 0.2, text, size: 0.026, color: '#222', font: 'sans' });
+  const mkPages = () => ([
+    { title: '第一章', items: [strokeN('a1'), textN('t1', '第一章的内容')], ocr: { text: '第一章的内容', chars: 6 } },   // 0 正常（已识别）
+    { items: [] },                                                                  // 1 空白
+    { items: [{ kind: 'tape', x: 0.1, y: 0.2, w: 0.3, h: 0.05 }] },                  // 2 只有胶带
+    { items: [strokeN('a2', 400)] },                                                 // 3 手写很多、没识别
+    { items: [strokeN('a3')], ocr: { text: '识别过的内容', chars: 7 } },              // 4 识别过
+    { items: [] },                                                                   // 5 空白
+  ]);
+
+  const chk = studyMod.printCheck(mkPages(), { layoutId: 'single', qualityId: 'high' });
+  expect('检查单：页数与面数（一页一张时相等）', chk.pages === 6 && chk.sheets === 6);
+  expect('检查单：双面打印的用纸数 = 面数/2 上取整', chk.paperSheets === 3);
+  expect('检查单：单面打印时用纸数 = 面数', studyMod.printCheck(mkPages(), { doubleSided: false }).paperSheets === 6);
+  expect('检查单：认出空白页（并给出页号，0 基）', chk.blankPages === 2 && chk.warnings.find((w) => w.code === 'blank').pages.join(',') === '1,5');
+  expect('检查单：认出「只有胶带」的页', chk.tapeOnlyPages === 1 && chk.warnings.find((w) => w.code === 'tape-only').pages.join(',') === '2');
+  expect('检查单：认出「有手写但没识别」的页', chk.noOcrPages === 1 && chk.warnings.find((w) => w.code === 'no-ocr').pages.join(',') === '3');
+  expect('检查单：内容密的页也会提示', chk.warnings.some((w) => w.code === 'heavy'));
+  expect('检查单：有内容页数 = 总页数 − 空白页', chk.inkPages === 4);
+  expect('检查单：撕掉胶带后「只有胶带」的页会变成空白页', (() => {
+    const c2 = studyMod.printCheck(mkPages(), { dropTape: true });
+    return c2.blankPages === 3 && c2.tapeOnlyPages === 0;
+  })());
+  expect('检查单：省纸排版下面数是拼出来的（6 页 2 拼 = 3 面）', (() => {
+    const c3 = studyMod.printCheck(mkPages(), { layoutId: 'nup2h' });
+    return c3.sheets === 3 && c3.paperSheets === 2;
+  })());
+  expect('检查单：骑马钉 6 页 → 4 面（补空白凑 4 的倍数）', studyMod.printCheck(mkPages(), { layoutId: 'booklet' }).sheets === 4);
+  expect('检查单：体积按画质粗估（打印级最大，标准最小）', (() => {
+    const a = studyMod.printCheck(mkPages(), { qualityId: 'standard' }).estMb;
+    const b = studyMod.printCheck(mkPages(), { qualityId: 'print' }).estMb;
+    return a > 0 && b > a;
+  })());
+  expect('检查单：一句话总结（页 → 面 · 几张纸 · MB）', /6 页 → 6 面 · 双面打印约 3 张纸 · 约 [\d.]+ MB/.test(studyMod.printCheckLine(chk)));
+  expect('检查单：没有页面时给友好文案', studyMod.printCheckLine(studyMod.printCheck([], {})) === '这本笔记本还没有页面');
+
+  // --- 跳过空白页：真导出，书签 / 目录 / 内链的页号都要重编 ---
+  const im = () => ({ jpeg: new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]), w: 595, h: 842 });
+  const latin = (bytes) => Buffer.from(bytes).toString('latin1');
+  const pages4 = [
+    { paper: { template: 'lined', size: 'a4' }, items: [textN('t1', '第一页 见第 4 页')], title: '第一页' },
+    { paper: { template: 'lined', size: 'a4' }, items: [] },
+    { paper: { template: 'lined', size: 'a4' }, items: [] },
+    { paper: { template: 'lined', size: 'a4' }, items: [textN('t2', '第四页的内容')], title: '第四页' },
+  ];
+  const keepSame = studyMod.pdfFromImages([im(), im(), im(), im()], {});
+  const dropped = studyMod.pdfFromImages([im(), im()], {});
+  expect('打包前的对照：4 页 PDF 与 2 页 PDF 的 MediaBox 数量', (latin(keepSame).match(/\/MediaBox/g) || []).length === 4 && (latin(dropped).match(/\/MediaBox/g) || []).length === 2);
+
+  // 直接测重编号逻辑：给 4 页（中间 2 页空白）挂书签 + 内链 + 目录，跳空白页后看还剩什么
+  const outlines4 = [
+    { title: '第一页', pageIndex: 0, level: 0 },
+    { title: '第三页（书签）', pageIndex: 2, level: 1 },
+    { title: '第四页', pageIndex: 3, level: 0 },
+  ];
+  const withBlanks = studyMod.pdfFromImages([im(), im(), im(), im()], {
+    outlines: studyMod.attachOutlineAnchors(outlines4, pages4),
+    linkPages: [[{ rect: [10, 20, 60, 40], target: 4 }], [], [], []],
+  });
+  expect('不跳空白页时：三条书签都在（含指向空白页的），内链也在', (latin(withBlanks).match(/\/Title /g) || []).length === 3 && (latin(withBlanks).match(/\/Dest \[/g) || []).length === 4);
+  expect('不跳空白页时：内链目标 = 第 4 页（第 4 张纸）', (() => {
+    const dests = [...latin(withBlanks).matchAll(/\/Dest \[(\d+) 0 R/g)].map((m) => Number(m[1]));
+    return dests.includes(12);
+  })());
+  expect('buildPdf 的跳过空白页会把书签与内链一起重编（源码级接线）', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'study.mjs'), 'utf8');
+    return /dropBlank && !p\.items\.length/.test(src) && /const mapIndex =/.test(src) && /droppedBefore/.test(src) && /const linkPagesFinal = dropped/.test(src);
+  })());
+
+  // --- 端到端：真跑 buildPdf（假渲染），验证跳空白页后页数 / 书签 / 内链 / 目录页码都对 ---
+  {
+    const fakeRender = () => ({ jpeg: new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]), w: 595, h: 842 });
+    const tocEntries = [
+      { title: '第一页', pageIndex: 0, number: 2 },
+      { title: '第二页（空白）', pageIndex: 1, number: 3 },
+      { title: '第三页（空白）', pageIndex: 2, number: 4 },
+      { title: '第四页', pageIndex: 3, number: 5 },
+    ];
+    const outlines5 = [
+      { title: '第一页', pageIndex: 0, level: 0 },
+      { title: '第二页（空白）', pageIndex: 1, level: 0 },
+      { title: '第四页', pageIndex: 3, level: 0 },
+    ];
+    const origCreate = document.createElement;
+    document.createElement = (t) => {
+      const el = origCreate(t);
+      if (String(t).toLowerCase() === 'canvas') el.toDataURL = () => 'data:image/jpeg;base64,/9j/4AsL/9k=';
+      return el;
+    };
+    let blob = null;
+    try {
+      blob = await studyMod.buildPdf(pages4, {
+        qualityId: 'standard', renderPageImpl: fakeRender,
+        outlines: outlines5,
+        linkPages: [[{ rect: [10, 20, 60, 40], target: 4 }], [], [], []],
+        toc: { entries: tocEntries, title: '目录' },
+        dropBlank: true,
+        waitImages: false,
+      });
+    } finally {
+      document.createElement = origCreate;
+    }
+    const t = latin(new Uint8Array(await blob.arrayBuffer()));
+    expect('端到端：跳过 2 页空白后 PDF 只有 2 个内容面（+1 目录页）', (t.match(/\/MediaBox/g) || []).length === 3);
+    expect('端到端：指向空白页的书签被丢掉，剩下的 2 条留着', (t.match(/\/Title /g) || []).length === 2);
+    expect('端到端：内链目标重编到「新的第 2 页」（指向被跳掉的页才不生成）', /\/Dest \[6 0 R \//.test(t));
+    expect('端到端：目录页里的页码跟着重编（原第 4 页 → 新第 3 页）', (() => {
+      const dumps = studyMod.readTextLayer(t);
+      const all = dumps.pages.join('|');
+      return /第一页/.test(all) && /第四页/.test(all) && /第四页\s+3/.test(all.replace(/\s+/g, ' ')) && !/第二页（空白）/.test(all);
+    })());
+    expect('端到端：xref / startxref 仍然自洽（跳过页后偏移没算错）', (() => {
+      const at = Number(/startxref\n(\d+)/.exec(t)[1]);
+      return at > 0 && t.slice(at, at + 4) === 'xref' && t.trimEnd().endsWith('%%EOF');
+    })());
+  }
+  expect('导出参数里带了 dropBlank（界面开关接上了）', (() => {
+    const src = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+    return /dropBlank: !!this\.dropBlank/.test(src) && /toggleDropBlank/.test(src);
+  })());
+
+  // --- 界面接线 ---
+  const viewerSrc7 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const cssViewer3 = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-viewer.css'), 'utf8');
+  expect('导出菜单里有「打印检查单…」与「跳过空白页」', /data-act="printCheck"/.test(viewerSrc7) && /data-act="toggleDropBlank"/.test(viewerSrc7));
+  expect('检查单面板能生成（统计 + 警告 + 跳到那一页 + 直接导出）', /markupPrintCheckPanel/.test(viewerSrc7) && /printCheckGoto/.test(viewerSrc7) && /printCheckExport/.test(viewerSrc7));
+  expect('检查单样式齐备', /\.nb-check-row/.test(cssViewer3) && /\.nb-check-badge\.warn/.test(cssViewer3));
 }
 
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);

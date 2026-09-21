@@ -27,7 +27,7 @@ import {
   PAPER_TEMPLATES, templateGroups, PAPER_SIZES, paperDims, PAPER_COLORS, renderCover,
 } from './paper.mjs';
 import { PALETTE, WIDTHS, ERASER_SIZES, SHAPE_KINDS } from '../ink.mjs';
-import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, PDF_LAYOUTS, layoutOf, layoutHint, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
+import { buildPdf, downloadBlob, pageToPng, summarizeText, qualityOf, PDF_QUALITY, PDF_LAYOUTS, layoutOf, layoutHint, printCheck, printCheckLine, notebookToMarkdown, markdownSlug, markdownTarget, outlinesFromNotebook, buildLongImage, tocEntries, pdfPageCount, buildEpub, buildSingleHtml } from './study.mjs';
 import {
   ASR_MODELS, transcribeAudio, transcribeAudioFull, transcribeChunked, parseAsrSegments, anchorSegments, getAsrKey, setAsrKey,
 } from './asr.mjs';
@@ -138,6 +138,7 @@ export class NotebookView {
     this.pdfToc = true;         // 导出 PDF 是否自动插一页目录
     this.plainPaper = false;    // 阅读版：导出时去格线
     this.pdfLayout = 'single';  // 省纸排版：single / nup2h / nup2v / booklet
+    this.dropBlank = false;     // 导出时跳过完全空白的页
     this.searchIndex = 0;       // 笔记本内搜索当前高亮的命中
     this.speaker = null;        // 朗读器（浏览器 TTS）
     this.speak = { sentences: [], index: -1 };
@@ -205,6 +206,8 @@ export class NotebookView {
         <button type="button" data-act="toggleTextLayer">PDF 可搜索文字层</button>
         <button type="button" data-act="toggleToc">PDF 自动目录页</button>
         <button type="button" data-act="togglePlain">阅读版（去格线，省墨）</button>
+        <button type="button" data-act="toggleDropBlank">${this.dropBlank ? '✓ ' : ''}跳过空白页</button>
+        <button type="button" data-act="printCheck">打印检查单…</button>
         <hr>
         ${PDF_LAYOUTS.map((L) => `<button type="button" data-act="toggleLayout" data-note="${L.id}" title="${nbEsc(L.hint)}">${this.pdfLayout === L.id ? '✓ ' : ''}排版：${nbEsc(L.label)}</button>`).join('')}
         <hr>
@@ -578,6 +581,18 @@ export class NotebookView {
       this.toast(this.plainPaper ? '阅读版：导出 PDF 时去掉格线/横线（省墨）' : '恢复正常纸张：导出 PDF 带格线');
       return true;
     }
+    if (act === 'toggleDropBlank') {
+      this.dropBlank = !this.dropBlank;
+      const chk = printCheck(this.pagesForExport(), { layoutId: this.pdfLayout || 'single', qualityId: this.pdfQuality, dropTape: !!this.dropTape });
+      this.toast(this.dropBlank
+        ? `导出将跳过 ${chk.blankPages} 页空白页（书签与目录页号会一起重编）`
+        : '恢复正常导出（空白页也保留）');
+      this.renderTop();
+      return true;
+    }
+    if (act === 'printCheck') { this.openPanel('printCheck'); return true; }
+    if (act === 'printCheckGoto') { this.gotoPage(Number(actEl.dataset.page) || 0); return true; }
+    if (act === 'printCheckExport') { this.exportPdf(this.pdfQuality || 'high'); return true; }
     if (act === 'toggleLayout') {
       this.pdfLayout = note && layoutOf(note) ? note : 'single';
       const L = layoutOf(this.pdfLayout);
@@ -1859,6 +1874,7 @@ export class NotebookView {
     else if (k === 'audio') this.panelEl.innerHTML = this.markupAudioPanel();
     else if (k === 'paper') this.panelEl.innerHTML = this.markupPaperPanel();
     else if (k === 'ocr') this.panelEl.innerHTML = this.markupOcrPanel();
+    else if (k === 'printCheck') this.panelEl.innerHTML = this.markupPrintCheckPanel();
     else if (k === 'search') this.panelEl.innerHTML = this.markupSearchPanel();
     if (k === 'study') { this.paintStudy(); this.renderStudyCard(); }
     if (k === 'audio') this.renderAudioLists();
@@ -1866,6 +1882,47 @@ export class NotebookView {
     if (k === 'ocr') this.renderOcrStatus();
     if (k === 'search') this.renderBookSearch();
     if (k === 'search') this.renderBookSearch();
+  }
+
+  /* ---------- 打印检查单（导出前先算清楚） ---------- */
+
+  /** 导出用的页面数组（把「撕胶带」也算进去，检查单要和真正导出的一致） */
+  pagesForExport() {
+    return (this.nb.pages || []).map((p, i) => ({ paper: this.paperFor(i), items: p.items || [], ocr: p.ocr || null, title: p.title || '' }));
+  }
+
+  markupPrintCheckPanel() {
+    const chk = printCheck(this.pagesForExport(), {
+      layoutId: this.pdfLayout || 'single',
+      qualityId: this.pdfQuality || 'high',
+      dropTape: !!this.dropTape,
+    });
+    const lay = layoutOf(this.pdfLayout || 'single');
+    const rows = chk.warnings.map((w) => `<div class="nb-check-row">
+      <span class="nb-check-badge ${w.level}">${w.level === 'warn' ? '注意' : '提示'}</span>
+      <span class="nb-check-text"><b>${nbEsc(w.label)}</b><i>${nbEsc(w.hint)}</i>
+        <span class="nb-check-pages">${w.pages.slice(0, 24).map((i) => `<button class="nb-btn ghost" type="button" data-act="printCheckGoto" data-page="${i}" title="跳到这一页">第 ${i + 1} 页</button>`).join('')}${w.pages.length > 24 ? ` 等 ${w.pages.length} 页` : ''}</span>
+      </span>
+    </div>`).join('');
+    return `${this.panelHead('打印检查单')}
+      <div class="nb-panel-body">
+        <div class="nb-hint">导出/打印前先看一眼：要几张纸、哪几页是白打的。数字按当前设置算（画质、排版、撕胶带、跳过空白页都算进去了）。</div>
+        <div class="nb-check-head">
+          <b>${nbEsc(printCheckLine(chk))}</b>
+          <i>排版：${nbEsc(lay.label)} · 画质：${nbEsc(qualityOf(this.pdfQuality || 'high').label)}${this.dropTape ? ' · 撕掉胶带' : ''}${this.dropBlank ? ' · 跳过空白页' : ''}</i>
+        </div>
+        <div class="nb-row">
+          <span class="nb-chip">有内容 ${chk.inkPages} 页</span>
+          <span class="nb-chip">空白 ${chk.blankPages} 页</span>
+          <span class="nb-chip">只有胶带 ${chk.tapeOnlyPages} 页</span>
+          <span class="nb-chip">没识别 ${chk.noOcrPages} 页</span>
+        </div>
+        ${rows || '<p class="nb-hint">没有需要注意的地方：没有空白页，手写也都识别过了。</p>'}
+        <div class="nb-row">
+          <button class="nb-btn primary" type="button" data-act="printCheckExport">按当前设置导出 PDF</button>
+          <button class="nb-btn" type="button" data-act="toggleDropBlank">${this.dropBlank ? '✓ ' : ''}跳过空白页</button>
+        </div>
+      </div>`;
   }
 
   /* ---------- 本笔记本内搜索（含手写识别结果） ---------- */
@@ -2963,6 +3020,7 @@ export class NotebookView {
         toc,
         outlines,
         layoutId: this.pdfLayout || 'single',
+        dropBlank: !!this.dropBlank,
         renderPageImpl: renderPage,
         onProgress: ({ done, total: tt }) => this.toast(`生成 PDF ${done}/${tt}…`),
       });
@@ -2972,6 +3030,7 @@ export class NotebookView {
       downloadBlob(blob, `${safeName(this.nb.title)}-${q.label.replace(/[（）]/g, '')}${this.plainPaper ? '-阅读版' : ''}${lay.id === 'single' ? '' : `-${lay.id}`}.pdf`);
       const extras = `${this.dropTape ? ' · 已撕掉胶带' : ''}${this.textLayer === false ? '' : ' · 含可搜索文字层'}`
         + `${toc ? ` · 目录 ${toc.entries.length} 项` : ''}${this.plainPaper ? ' · 阅读版' : ''}`
+        + `${this.dropBlank ? ' · 已跳过空白页' : ''}`
         + `${lay.id === 'single' ? '' : ` · 排版 ${lay.label}`}`;
       const sheets = pdfPageCount(pages, { toc, layoutId: lay.id });
       this.toast(`PDF 已导出（${lay.id === 'single' ? `${sheets} 页` : `${total} 页 → ${sheets} 面`} · ${q.label} · ${mb} MB${extras}）`);

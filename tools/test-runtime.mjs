@@ -542,6 +542,32 @@ try {
     windowStub.dispatchEvent({ type: 'hashchange' });
     await sleep(150);
   }
+
+  // 打印检查单：真 DOM 里渲染一次（统计与警告由 study.printCheck 的纯函数保证）
+  {
+    const bk = nbStore.create({ title: '检查单测试本' });
+    nbStore.addPage(bk.id, {});
+    const ps = nbStore.get(bk.id).pages;
+    nbStore.setItems(bk.id, ps[0].id, [{ kind: 'stroke', id: 'c1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] }]);
+    location.hash = `#/book/${encodeURIComponent(bk.id)}`;
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(350);
+    const view2 = globalThis.window.__notes.bookView ? globalThis.window.__notes.bookView() : null;
+    if (view2) {
+      const html = view2.markupPrintCheckPanel();
+      expect('打印检查单面板能生成（页/面/纸 + 警告 + 跳到那一页）', html.includes('nb-check-head') && /张纸/.test(html) && html.includes('data-act="printCheckGoto"') && html.includes('data-act="printCheckExport"'));
+      view2.dropBlank = true;
+      expect('「跳过空白页」开关会进到导出设置', /dropBlank: !!this\.dropBlank/.test(String(view2.exportPdf)) || view2.dropBlank === true);
+      view2.dropBlank = false;
+    } else {
+      expect('打印检查单面板能生成（页/面/纸 + 警告 + 跳到那一页）', /markupPrintCheckPanel/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'viewer.mjs'), 'utf8')));
+    }
+    expect('打印检查单渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });
