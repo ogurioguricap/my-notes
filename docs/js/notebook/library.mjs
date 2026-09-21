@@ -31,6 +31,7 @@ import {
   templateGroups,
 } from './paper.mjs';
 import { pushNotebook, pushAll, pullNotebook, fetchPublicIndex, pullFromPublicSite } from './sync.mjs';
+import { orphanCardReport } from './store.mjs';
 import { buildPdfFromNotebooks, downloadBlob, PDF_QUALITY, PDF_LAYOUTS, layoutOf, qualityOf, notebookToMarkdown, markdownSlug, ankiCsvFromStore } from './study.mjs';
 import {
   OCR_MODELS, getOcrKey, setOcrKey, planOcrQueue, queueStats, resumeQueue, ocrQueue, queueProgressText,
@@ -716,6 +717,7 @@ export class LibraryUI {
       reviewCenter: () => this._sheetReviewCenter(),
       reviewSession: () => this._sheetReviewSession(),
       ocrQuality: () => this._sheetOcrQuality(),
+      cardSources: () => this._sheetCardSources(),
     }[sh.type];
     if (!builder) return '';
     return `<div class="lib-sheet-mask" data-act="sheet-close">
@@ -1267,6 +1269,16 @@ export class LibraryUI {
       case 'review-again': this.startReviewSession({ filter: (this._review && this._review.filter) || this._reviewFilter }); break;
       case 'review-anki': this.exportAnki({ onlyDue: false }); break;
       case 'review-anki-due': this.exportAnki({ onlyDue: true }); break;
+
+      /* 卡片来源整理 */
+      case 'card-sources':
+        this.sheet = { type: 'cardSources' };
+        this._renderLayer();
+        break;
+      case 'cards-find-all': this.findCardSources(); this._renderLayer(); break;
+      case 'cards-find-book': this.findCardSources([hit.dataset.book]); this._renderLayer(); break;
+      case 'cards-clear-missing': this.clearMissingSources(); this._renderLayer(); break;
+      case 'cards-open-book': this.openBook(rowId || hit.dataset.book, { panel: 'study' }); break;
       case 'tpl-del':
         e.stopPropagation();
         if (this.store.removeTemplate(rowId)) { this.toast('模板已删除'); this._renderLayer(); }
@@ -1390,6 +1402,11 @@ export class LibraryUI {
     if (this._destroyed) return;
     const t = e.target;
     if (!t || !t.dataset) return;
+    // 弹层里的输入框：把值同步进 sheet.fields（**不重绘**，否则光标会跑、中文输入法会被打断）
+    if (t.dataset.act === 'nb-title' && this.sheet && this.sheet.type === 'new' && this.sheet.fields) {
+      this.sheet.fields.title = t.value;
+      return;
+    }
     if (t.dataset.act === 'query') {
       this.state.query = t.value;
       // 记住光标位置：只重绘主区，不重建搜索框
@@ -1401,6 +1418,14 @@ export class LibraryUI {
       }
       if (this.el.sub) this.el.sub.textContent = this._subtitle();
     }
+  }
+
+  /** 弹层里某个输入框的当前值（**以 DOM 为准**：状态可能因为重绘/输入没同步而上，DOM 才是用户看到的） */
+  _sheetInputValue(act, fallback = '') {
+    const layer = this.el && this.el.layer;
+    const inp = layer && typeof layer.querySelector === 'function' ? layer.querySelector(`[data-act="${act}"]`) : null;
+    if (inp && typeof inp.value === 'string') return inp.value;
+    return fallback;
   }
 
   _onChange(e) {
@@ -1886,8 +1911,10 @@ export class LibraryUI {
     const sh = this.sheet;
     if (!sh || sh.type !== 'new') return;
     const f = sh.fields;
-    const title = String(f.title || '').trim();
+    // 标题以输入框里的实际内容为准（只读状态的话，输入后点一下颜色/模板 chip 再重绘就会把标题丢掉）
+    const title = String(this._sheetInputValue('nb-title', f.title) || '').trim();
     if (!title) { this.toast('先给笔记本起个名字'); this._focusSheetInput('nb-title'); return; }
+    f.title = title;
     let nb = null;
     try {
       if (f.templateId) {
@@ -1999,6 +2026,7 @@ export class LibraryUI {
           <button type="button" class="lib-btn" data-act="review-in-book" title="打开最该复习的那一本，在页面上下文中复习（能看到卡片来自哪一页）">进本子复习</button>
           <button type="button" class="lib-btn" data-act="review-anki" title="导出 Anki 可导入的 CSV（正面 / 背面 / 标签）">导出 Anki CSV</button>
           <button type="button" class="lib-btn" data-act="review-anki-due" title="只导出当前筛选下到期的卡">只导到期</button>
+          <button type="button" class="lib-btn" data-act="card-sources" title="把「没来源 / 来源页已删」的卡收拾干净">来源整理…</button>
         </div>
         <div class="lib-field"><span>复习热图（最近 26 周）</span>
           ${this._heatHTML(heat)}
@@ -2158,6 +2186,80 @@ export class LibraryUI {
         </div>
         ${rows ? `<div class="lib-qlist">${rows}</div>` : '<p class="lib-hint">没有需要重看的页：识别质量看起来都正常。</p>'}
       </div>`;
+  }
+
+  /* ---------- 卡片来源整理（把「没来源 / 来源页已删」的卡收拾干净） ---------- */
+
+  /** 全库收集来源有问题的卡片（分类统计的纯逻辑在 store.orphanCardReport 里） */
+  collectCardSources() {
+    const books = this.store.notebooks({}).map((b) => this.store.get(b.id)).filter(Boolean);
+    return orphanCardReport(books);
+  }
+
+  /** 来源整理面板：先看有多少要处理，再决定「自动找回」还是「清掉失效来源」 */
+  _sheetCardSources() {
+    const rep = this.collectCardSources();
+    const s = rep.stats;
+    const byBook = new Map();
+    for (const it of rep.items) {
+      const row = byBook.get(it.bookId) || { bookId: it.bookId, title: it.bookTitle, items: [] };
+      row.items.push(it);
+      byBook.set(it.bookId, row);
+    }
+    const rows = [...byBook.values()].map((g) => `<div class="lib-qrow" data-role="cardsrc">
+      <span class="lib-qbadge">${g.items.length}</span>
+      <span class="lib-qtext">
+        <b>${bkEsc(g.title)}</b>
+        <i>${g.items.slice(0, 3).map((i) => bkEsc(i.front.slice(0, 18))).join(' · ')}${g.items.length > 3 ? ` 等 ${g.items.length} 张` : ''}</i>
+      </span>
+      <button type="button" class="lib-btn" data-act="cards-find-book" data-book="${bkEsc(g.bookId)}" title="按卡面文字在本子里搜：只在唯一命中时才挂上来源">自动找回</button>
+      <button type="button" class="lib-btn ghost" data-act="cards-open-book" data-book="${bkEsc(g.bookId)}">去看看</button>
+    </div>`).join('');
+    return `<div class="lib-sheet-head"><h3>卡片来源整理</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
+      <div class="lib-sheet-body">
+        <div class="lib-hint">
+          共 <b>${s.total} 张</b>卡的来源有问题：<b>${s.noSource}</b> 张从没记来源、<b>${s.pageMissing}</b> 张的来源页已经被删掉了。
+          「自动找回」按**卡面文字**在本子里搜（含手写识别结果），**只在唯一命中时才挂**——命中多页或找不到就不动，宁可不挂也不挂错。
+        </div>
+        <div class="lib-row">
+          <button type="button" class="lib-btn primary" data-act="cards-find-all" ${s.total ? '' : 'disabled'}>全部自动找回（${s.total} 张）</button>
+          <button type="button" class="lib-btn" data-act="cards-clear-missing" ${s.pageMissing ? '' : 'disabled'} title="只清「来源页已删」的那些（没来源的本来就没得清）">清掉失效来源（${s.pageMissing} 张）</button>
+        </div>
+        ${rows || '<p class="lib-hint">没有需要整理的卡片：每张卡的来源都还在。</p>'}
+      </div>`;
+  }
+
+  /** 自动找回：逐张按卡面文字搜，唯一命中才挂 */
+  findCardSources(bookIds = null) {
+    const rep = this.collectCardSources();
+    const want = Array.isArray(bookIds) && bookIds.length ? new Set(bookIds) : null;
+    const list = rep.items.filter((i) => !want || want.has(i.bookId));
+    let found = 0, skipped = 0;
+    for (const it of list) {
+      const nb = this.store.get(it.bookId);
+      const card = nb && (nb.study || []).find((c) => c.id === it.cardId);
+      const hit = card ? this.store.findCardPageByText(it.bookId, card) : null;
+      if (hit) { this.store.setCardPage(it.bookId, it.cardId, hit.pageId); found++; }
+      else skipped++;
+    }
+    this.toast(found
+      ? `已找回 ${found} 张卡的来源${skipped ? `，${skipped} 张跳过（找不到或命中多页）` : ''}`
+      : `没有能自动找回的（${skipped} 张都找不到唯一来源页）`);
+    return { found, skipped, total: list.length };
+  }
+
+  /** 清掉「来源页已删」的来源（不删卡） */
+  clearMissingSources() {
+    const rep = this.collectCardSources();
+    const byBook = new Map();
+    for (const it of rep.items) {
+      if (it.reason !== 'page-missing') continue;
+      byBook.set(it.bookId, (byBook.get(it.bookId) || []).concat(it.cardId));
+    }
+    let n = 0;
+    for (const [bookId, ids] of byBook) n += this.store.clearCardsPage(bookId, ids);
+    this.toast(n ? `已清掉 ${n} 张卡的失效来源（卡片本身还在）` : '没有可清理的失效来源');
+    return n;
   }
 
   /* ---------- 模板与 Markdown 导出 ---------- */

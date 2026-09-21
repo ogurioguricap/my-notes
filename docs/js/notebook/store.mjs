@@ -187,6 +187,45 @@ export function cardSourceOf(notebook, card) {
   return { pageId, pageIndex: idx, pageTitle: (pages[idx].title || '').trim(), ok: true };
 }
 
+/**
+ * 全库「来源有问题的卡片」报告（纯函数）
+ *   no-source    —— 从没记来源
+ *   page-missing —— 记了来源但那页已经不在（页被删过 / 从别处导入）
+ * @returns {{ items:Array, stats:{ total, noSource, pageMissing, books } }}
+ */
+export function orphanCardReport(notebooks) {
+  const items = [];
+  for (const nb of notebooks || []) {
+    if (!nb) continue;
+    const pageIds = new Set((nb.pages || []).map((p) => p.id));
+    for (const c of nb.study || []) {
+      const pageId = (c && c.pageId) || '';
+      const missing = !!pageId && !pageIds.has(pageId);
+      if (pageId && !missing) continue;
+      items.push({
+        bookId: nb.id,
+        bookTitle: nb.title || '未命名',
+        cardId: c.id,
+        front: String(c.front || ''),
+        back: String(c.back || ''),
+        tags: c.tags || [],
+        box: c.box || 0,
+        pageId,
+        reason: missing ? 'page-missing' : 'no-source',
+      });
+    }
+  }
+  return {
+    items,
+    stats: {
+      total: items.length,
+      noSource: items.filter((i) => i.reason === 'no-source').length,
+      pageMissing: items.filter((i) => i.reason === 'page-missing').length,
+      books: new Set(items.map((i) => i.bookId)).size,
+    },
+  };
+}
+
 /** 闪卡统一形状（老数据没有 tags / lapses 时补齐） */export function normalizeCard(c = {}) {
   return {
     id: c.id || nid('cd'),
@@ -973,6 +1012,50 @@ export class NotebookStore {
     if (!nb) return [];
     const ids = new Set(nb.pages.map((p) => p.id));
     return nb.study.filter((c) => !c.pageId || !ids.has(c.pageId));
+  }
+
+  /** 批量：把这几张卡的来源清掉（只动来源，不删卡） */
+  clearCardsPage(bookId, cardIds) {
+    const nb = this.get(bookId);
+    if (!nb) return 0;
+    const want = new Set((Array.isArray(cardIds) ? cardIds : [cardIds]).filter(Boolean));
+    let n = 0;
+    for (const c of nb.study || []) {
+      if (want.has(c.id) && c.pageId) { c.pageId = ''; n++; }
+    }
+    if (n) this.touch(bookId);
+    return n;
+  }
+
+  /** 批量：把这几张卡的来源改挂到某一页 */
+  setCardsPage(bookId, cardIds, pageId) {
+    const nb = this.get(bookId);
+    if (!nb || !nb.pages.some((p) => p.id === pageId)) return 0;
+    const want = new Set((Array.isArray(cardIds) ? cardIds : [cardIds]).filter(Boolean));
+    let n = 0;
+    for (const c of nb.study || []) {
+      if (want.has(c.id)) { c.pageId = pageId; n++; }
+    }
+    if (n) this.touch(bookId);
+    return n;
+  }
+
+  /**
+   * 按卡面文字把丢失的「来源页」找回来（纯靠本子内已有的文本与手写识别）
+   *   · 只在**唯一命中**时才挂（命中多页说明不可靠，宁可不挂也不挂错）
+   * @returns {{ pageId:string, pageIndex:number, matches:number }|null}
+   */
+  findCardPageByText(bookId, card, { minLen = 4, maxCheck = 240 } = {}) {
+    const nb = this.get(bookId);
+    if (!nb || !card) return null;
+    const needle = String(card.front || '').trim().slice(0, maxCheck);
+    if (needle.length < Math.max(2, minLen)) return null;
+    const hits = this.searchText(bookId, needle, { limit: 8 }) || [];
+    const pages = [...new Set(hits.map((h) => h.pageId))];
+    if (pages.length !== 1) return null;
+    const idx = nb.pages.findIndex((p) => p.id === pages[0]);
+    if (idx < 0) return null;
+    return { pageId: pages[0], pageIndex: idx, matches: hits.length };
   }
 
   removeCard(bookId, cardId) {

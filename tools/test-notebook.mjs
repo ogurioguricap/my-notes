@@ -2584,5 +2584,73 @@ head('打印检查单 · 跳过空白页');
   expect('检查单样式齐备', /\.nb-check-row/.test(cssViewer3) && /\.nb-check-badge\.warn/.test(cssViewer3));
 }
 
+/* ============================ 25. 卡片来源整理（批量收拾孤儿来源） ============================ */
+head('卡片来源整理');
+{
+  const s18 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const A = s18.create({ title: '来源本 A' });
+  s18.addPage(A.id, {});
+  s18.addPage(A.id, {});
+  const nb = s18.get(A.id);
+  const p0 = nb.pages[0], p1 = nb.pages[1];
+  s18.setItems(A.id, p0.id, [{ kind: 'text', id: 't0', x: 0.1, y: 0.2, text: '拉格朗日中值定理的证明思路', size: 0.026, color: '#222', font: 'sans' }]);
+  s18.setItems(A.id, p1.id, [{ kind: 'text', id: 't1', x: 0.1, y: 0.2, text: '柯西不等式的用法', size: 0.026, color: '#222', font: 'sans' }]);
+  const c1 = s18.addCard(A.id, '拉格朗日中值定理的证明思路', '中值定理', { pageId: p0.id });   // 来源正常
+  const c2 = s18.addCard(A.id, '柯西不等式的用法', '不等式', { pageId: p1.id });               // 来源正常
+  const c3 = s18.addCard(A.id, '完全没写来源的卡', 'x');                                        // 无来源
+  const c4 = s18.addCard(A.id, '来源页被删掉的卡', 'y', { pageId: 'pg-不存在' });               // 来源页已删
+  const c5 = s18.addCard(A.id, '柯西不等式的用法', '重复卡（命中多页）', { pageId: '' });        // 无来源但文本与 c2 相同（会命中同一页？）
+
+  expect('收集：分出「无来源」与「来源页已删」两类并统计涉及几本', (() => {
+    const B = s18.create({ title: '来源本 B' });
+    s18.addCard(B.id, '另一个本子里的裸卡', '');
+    const rep = storeMod.orphanCardReport([s18.get(A.id), s18.get(B.id)]);
+    return rep.stats.total === 4 && rep.stats.noSource === 3 && rep.stats.pageMissing === 1 && rep.stats.books === 2
+      && rep.items.some((i) => i.reason === 'page-missing' && i.cardId === c4.id);
+  })());
+  expect('收集：来源正常的卡不进清单', (() => {
+    const rep = storeMod.orphanCardReport([s18.get(A.id)]);
+    return !rep.items.some((i) => i.cardId === c1.id) && !rep.items.some((i) => i.cardId === c2.id);
+  })());
+  expect('收集：坏数据不炸（没有 study / pages 的笔记本直接跳过）', storeMod.orphanCardReport([null, {}, { pages: [] }]).stats.total === 0);
+  expect('store.orphanCards：来源正常的卡不在列表里', (() => {
+    const list = s18.orphanCards(A.id).map((c) => c.id);
+    return !list.includes(c1.id) && !list.includes(c2.id) && list.includes(c3.id) && list.includes(c4.id);
+  })());
+  expect('按卡面文字找回来源：唯一命中才返回', (() => {
+    const hit = s18.findCardPageByText(A.id, s18.get(A.id).study.find((c) => c.id === c3.id) ? { front: '拉格朗日中值定理的证明思路' } : null);
+    return !!(hit && hit.pageId === p0.id && hit.pageIndex === 0);
+  })());
+  expect('按卡面文字找回来源：太短的卡面不猜（少于 4 个字直接跳过）', s18.findCardPageByText(A.id, { front: '极限' }) === null);
+  expect('按卡面文字找回来源：完全找不到就返回 null', s18.findCardPageByText(A.id, { front: '这段话在本子里根本不存在哟' }) === null);
+  expect('按卡面文字找回来源：命中多页时宁可不挂', (() => {
+    // 让两页都含同一段文字 → 命中 2 页 → 必须返回 null
+    s18.setItems(A.id, p1.id, [{ kind: 'text', id: 't1', x: 0.1, y: 0.2, text: '拉格朗日中值定理的证明思路（第二页也写了）', size: 0.026, color: '#222', font: 'sans' }]);
+    const hit = s18.findCardPageByText(A.id, { front: '拉格朗日中值定理的证明思路' });
+    const back = hit === null;
+    s18.setItems(A.id, p1.id, [{ kind: 'text', id: 't1', x: 0.1, y: 0.2, text: '柯西不等式的用法', size: 0.026, color: '#222', font: 'sans' }]);
+    return back;
+  })());
+  expect('批量挂来源：setCardsPage 一次给多张卡挂上', (() => {
+    const n = s18.setCardsPage(A.id, [c3.id, c4.id], p1.id);
+    const ids = s18.get(A.id).study.filter((c) => [c3.id, c4.id].includes(c.id)).map((c) => c.pageId);
+    return n === 2 && ids.every((x) => x === p1.id);
+  })());
+  expect('批量挂来源：目标页不存在时不写（返回 0）', s18.setCardsPage(A.id, [c3.id], 'pg-不存在') === 0);
+  expect('批量清来源：只清指定那几张，卡片本身还在', (() => {
+    const n = s18.clearCardsPage(A.id, [c3.id]);
+    const card = s18.get(A.id).study.find((c) => c.id === c3.id);
+    return n === 1 && !!card && card.pageId === '';
+  })());
+  expect('批量清来源：本来就是空来源的不重复计数', s18.clearCardsPage(A.id, [c3.id]) === 0);
+
+  // --- 界面接线 ---
+  const libSrc6 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  expect('复习中心里有「来源整理…」入口', /data-act="card-sources"/.test(libSrc6) && /_sheetCardSources/.test(libSrc6));
+  expect('整理面板能区分两类并给一键操作', /cards-find-all/.test(libSrc6) && /cards-find-book/.test(libSrc6) && /cards-clear-missing/.test(libSrc6));
+  expect('自动找回用「唯一命中才挂」的规则（调 findCardPageByText）', /findCardPageByText/.test(libSrc6) && /唯一命中/.test(libSrc6));
+  expect('收集函数会跨本统计（无来源 / 来源已删 / 涉及几本）', /collectCardSources/.test(libSrc6) && /noSource/.test(libSrc6) && /pageMissing/.test(libSrc6));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

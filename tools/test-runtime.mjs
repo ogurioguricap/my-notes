@@ -543,7 +543,68 @@ try {
     await sleep(150);
   }
 
-  // 打印检查单：真 DOM 里渲染一次（统计与警告由 study.printCheck 的纯函数保证）
+  // 卡片来源整理：真 DOM 里渲染一次并跑一次「自动找回」
+  {
+    const bk = nbStore.create({ title: '来源整理本' });
+    const page = nbStore.get(bk.id).pages[0];
+    nbStore.setItems(bk.id, page.id, [{ kind: 'text', id: 'tx', x: 0.1, y: 0.2, text: '拉格朗日中值定理的证明思路', size: 0.026, color: '#222', font: 'sans' }]);
+    nbStore.addCard(bk.id, '拉格朗日中值定理的证明思路', '中值定理');           // 无来源，但文本能在本子里唯一命中
+    nbStore.addCard(bk.id, '这段文字本子里没有', 'x');                            // 无来源，找不回
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const lib6 = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    if (lib6) {
+      const rep = lib6.collectCardSources();
+      expect('来源整理：能统计出待整理的卡片', rep.stats.total === 2 && rep.stats.noSource === 2);
+      const html = lib6._sheetCardSources();
+      expect('来源整理面板能生成（两类计数 + 一键按钮）', html.includes('cards-find-all') && html.includes('cards-clear-missing') && html.includes('来源整理'));
+      const res = lib6.findCardSources();
+      expect('自动找回：唯一命中的挂上、找不回的跳过', res.found === 1 && res.skipped === 1);
+      expect('自动找回后清单里只剩找不回的那张', lib6.collectCardSources().stats.total === 1);
+    } else {
+      expect('来源整理面板能生成（两类计数 + 一键按钮）', /_sheetCardSources/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    expect('来源整理渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
+
+  {
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const lib5 = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    if (lib5) {
+      lib5.openNewSheet();
+      const inp = documentStub.querySelector('[data-act="nb-title"]');
+      expect('新建弹层里有标题输入框', !!inp);
+      if (inp) {
+        inp.value = '运行期新建本';
+        inp.dispatchEvent({ type: 'input', target: inp });
+        // 点一下封面花纹 chip：这一步会重绘弹层（旧实现会把标题一起丢掉）
+        const chip = documentStub.querySelector('[data-act="nb-pattern"]');
+        if (chip) chip.dispatchEvent({ type: 'click', target: chip, stopPropagation: () => {} });
+        const inp2 = documentStub.querySelector('[data-act="nb-title"]');
+        expect('点颜色/花纹后标题不丢（重绘后输入框里还是刚写的名字）', !!inp2 && inp2.value === '运行期新建本');
+        const btn = documentStub.querySelector('[data-act="nb-create"]');
+        if (btn) btn.dispatchEvent({ type: 'click', target: btn, stopPropagation: () => {} });
+        await sleep(200);
+        const made = nbStore.notebooks({}).find((b) => b.title === '运行期新建本');
+        expect('写了名字就能创建成功（不再提示「先给笔记本起个名字」）', !!made);
+        if (made) nbStore.purge(made.id);
+      }
+    } else {
+      expect('新建弹层里有标题输入框', /data-act="nb-title"/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    expect('新建笔记本流程无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
+
   {
     const bk = nbStore.create({ title: '检查单测试本' });
     nbStore.addPage(bk.id, {});

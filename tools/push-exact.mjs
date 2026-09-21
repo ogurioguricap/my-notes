@@ -72,7 +72,12 @@ async function req(url, init = {}) {
   const text = await res.text();
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
-  if (!res.ok) throw new Error(`${init.method || 'GET'} ${url} → ${res.status} ${text.slice(0, 300)}`);
+  if (!res.ok) {
+    const hint = res.status === 401
+      ? '\n   → 令牌无效或已过期：跑 `node tools/check-token.mjs` 看过期时间并换新令牌'
+      : res.status === 403 ? '\n   → 权限不足：令牌需要 repo 权限（经典）或本仓库写权限（细粒度）' : '';
+    throw new Error(`${init.method || 'GET'} ${url} → ${res.status} ${text.slice(0, 300)}${hint}`);
+  }
   return json;
 }
 
