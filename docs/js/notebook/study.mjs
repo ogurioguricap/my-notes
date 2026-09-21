@@ -282,11 +282,26 @@ export function pdfFromImages(images, o = {}) {
     const rootCount = flat.length;
     push(outlineRootNum, `<< /Type /Outlines${flat.length ? ` /First ${flat[0].num} 0 R /Last ${flat.filter((x) => x.parent === outlineRootNum).slice(-1)[0].num} 0 R` : ''} /Count ${rootCount} >>`);
     for (const node of flat) {
-      const pageNum = sheetBase[sheetOfPage[Math.min(n - 1, Math.max(0, node.pageIndex))]] || sheetBase[0];
+      const pageIdx = Math.min(n - 1, Math.max(0, node.pageIndex));
+      const sheetIdx = sheetOfPage[pageIdx] || 0;
+      const sheet = sheetPlans[sheetIdx] || { mediaH: 842, draws: [] };
+      const draw = sheet.draws.find((d) => d.page === pageIdx) || sheet.draws[0] || null;
+      const pageNum = sheetBase[sheetIdx] || sheetBase[0];
+      // 书签落点：有 at（页面上哪一行/哪个对象）就写 /XYZ 跳到那个位置，否则 /Fit 跳页首
+      let dest = `${pageNum} 0 R /Fit`;
+      if (node.at && draw) {
+        const im = pages[draw.page] || { w: 595, h: 842 };
+        const ih = Math.max(1, Math.round(im.h || 842));
+        const yPdf = draw.y + (ih - Math.max(0, Math.min(1, Number(node.at.y) || 0)) * ih) * draw.scale;
+        const xPdf = draw.x + Math.max(0, Math.min(1, Number(node.at.x) || 0)) * Math.max(1, Math.round(im.w || 595)) * draw.scale;
+        // 靠左对齐（大多数笔记都是）就写 null，让阅读器保持当前横向位置；内容明显靠右/分栏时才给具体 x
+        const xPart = Number(node.at.x) > 0.25 ? xPdf.toFixed(1) : 'null';
+        dest = `${pageNum} 0 R /XYZ ${xPart} ${yPdf.toFixed(1)} null`;
+      }
       const parts = [
         `/Title ${pdfTitleHex(node.title)}`,
         `/Parent ${node.parent || outlineRootNum} 0 R`,
-        `/Dest [${pageNum} 0 R /Fit]`,
+        `/Dest [${dest}]`,
       ];
       if (node.children.length) {
         const kidsOf = flat.filter((x) => x.parent === node.num);
@@ -452,7 +467,7 @@ export async function buildPdf(pages, o = {}) {
     title: o.title,
     textPages,
     toUnicode: cmap,
-    outlines: o.outlines || [],
+    outlines: o.outlineAnchors === false ? (o.outlines || []) : attachOutlineAnchors(o.outlines || [], list),
     layoutId: o.layoutId || 'single',
     layoutGap: o.layoutGap,
     layoutMargin: o.layoutMargin,
@@ -1154,6 +1169,54 @@ export function pdfTitleHex(title) {
   return `<FEFF${utf16beHex(t)}>`;
 }
 
+/**
+ * 页面上「内容从哪儿开始」——书签跳转的落点（归一化 0~1，原点左上）
+ *
+ * 优先级：和页标题对得上的文本框 → 最靠上的文本框 → 最靠上的任何对象 → OCR 第一行
+ * 找不到内容就返回 null（调用方退回 /Fit 跳页首）
+ * @returns {{x:number, y:number}|null}
+ */
+export function pageAnchor(page, { title = '' } = {}) {
+  const items = ((page && page.items) || []).filter((it) => it && it.kind !== 'tape');
+  const want = String(title || '').replace(/\s+/g, '').slice(0, 12);
+  const topOf = (it) => {
+    if (it.kind === 'text') return Number(it.y) || 0;
+    if (it.kind === 'sticker' || it.kind === 'tape' || it.kind === 'image') return Number(it.y) || 0;
+    const pts = (it.points || []).filter((p) => Array.isArray(p));
+    return pts.length ? Math.min(...pts.map((p) => Number(p[1]) || 0)) : 0;
+  };
+  const texts = items.filter((it) => it.kind === 'text' && String(it.text || '').trim());
+  if (want) {
+    const hit = texts
+      .filter((it) => String(it.text).replace(/\s+/g, '').includes(want))
+      .sort((a, b) => topOf(a) - topOf(b))[0];
+    if (hit) return { x: Math.max(0, Math.min(1, Number(hit.x) || 0)), y: Math.max(0, Math.min(1, topOf(hit))) };
+  }
+  if (texts.length) {
+    const top = texts.slice().sort((a, b) => topOf(a) - topOf(b))[0];
+    return { x: Math.max(0, Math.min(1, Number(top.x) || 0)), y: Math.max(0, Math.min(1, topOf(top))) };
+  }
+  if (items.length) {
+    const top = items.slice().sort((a, b) => topOf(a) - topOf(b))[0];
+    return { x: 0, y: Math.max(0, Math.min(1, topOf(top))) };
+  }
+  const line = ((page && page.ocr && page.ocr.lines) || []).find((l) => l && Array.isArray(l.box));
+  if (line) return { x: Math.max(0, Math.min(1, Number(line.box[0]) || 0)), y: Math.max(0, Math.min(1, Number(line.box[1]) || 0)) };
+  return null;
+}
+
+/**
+ * 给书签项补「页内落点」（`at`）：有内容就带 at → PDF 里写成 /XYZ（跳到那一行的位置），
+ * 没有内容就不带 → 退回 /Fit（跳页首）
+ */
+export function attachOutlineAnchors(outlines, pages) {
+  return (outlines || []).map((o) => {
+    const page = (pages || [])[Math.max(0, Math.round(Number(o && o.pageIndex) || 0))];
+    const at = page ? pageAnchor(page, { title: o && o.title }) : null;
+    return at ? { ...o, at } : { ...o };
+  });
+}
+
 /** 笔记本 → PDF 书签项（有标题的页为一级、只设了书签的页挂在它下面当二级） */
 export function outlinesFromNotebook(nb, { everyPageIfEmpty = false } = {}) {
   const pages = (nb && nb.pages) || [];
@@ -1177,13 +1240,13 @@ export function outlinesFromNotebook(nb, { everyPageIfEmpty = false } = {}) {
   return items;
 }
 
-/** 扁平条目 → 树（level 0 为根，往后每级挂到上一个更浅的条目下） */
+/** 扁平条目 → 树（level 0 为根，往后每级挂到上一个更浅的条目下）；额外字段（如书签落点 at）原样保留 */
 export function outlineTree(items) {
   const roots = [];
   const stack = [];
   for (const it of items || []) {
     const level = Math.max(0, Math.min(4, Math.round(Number(it && it.level) || 0)));
-    const node = { title: String((it && it.title) || ''), pageIndex: Math.max(0, Math.round(Number(it && it.pageIndex) || 0)), level, children: [] };
+    const node = { ...(it && typeof it === 'object' ? it : {}), title: String((it && it.title) || ''), pageIndex: Math.max(0, Math.round(Number(it && it.pageIndex) || 0)), level, children: [] };
     if (!node.title) continue;
     while (stack.length > level) stack.pop();
     if (level === 0 || !stack.length) roots.push(node);

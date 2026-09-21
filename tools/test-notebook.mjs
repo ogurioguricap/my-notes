@@ -2367,5 +2367,89 @@ head('跨页拖拽');
   expect('PageEditor 把四个新钩子接进来了', /getPageAt:/.test(viewerSrc6) && /onApplyPageItems:/.test(viewerSrc6) && /onMoveItems:/.test(viewerSrc6));
 }
 
+/* ============================ 23. PDF 书签落到页内位置（/XYZ） ============================ */
+head('PDF 书签跳页内位置');
+{
+  const txtIt = (id, text, y, x = 0.08) => ({ kind: 'text', id, x, y, text, size: 0.026, color: '#222', font: 'sans' });
+  const strokeAt = (id, y) => ({ kind: 'stroke', id, tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, y], [0.4, y + 0.03]] });
+
+  expect('页内落点：标题能对上文本框 → 落在那一行', (() => {
+    const page = { items: [txtIt('a', '随便写的笔记', 0.4), txtIt('b', '第三章 中值定理 f(ξ)=0', 0.12)] };
+    const at = studyMod.pageAnchor(page, { title: '第三章 中值定理' });
+    return at && Math.abs(at.y - 0.12) < 1e-9 && Math.abs(at.x - 0.08) < 1e-9;
+  })());
+  expect('页内落点：标题对不上就用最靠上的文本框', (() => {
+    const page = { items: [txtIt('a', '下面一点', 0.5), txtIt('b', '最上面那行', 0.2)] };
+    const at = studyMod.pageAnchor(page, { title: '完全对不上的标题' });
+    return at && Math.abs(at.y - 0.2) < 1e-9;
+  })());
+  expect('页内落点：没有文本就用最靠上的笔迹', (() => {
+    const at = studyMod.pageMod ? null : studyMod.pageAnchor({ items: [strokeAt('s', 0.6), strokeAt('s2', 0.25)] });
+    return at && Math.abs(at.y - 0.25) < 1e-9 && at.x === 0;
+  })());
+  expect('页内落点：只有 OCR 行时用第一行的行框', (() => {
+    const at = studyMod.pageAnchor({ items: [], ocr: { lines: [{ text: '手写第一行', box: [0.12, 0.31, 0.6, 0.36] }] } });
+    return at && Math.abs(at.y - 0.31) < 1e-9 && Math.abs(at.x - 0.12) < 1e-9;
+  })());
+  expect('页内落点：空白页没有落点（退回跳页首）', studyMod.pageAnchor({ items: [] }) === null && studyMod.pageAnchor({}) === null);
+  expect('页内落点：胶带不算内容（不会被胶带带到页尾）', (() => {
+    const at = studyMod.pageAnchor({ items: [{ kind: 'tape', x: 0.1, y: 0.9, w: 0.3, h: 0.05 }] });
+    return at === null;
+  })());
+  expect('页内落点：坐标被夹在 0~1（坏数据不会写出离谱的 y）', (() => {
+    const at = studyMod.pageAnchor({ items: [txtIt('a', 'x', -3)] }, {});
+    return at && at.y >= 0 && at.y <= 1;
+  })());
+
+  const pages = [
+    { items: [txtIt('p1', '第一章 极限', 0.1)] },
+    { items: [] },
+    { items: [strokeAt('s3', 0.5)] },
+  ];
+  const outlines = [
+    { title: '第一章 极限', pageIndex: 0, level: 0 },
+    { title: '第 2 页（书签）', pageIndex: 1, level: 1 },
+    { title: '第三章', pageIndex: 2, level: 0 },
+  ];
+  const withAt = studyMod.attachOutlineAnchors(outlines, pages);
+  expect('挂落点：有内容的页带 at，空白页不带（各自退回 /Fit）', !!withAt[0].at && !withAt[1].at && !!withAt[2].at);
+  expect('挂落点：不改原数组（只返回新条目）', !('at' in outlines[0]) && withAt[0].title === outlines[0].title);
+
+  // --- 真写 PDF：/XYZ 落点 ---
+  const im = (w = 595, h = 842) => ({ jpeg: new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]), w, h });
+  const latin = (bytes) => Buffer.from(bytes).toString('latin1');
+  const b = studyMod.pdfFromImages([im(), im(), im()], { outlines: withAt });
+  const dests = [...latin(b).matchAll(/\/Dest \[(\d+) 0 R ([^\]]+)\]/g)].map((m) => ({ page: Number(m[1]), op: m[2].trim() }));
+  expect('PDF：第一章的落点是 /XYZ 且 y 按页高换算（0.1 → 842×(1-0.1)=757.8）', (() => {
+    const d = dests[0];
+    const m = /\/XYZ (\S+) ([\d.]+) null/.exec(d.op);
+    return !!m && Math.abs(Number(m[2]) - 757.8) < 0.6;
+  })());
+  expect('PDF：空白页的那条书签退回 /Fit（跳页首）', dests[1].op === '/Fit');
+  expect('PDF：靠左的内容 x 写 null（阅读器保持横向位置）', /\/XYZ null/.test(dests[0].op));
+  expect('PDF：内容明显靠右时才写具体 x（0.4 → 595×0.4=238）', (() => {
+    const nb2 = studyMod.pdfFromImages([im()], { outlines: studyMod.attachOutlineAnchors([{ title: 'T', pageIndex: 0, level: 0 }], [{ items: [{ kind: 'text', id: 'x', x: 0.4, y: 0.3, text: 'T 内容' }] }]) });
+    const m = /\/Dest \[\d+ 0 R \/XYZ ([\d.]+) ([\d.]+) null\]/.exec(latin(nb2));
+    return !!m && Math.abs(Number(m[1]) - 238) < 0.6 && Math.abs(Number(m[2]) - 589.4) < 0.6;
+  })());
+  expect('PDF：书签结构仍然合法（xref / startxref 自洽 + 大纲根 Count）', (() => {
+    const t = latin(b);
+    const at = Number(/startxref\n(\d+)/.exec(t)[1]);
+    return t.slice(at, at + 4) === 'xref' && t.trimEnd().endsWith('%%EOF') && /\/Type \/Outlines[^>]*\/Count 3/.test(t);
+  })());
+  expect('拼版时落点也跟着缩放与格位偏移（2 页拼一张）', (() => {
+    const nb3 = studyMod.pdfFromImages([im(), im()], {
+      layoutId: 'nup2h',
+      outlines: studyMod.attachOutlineAnchors([{ title: 'A', pageIndex: 0, level: 0 }], [{ items: [txtIt('t', 'A 的内容', 0.25)] }]),
+    });
+    const m = /\/Dest \[\d+ 0 R \/XYZ null ([\d.]+) null\]/.exec(latin(nb3));
+    // 单格缩放 = 416/595 ≈ 0.6992；y = 格位 y + 842×(1-0.25)×scale
+    const scale = 416 / 595;
+    const expectY = 3.15 + 842 * 0.75 * scale;
+    return !!m && Math.abs(Number(m[1]) - expectY) < 2;
+  })());
+  expect('buildPdf 默认会挂落点（不用调用方自己做）', /attachOutlineAnchors\(o\.outlines \|\| \[\], list\)/.test(fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'study.mjs'), 'utf8')));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);
