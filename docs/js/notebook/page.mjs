@@ -87,13 +87,41 @@ const prefersDark = () => {
 
 /* ============================ 纯计算工具（可测） ============================ */
 
+/** 每一类对象的 id 前缀（粘贴 / 跨页移动时换新 id 用，和 paste() 保持一致） */
+export function itemIdPrefix(kind) {
+  return kind === 'text' ? 't' : kind === 'sticker' ? 'st' : kind === 'tape' ? 'tp' : kind === 'image' ? 'img' : 's';
+}
+
+/**
+ * 把一批对象并到某一页的内容里（跨页拖拽 / 跨页撤销用）
+ *   · 目标页已经有同 id 的对象时换一个新 id，避免两页合起来出现重复 id
+ *   · 不改坐标：对象坐标本来就是 0~1 相对值，换页后位置一致
+ */
+export function mergeItemsInto(destItems, incoming) {
+  const dest = Array.isArray(destItems) ? destItems.slice() : [];
+  const ids = new Set(dest.map((it) => it && it.id));
+  const added = [];
+  for (const raw of incoming || []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const it = JSON.parse(JSON.stringify(raw));
+    if (!it.id || ids.has(it.id)) it.id = uid(itemIdPrefix(it.kind));
+    ids.add(it.id);
+    added.push(it);
+  }
+  return dest.concat(added);
+}
+
+/** 一页里有没有可拖动的内容（界面上给「拖到别页」提示用） */
+export function hasMovableItems(page) {
+  return ((page && page.items) || []).some((it) => it && it.kind !== 'tape');
+}
+
 /**
  * 页面内容的规整：笔迹/形状/文本/图片沿用标注层的规范，
  * 贴纸与胶带是笔记本模式独有的类型，笔型、逐点笔宽、透明度、字体这些也要原样留住
  * （否则撤销一次就会把「毛笔」「自定义笔宽」这类信息抹掉）
  */
-export function normalizePageItems(list) {
-  const out = [];
+export function normalizePageItems(list) {  const out = [];
   for (const raw of Array.isArray(list) ? list : []) {
     if (!raw || typeof raw !== 'object') continue;
     const kind = raw.kind || 'stroke';
@@ -822,11 +850,21 @@ export class PageEditor {
    *   o.onToast   (msg) => void
    *   o.onDirty   () => void
    *   o.onGotoPage (pageIndex) => void     撤销跨页时用
+   *   o.getPageAt (pageIndex) => { pageId, pageIndex, items }   跨页拖拽时取别页内容
+   *   o.onMoveItems      (targetIndex, items) => void            把对象插到别页（宿主负责落盘）
+   *   o.onApplyPageItems (pageIndex, items) => void              跨页撤销时把别页写回去
+   *   o.onSelectionDrag  ({x, y}) => void                        拖选中对象时实时报告指针位置（含画布外）
+   *   o.onSelectionDrop  ({x, y}) => void                        松手（宿主据此决定是否落到缩略图上）
    */
   constructor(o = {}) {
     this.canvas = o.canvas;
     this.host = o.host || (o.canvas && o.canvas.parentElement) || null;
     this.getPage = o.getPage || (() => null);
+    this.getPageAt = o.getPageAt || ((i) => this.getPage(i));
+    this.onMoveItems = o.onMoveItems || null;
+    this.onApplyPageItems = o.onApplyPageItems || null;
+    this.onSelectionDrag = o.onSelectionDrag || null;
+    this.onSelectionDrop = o.onSelectionDrop || null;
     this.setItemsCb = o.setItems || (() => {});
     this.onStatus = o.onStatus || (() => {});
     this.onToast = o.onToast || (() => {});
@@ -1278,6 +1316,10 @@ export class PageEditor {
     }
     if (this.gesture.type === 'move' || this.gesture.type === 'scale' || this.gesture.type === 'rotate') {
       this.applyTransform(p, meta);
+      // 拖「选中的对象」时实时上报指针位置：拖到画布外（缩略图栏）也能知道现在指哪
+      if (this.gesture.type === 'move' && this.selection.size && typeof this.onSelectionDrag === 'function' && meta && Number.isFinite(meta.clientX)) {
+        this.onSelectionDrag({ x: meta.clientX, y: meta.clientY });
+      }
       return this.scheduleRedraw();
     }
     if (this.gesture.type === 'ruler') {
@@ -1288,7 +1330,7 @@ export class PageEditor {
     }
   }
 
-  onUp() {
+  onUp(e = {}) {
     if (this.crop && this.crop.drag) { this.crop.drag = null; this.redraw(); return; }
     const g = this.gesture;
     this.gesture = null;
@@ -1321,6 +1363,10 @@ export class PageEditor {
       this.redraw();
       this.commit(label);
       this.refreshStatus();
+      // 拖出去松手：宿主可以据此把对象挪到缩略图对应的那一页
+      if (g.type === 'move' && typeof this.onSelectionDrop === 'function') {
+        try { this.onSelectionDrop({ x: e.clientX, y: e.clientY }); } catch (err) { /* 落点判定失败不影响正常拖动 */ }
+      }
       return;
     }
     if (g.type === 'ruler') { this.redraw(); this.commit('移动尺子'); return; }
@@ -1577,6 +1623,53 @@ export class PageEditor {
     this.clipboard = JSON.parse(JSON.stringify(sel));
     this.onToast(`已复制 ${sel.length} 个对象`);
     return true;
+  }
+
+  /**
+   * 把选中的对象移到另一页（跨页拖拽的落点动作）
+   *   · 历史里存的是「两页各自的操作前内容」→ 一次撤销就把两页同时复原（不会只撤一半）
+   *   · 真写库由宿主负责（onMoveItems 钩子），因为编辑器只知道当前这一页
+   */
+  moveSelectionToPage(targetIndex) {
+    const idx = Number(targetIndex);
+    if (!this.selection.size) { this.onToast('先圈选要移动的对象'); return false; }
+    if (!Number.isFinite(idx) || idx === this.pageIndex) return false;
+    const dst = typeof this.getPageAt === 'function' ? this.getPageAt(idx) : null;
+    if (!dst) { this.onToast('拿不到目标页'); return false; }
+    const ids = [...this.selection];
+    const moved = JSON.parse(JSON.stringify(this.items.filter((it) => ids.includes(it.id))));
+    if (!moved.length) return false;
+    // 压一条「跨页」历史：撤销时两页一起回到操作前
+    this.history.push(`移到第 ${idx + 1} 页`, {
+      pages: [
+        { pageId: this.pageId, pageIndex: this.pageIndex, items: JSON.parse(JSON.stringify(this.items)) },
+        { pageId: dst.pageId, pageIndex: idx, items: JSON.parse(JSON.stringify(dst.items || [])) },
+      ],
+      pageId: this.pageId,
+      pageIndex: this.pageIndex,
+      items: JSON.parse(JSON.stringify(this.items)),
+    });
+    this.items = this.items.filter((it) => !ids.includes(it.id));
+    this.selection.clear();
+    this.persist();
+    this.redraw();
+    this.refreshStatus();
+    if (typeof this.onMoveItems === 'function') this.onMoveItems(idx, moved);
+    return true;
+  }
+
+  /** 把别页的内容写回去（跨页撤销/重做时用，宿主负责落盘） */
+  applyPageItems(pageIndex, items) {
+    const idx = Number(pageIndex);
+    if (!Number.isFinite(idx)) return false;
+    if (idx === this.pageIndex) {
+      this.items = normalizePageItems(items);
+      this.redraw();
+      this.persist();
+      return true;
+    }
+    if (typeof this.onApplyPageItems === 'function') return this.onApplyPageItems(idx, items) !== false;
+    return false;
   }
 
   cut() { if (!this.copy()) return false; return this.deleteSelection(); }
@@ -2063,11 +2156,41 @@ export class PageEditor {
   }
 
   _historyState() {
-    return { pageId: this.pageId, pageIndex: this.pageIndex, items: JSON.parse(JSON.stringify(this.items)) };
+    const base = { pageId: this.pageId, pageIndex: this.pageIndex, items: JSON.parse(JSON.stringify(this.items)) };
+    // 顶层如果是「跨页操作」，连别页的当前内容一起带上，这样重做能同时对两页生效
+    const stack = this.history && this.history.undoStack;
+    const top = stack && stack.length ? stack[stack.length - 1] : null;
+    const before = top && top.before;
+    if (before && Array.isArray(before.pages)) {
+      const pages = before.pages.map((p) => {
+        if (p.pageId === this.pageId) return base;
+        const live = typeof this.getPageAt === 'function' ? this.getPageAt(p.pageIndex) : null;
+        return { pageId: p.pageId, pageIndex: p.pageIndex, items: JSON.parse(JSON.stringify((live && live.items) || [])) };
+      });
+      return { ...base, pages };
+    }
+    return base;
   }
 
   _applyHistoryState(r, verb) {
     const state = r.state || {};
+    // 跨页操作：两页一起回到那个时刻
+    if (Array.isArray(state.pages)) {
+      const mine = state.pages.find((p) => p.pageId === this.pageId) || state.pages[0] || {};
+      const others = state.pages.filter((p) => p !== mine);
+      for (const p of others) this.applyPageItems(p.pageIndex, p.items || []);
+      if (mine.pageId && mine.pageId !== this.pageId) {
+        this.setPage(mine.pageIndex);
+        this.onGotoPage(mine.pageIndex);
+      }
+      this.items = normalizePageItems(mine.items || []);
+      this.selection.clear();
+      this.persist();
+      this.redraw();
+      this.refreshStatus();
+      this.onToast(`${verb}：${r.label}`);
+      return r.label;
+    }
     const items = Array.isArray(state.items) ? state.items : (Array.isArray(state) ? state : []);
     const pageId = state.pageId || this.pageId;
     const pageIndex = state.pageIndex == null ? this.pageIndex : state.pageIndex;

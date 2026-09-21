@@ -144,6 +144,11 @@
 }
 .nb-thumb:hover { border-color: var(--line-strong); background: var(--paper); }
 .nb-thumb.on { border-color: var(--accent); background: var(--accent-soft); }
+/* 跨页拖拽时的高亮落点 */
+.nb-thumb.drop {
+  border-color: var(--accent); background: var(--accent-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 .nb-thumb-canvas {
   display: block; width: 100%; height: auto; margin: 0 auto;
   background: var(--paper); border-radius: 2px;

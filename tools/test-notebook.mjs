@@ -2254,5 +2254,118 @@ head('复习卡的来源上下文');
   expect('样式齐备（卡面来源行）', /\.lib-card-src/.test(fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-library.css'), 'utf8')) && /\.nb-card-src/.test(cssViewer));
 }
 
+/* ============================ 22. 跨页拖拽（把对象拖到缩略图上就换页） ============================ */
+head('跨页拖拽');
+{
+  const stroke = (id) => ({ kind: 'stroke', id, tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] });
+  const textIt = (id) => ({ kind: 'text', id, x: 0.2, y: 0.2, text: '一段文字', size: 0.026, color: '#222', font: 'sans' });
+
+  // --- 纯函数：合并到别页 ---
+  expect('id 前缀：各类对象各用各的（和粘贴保持一致）', pageMod.itemIdPrefix('text') === 't' && pageMod.itemIdPrefix('sticker') === 'st' && pageMod.itemIdPrefix('tape') === 'tp' && pageMod.itemIdPrefix('image') === 'img' && pageMod.itemIdPrefix('stroke') === 's');
+  expect('mergeItemsInto：并到目标页末尾且不改坐标', (() => {
+    const dest = [stroke('a')];
+    const out = pageMod.mergeItemsInto(dest, [{ ...stroke('b'), x: 0 }]);
+    return out.length === 2 && out[1].id === 'b' && out[0].id === 'a';
+  })());
+  expect('mergeItemsInto：id 撞车时换新 id（两页合起来不会出现重复 id）', (() => {
+    const out = pageMod.mergeItemsInto([stroke('same')], [stroke('same'), textIt('same')]);
+    const ids = out.map((it) => it.id);
+    return new Set(ids).size === 3 && ids[0] === 'same';
+  })());
+  expect('mergeItemsInto：不改传入的数组（避免污染 store 里的引用）', (() => {
+    const dest = [stroke('a')];
+    const src = [stroke('b')];
+    pageMod.mergeItemsInto(dest, src);
+    return dest.length === 1 && src.length === 1;
+  })());
+  expect('hasMovableItems：只有胶带的页不算有可拖内容', pageMod.hasMovableItems({ items: [{ kind: 'tape' }] }) === false && pageMod.hasMovableItems({ items: [stroke('x')] }) === true);
+
+  // --- 真编辑器：拖到另一页 ---
+  const s17 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const bk = s17.create({ title: '跨页本' });
+  s17.addPage(bk.id, {});
+  const nb17 = s17.get(bk.id);
+  const p0 = nb17.pages[0], p1 = nb17.pages[1];
+  s17.setItems(bk.id, p0.id, [stroke('s1'), stroke('s2'), textIt('t1')]);
+  s17.setItems(bk.id, p1.id, [stroke('keep')]);
+  let writes = 0;
+  const ed = new pageMod.PageEditor({
+    canvas: makeStub('canvas'), host: makeStub('host'),
+    getPage: () => ({ pageId: p0.id, pageIndex: 0, paper: { template: 'lined', size: 'a4' }, items: s17.get(bk.id).pages[0].items }),
+    getPageAt: (i) => {
+      const p = s17.get(bk.id).pages[i] || { id: '', items: [] };
+      return { pageId: p.id, pageIndex: i, items: p.items || [] };
+    },
+    setItems: (pageId, items) => { writes++; s17.setItems(bk.id, pageId, items); },
+    onApplyPageItems: (i, items) => { writes++; s17.setItems(bk.id, s17.get(bk.id).pages[i].id, items); return true; },
+    onMoveItems: (i, items) => {
+      writes++;
+      const page = s17.get(bk.id).pages[i];
+      s17.setItems(bk.id, page.id, pageMod.mergeItemsInto(page.items || [], items));
+    },
+    onToast: () => {},
+  });
+  ed.setPage(0);
+  expect('编辑器拿到当前页内容', ed.items.length === 3);
+  ed.selection = new Set(['s1', 't1']);
+  expect('没选中就不动作（返回 false）', (() => {
+    const e2 = new (Object.getPrototypeOf(ed).constructor)({
+      canvas: makeStub('canvas'), host: makeStub('host'), getPage: () => ({ pageId: p0.id, pageIndex: 0, items: [] }), setItems: () => {}, onToast: () => {},
+    });
+    return e2.moveSelectionToPage(1) === false;
+  })());
+  expect('目标页就是当前页 → 不动作', ed.moveSelectionToPage(0) === false);
+  const ok = ed.moveSelectionToPage(1);
+  expect('移动成功：源页只剩没选中的那个', ok === true && ed.items.map((it) => it.id).join(',') === 's2');
+  expect('移动成功：目标页多出两个对象（原有内容保留）', (() => {
+    const ids = s17.get(bk.id).pages[1].items.map((it) => it.id);
+    return ids.length === 3 && ids[0] === 'keep' && ids.includes('s1') && ids.includes('t1');
+  })());
+  expect('移动过程中两页都落盘了（不会只写一半）', writes >= 2);
+  expect('移动后选中被清空（不会误以为还选着）', ed.selection.size === 0);
+  expect('历史里记的是「跨页」状态（两页都在）', (() => {
+    const top = ed.history.undoStack[ed.history.undoStack.length - 1];
+    return top.label === '移到第 2 页' && Array.isArray(top.before.pages) && top.before.pages.length === 2;
+  })());
+
+  // --- 一次撤销：两页同时复原 ---
+  const applied = [];
+  const ed2 = new pageMod.PageEditor({
+    canvas: makeStub('canvas'), host: makeStub('host'),
+    getPage: () => ({ pageId: p0.id, pageIndex: 0, items: s17.get(bk.id).pages[0].items }),
+    getPageAt: (i) => ({ pageId: s17.get(bk.id).pages[i].id, pageIndex: i, items: s17.get(bk.id).pages[i].items || [] }),
+    setItems: (pageId, items) => { s17.setItems(bk.id, pageId, items); },
+    onApplyPageItems: (i, items) => { applied.push(i); s17.setItems(bk.id, s17.get(bk.id).pages[i].id, items); return true; },
+    onMoveItems: (i, items) => {
+      const page = s17.get(bk.id).pages[i];
+      s17.setItems(bk.id, page.id, pageMod.mergeItemsInto(page.items || [], items));
+    },
+    onToast: () => {},
+  });
+  ed2.setPage(0);
+  // 先把两页恢复到初始状态（上面那个编辑器已经搬过一次了）
+  s17.setItems(bk.id, p0.id, [stroke('s1'), stroke('s2'), textIt('t1')]);
+  s17.setItems(bk.id, p1.id, [stroke('keep')]);
+  ed2.setPage(0);
+  ed2.selection = new Set(['s1', 't1']);
+  ed2.moveSelectionToPage(1);
+  expect('撤销前：源页 1 个、目标页 3 个', s17.get(bk.id).pages[0].items.length === 1 && s17.get(bk.id).pages[1].items.length === 3);
+  ed2.items = s17.get(bk.id).pages[0].items;      // 模拟编辑器状态与 store 同步
+  const label = ed2.undo();
+  expect('一次撤销就把两页同时复原（源页回到 3 个、目标页回到 1 个）', !!label && s17.get(bk.id).pages[0].items.length === 3 && s17.get(bk.id).pages[1].items.length === 1);
+  expect('撤销确实写回了「别页」（走了 onApplyPageItems）', applied.length >= 1);
+  expect('撤销后目标页只剩原来那一个', s17.get(bk.id).pages[1].items.map((it) => it.id).join(',') === 'keep');
+
+  // --- 界面接线 ---
+  const viewerSrc6 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const cssViewer2 = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-viewer.css'), 'utf8');
+  expect('编辑器把拖拽事件报给宿主（onSelectionDrag / onSelectionDrop）', /onSelectionDrag: \(\{ x, y \}\) => this\.dragOverThumb/.test(viewerSrc6) && /onSelectionDrop: \(\{ x, y \}\) => this\.dropOnThumb/.test(viewerSrc6));
+  expect('用 elementFromPoint 命中缩略图（拖到画布外也能落页）', /elementFromPoint/.test(viewerSrc6) && /dataset\.act === 'thumb'/.test(viewerSrc6));
+  expect('落页时高亮目标缩略图', /highlightThumb/.test(viewerSrc6) && /'\.nb-thumb'/.test(viewerSrc6) && /classList\.toggle\('drop'/.test(viewerSrc6));
+  expect('插到别页 / 跨页撤销都有宿主钩子', /insertItemsAtPage/.test(viewerSrc6) && /writePageItems/.test(viewerSrc6) && /mergeItemsInto/.test(viewerSrc6));
+  expect('拖拽落点样式（.nb-thumb.drop）', /\.nb-thumb\.drop/.test(cssViewer2));
+  expect('PageEditor 把四个新钩子接进来了', /getPageAt:/.test(viewerSrc6) && /onApplyPageItems:/.test(viewerSrc6) && /onMoveItems:/.test(viewerSrc6));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

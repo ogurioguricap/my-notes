@@ -510,6 +510,38 @@ try {
     expect('来源上下文渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
     nbStore.purge(bk.id);
   }
+
+  // 跨页拖拽：缩略图高亮 + 把对象插到别页（真 DOM 路径）
+  {
+    const bk = nbStore.create({ title: '跨页测试本' });
+    nbStore.addPage(bk.id, {});
+    const pages = nbStore.get(bk.id).pages;
+    nbStore.setItems(bk.id, pages[0].id, [{ kind: 'stroke', id: 'mv1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] }]);
+    location.hash = `#/book/${encodeURIComponent(bk.id)}`;
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(350);
+    const view = globalThis.window.__notes.bookView ? globalThis.window.__notes.bookView() : null;
+    if (view && view.thumbList) {
+      view.highlightThumb(1);
+      const th = Array.from(view.thumbList.querySelectorAll('.nb-thumb'));
+      expect(`跨页拖拽：目标缩略图会高亮（这一本 ${th.length} 个缩略图）`, th.length >= 2 && th[1].classList.contains('drop') && !th[0].classList.contains('drop'));
+      view.highlightThumb(-1);
+      expect('跨页拖拽：松手后高亮清掉', !Array.from(view.thumbList.querySelectorAll('.nb-thumb')).some((el) => el.classList.contains('drop')));
+      expect('跨页拖拽：拿不到 elementFromPoint 时安全返回 -1', view.thumbIndexAtPoint(10, 10) === -1);
+      const before = nbStore.get(bk.id).pages[1].items.length;
+      view.insertItemsAtPage(1, [{ kind: 'stroke', id: 'mv1', tool: 'pen', pen: 'ball', color: '#000', width: 0.004, points: [[0.1, 0.1], [0.4, 0.4]] }]);
+      expect('跨页拖拽：对象真的插进了目标页', nbStore.get(bk.id).pages[1].items.length === before + 1);
+      view.writePageItems(1, []);
+      expect('跨页撤销：能把别页写回去', nbStore.get(bk.id).pages[1].items.length === 0);
+    } else {
+      expect('跨页拖拽：目标缩略图会高亮', /highlightThumb/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'viewer.mjs'), 'utf8')));
+    }
+    expect('跨页拖拽渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });

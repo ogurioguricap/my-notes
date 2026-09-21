@@ -20,6 +20,7 @@
 import { NotebookStore, cardSourceOf } from './store.mjs';
 import {
   PageEditor, renderPage, PEN_TYPES, TOOLS, ERASER_MODES, HIGHLIGHTER_COLORS,
+  mergeItemsInto, itemIdPrefix,
   TAPE_COLORS, ELEMENTS, FONTS, TEXT_SIZE_STEPS, findHitRects,
 } from './page.mjs';
 import {
@@ -842,9 +843,79 @@ export class NotebookView {
     if (this.editor) this.setStatus(this.editor.info());
   }
 
+  /* ---------- 跨页拖拽（把对象拖到缩略图上就换页） ---------- */
+
+  /** 指针位置 → 是哪一页的缩略图（画布外也能命中） */
+  thumbIndexAtPoint(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
+    if (typeof document === 'undefined' || !document.elementFromPoint) return -1;
+    let el = null;
+    try { el = document.elementFromPoint(x, y); } catch (e) { return -1; }
+    while (el) {
+      if (el.dataset && el.dataset.page !== undefined && el.dataset.act === 'thumb') {
+        const idx = Number(el.dataset.page);
+        return Number.isFinite(idx) ? idx : -1;
+      }
+      el = el.parentElement;
+    }
+    return -1;
+  }
+
+  /** 拖拽过程中高亮目标缩略图 */
+  dragOverThumb(x, y) {
+    const idx = this.thumbIndexAtPoint(x, y);
+    this.highlightThumb(idx);
+    if (idx >= 0 && idx !== this.cur) this._thumbHint = true;
+    return idx;
+  }
+
+  highlightThumb(idx) {
+    if (this._dropThumb === idx) return;
+    this._dropThumb = idx;
+    if (!this.thumbList) return;
+    try {
+      qa(this.thumbList, '.nb-thumb').forEach((el, k) => el.classList.toggle('drop', k === idx && k !== this.cur));
+    } catch (e) { /* 桩环境没有 classList 也无所谓 */ }
+  }
+
+  /** 松手：落点在缩略图上就把选中的对象挪过去 */
+  dropOnThumb(x, y) {
+    const idx = this.thumbIndexAtPoint(x, y);
+    this.highlightThumb(-1);
+    this._thumbHint = false;
+    if (!this.editor || idx < 0 || idx === this.cur) return false;
+    const ok = this.editor.moveSelectionToPage(idx);
+    if (ok) this.toast(`已把选中的对象移到第 ${idx + 1} 页（Ctrl/Cmd+Z 可撤销）`);
+    return ok;
+  }
+
+  /** 把对象写进某一页（跨页移动的落点） */
+  insertItemsAtPage(idx, items) {
+    const nb = this.nb;
+    const target = nb && nb.pages[idx];
+    if (!target || !items || !items.length) return false;
+    const merged = mergeItemsInto(target.items || [], items);
+    return this.writePageItems(idx, merged);
+  }
+
+  /** 直接把某一页的内容写回 store（跨页撤销也走这里） */
+  writePageItems(idx, items) {
+    const nb = this.nb;
+    const page = nb && nb.pages[idx];
+    if (!page) return false;
+    try {
+      this.store.setItems(this.bookId, page.id, items || []);
+    } catch (e) {
+      this.toast('写入失败：' + ((e && e.message) || '未知错误'));
+      return false;
+    }
+    try { this.onChanged(); } catch (e) {}
+    this.scheduleThumbUpdate();
+    return true;
+  }
+
   /** 只重绘缩略图（内容变了之后） */
-  refreshThumbs() {
-    if (!this.opened) return;
+  refreshThumbs() {    if (!this.opened) return;
     const fresh = this.store.get(this.bookId);
     if (fresh) this.nb = fresh;
     this.renderThumbs();
@@ -1126,11 +1197,17 @@ export class NotebookView {
       canvas,
       host: pane,
       getPage: (i) => this.pageInfo(i),
+      getPageAt: (i) => this.pageInfo(i),
       setItems: (pageId, items) => {
         try { this.store.setItems(this.bookId, pageId, items); } catch (e) { this.toast('内容写入失败：' + ((e && e.message) || '未知错误')); }
         try { this.onChanged(); } catch (e) {}
         this.scheduleThumbUpdate();
       },
+      // 跨页拖拽：把对象插到别页 / 跨页撤销时把别页写回去
+      onMoveItems: (idx, items) => this.insertItemsAtPage(idx, items),
+      onApplyPageItems: (idx, items) => this.writePageItems(idx, items),
+      onSelectionDrag: ({ x, y }) => this.dragOverThumb(x, y),
+      onSelectionDrop: ({ x, y }) => this.dropOnThumb(x, y),
       onStatus: (info) => {
         this.setStatus(info);
         if (this._pointerTool && info.tool !== this._pointerTool) this.propsFor(info.tool);
