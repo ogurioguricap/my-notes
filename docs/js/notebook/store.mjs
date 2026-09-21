@@ -173,8 +173,21 @@ export function parseReviewLog(raw) {
   return out;
 }
 
-/** 闪卡统一形状（老数据没有 tags / lapses 时补齐） */
-export function normalizeCard(c = {}) {
+/**
+ * 卡片的来源页（纯函数，界面与队列共用同一套解析）
+ * @returns {{ pageId:string, pageIndex:number, pageTitle:string, ok:boolean }}
+ *   · pageIndex = -1 表示来源页已经不在了（页被删过）；ok 同义
+ */
+export function cardSourceOf(notebook, card) {
+  const pageId = (card && card.pageId) || '';
+  const pages = (notebook && notebook.pages) || [];
+  if (!pageId) return { pageId: '', pageIndex: -1, pageTitle: '', ok: false };
+  const idx = pages.findIndex((p) => p && p.id === pageId);
+  if (idx < 0) return { pageId, pageIndex: -1, pageTitle: '', ok: false };
+  return { pageId, pageIndex: idx, pageTitle: (pages[idx].title || '').trim(), ok: true };
+}
+
+/** 闪卡统一形状（老数据没有 tags / lapses 时补齐） */export function normalizeCard(c = {}) {
   return {
     id: c.id || nid('cd'),
     front: String(c.front || ''),
@@ -944,6 +957,24 @@ export class NotebookStore {
     return c;
   }
 
+  /** 改「这张卡来自哪一页」（传空 = 清掉来源） */
+  setCardPage(bookId, cardId, pageId) {
+    const nb = this.get(bookId);
+    const c = nb && nb.study.find((x) => x.id === cardId);
+    if (!c) return null;
+    c.pageId = pageId && nb.pages.some((p) => p.id === pageId) ? pageId : '';
+    this.touch(bookId);
+    return c;
+  }
+
+  /** 来源页没了的卡片（页被删了 / 从别处导入的）——界面可以标出来让你重新挂或清掉 */
+  orphanCards(bookId) {
+    const nb = this.get(bookId);
+    if (!nb) return [];
+    const ids = new Set(nb.pages.map((p) => p.id));
+    return nb.study.filter((c) => !c.pageId || !ids.has(c.pageId));
+  }
+
   removeCard(bookId, cardId) {
     const nb = this.get(bookId);
     if (!nb) return false;
@@ -1029,7 +1060,9 @@ export class NotebookStore {
   /**
    * 带筛选的到期队列（跨本复习用）
    * @param {object} o { tag 卡片标签, bookTag 笔记本标签, bookId, folder, at, limit, includeNotDue }
-   * @returns {Array<{bookId,bookTitle,cardId,front,back,tags,box,pageId,bookTags}>} 按盒子层数从小到大（先复习最生的）
+   * @returns {Array<{bookId,bookTitle,cardId,front,back,tags,box,pageId,pageIndex,pageTitle,sourceOk,bookTags}>}
+   *   · 按盒子层数从小到大（先复习最生的）
+   *   · pageIndex / pageTitle / sourceOk 用来在卡面上显示「来自第几页」并跳过去看
    */
   dueQueue({ tag = '', bookTag = '', bookId = '', folder = '', at = now(), limit = 0, includeNotDue = false } = {}) {
     const live = this.data.notebooks.filter((n) => !n.trashedAt);
@@ -1043,6 +1076,7 @@ export class NotebookStore {
       for (const c of nb.study || []) {
         if (wantTag && !(c.tags || []).includes(wantTag)) continue;
         if (!includeNotDue && (c.due || 0) > at) continue;
+        const src = cardSourceOf(nb, c);
         out.push({
           bookId: nb.id,
           bookTitle: nb.title,
@@ -1054,6 +1088,9 @@ export class NotebookStore {
           box: c.box || 0,
           lapses: c.lapses || 0,
           pageId: c.pageId || '',
+          pageIndex: src.pageIndex,
+          pageTitle: src.pageTitle,
+          sourceOk: src.ok,
           due: c.due || 0,
         });
       }

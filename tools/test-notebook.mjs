@@ -2184,5 +2184,75 @@ head('识别质量回看');
   expect('app.js 支持进本子后跳到指定页（pendingBookPage + gotoPage）', /pendingBookPage/.test(appSrc) && /gotoPage\(page\)/.test(appSrc) && /opts\.page/.test(appSrc));
 }
 
+/* ============================ 21. 复习卡的来源上下文（这张卡来自哪一页） ============================ */
+head('复习卡的来源上下文');
+{
+  const s16 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const A = s16.create({ title: '来源本 A' });
+  s16.addPage(A.id, {});
+  s16.addPage(A.id, {});
+  const nb16 = s16.get(A.id);
+  const p1 = nb16.pages[1], p2 = nb16.pages[2];
+  const cA = s16.addCard(A.id, '极限定义', 'ε-δ', { pageId: p1.id });
+  const cB = s16.addCard(A.id, '中值定理', '罗尔', { pageId: p2.id });
+  const cC = s16.addCard(A.id, '没来源的卡', 'x');
+
+  expect('cardSourceOf：能算出页序与页 id', (() => {
+    const src = storeMod.cardSourceOf(s16.get(A.id), cB);
+    return src.ok === true && src.pageIndex === 2 && src.pageId === p2.id;
+  })());
+  expect('cardSourceOf：没记来源页 → ok=false、pageIndex=-1', (() => {
+    const src = storeMod.cardSourceOf(s16.get(A.id), cC);
+    return src.ok === false && src.pageIndex === -1 && src.pageId === '';
+  })());
+  expect('cardSourceOf：来源页被删了 → ok=false 但仍记得那个 id（界面能说清「来源页没了」）', (() => {
+    const src = storeMod.cardSourceOf(s16.get(A.id), { pageId: 'pg-不存在' });
+    return src.ok === false && src.pageId === 'pg-不存在';
+  })());
+  expect('到期队列带来源（界面直接用，不用再查一次）', (() => {
+    const it = s16.dueQueue({}).find((x) => x.cardId === cB.id);
+    return it && it.pageIndex === 2 && it.sourceOk === true && it.pageId === p2.id;
+  })());
+  expect('到期队列里没来源的卡也标出来', (() => {
+    const it = s16.dueQueue({}).find((x) => x.cardId === cC.id);
+    return it && it.sourceOk === false && it.pageIndex === -1;
+  })());
+  expect('页序跟着页面顺序走（删掉前面一页后，来源页序也跟着变）', (() => {
+    s16.removePage(A.id, p1.id);
+    const it = s16.dueQueue({}).find((x) => x.cardId === cB.id);
+    return it.pageIndex === 1;
+  })());
+  expect('setCardPage：能重新挂来源，也能清掉', (() => {
+    s16.setCardPage(A.id, cC.id, p2.id);
+    const ok = storeMod.cardSourceOf(s16.get(A.id), s16.get(A.id).study.find((c) => c.id === cC.id)).ok === true;
+    s16.setCardPage(A.id, cC.id, '');
+    const cleared = storeMod.cardSourceOf(s16.get(A.id), s16.get(A.id).study.find((c) => c.id === cC.id)).pageId === '';
+    return ok && cleared;
+  })());
+  expect('setCardPage：传不存在的页 id 不会写进去（避免造出坏来源）', (() => {
+    s16.setCardPage(A.id, cC.id, 'pg-不存在');
+    return s16.get(A.id).study.find((c) => c.id === cC.id).pageId === '';
+  })());
+  expect('orphanCards：列出没来源的卡，以及来源页已被删的卡（但来源还在的卡不算）', (() => {
+    const orphan = s16.orphanCards(A.id);
+    return orphan.some((c) => c.id === cC.id) && orphan.some((c) => c.id === cA.id) && !orphan.some((c) => c.id === cB.id);
+  })());
+  expect('导出的备份里带着 pageId（换设备/导入后来源还在）', (() => {
+    const j = JSON.parse(s16.exportJSON());
+    const cards = (j.notebooks[0].study || []);
+    return cards.some((c) => c.pageId === p2.id);
+  })());
+
+  const libSrc5 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'library.mjs'), 'utf8');
+  const viewerSrc5 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const cssViewer = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-viewer.css'), 'utf8');
+  expect('复习卡面显示「来自《…》第 N 页」并带「去看原页」', /来自《/.test(libSrc5) && /data-act="review-goto-source"/.test(libSrc5));
+  expect('来源页没了时可「清掉来源」', /data-act="review-clear-source"/.test(libSrc5) && /setCardPage\(card\.bookId, card\.cardId, ''\)/.test(libSrc5));
+  expect('「去看原页」用 openBook(page) 跳页（复用第十六批的 pendingBookPage）', /openBook\(card\.bookId, \{ page: card\.pageIndex \}\)/.test(libSrc5));
+  expect('笔记本面板的卡面也显示来源 + 能跳过去', /nb-card-src/.test(viewerSrc5) && /data-act="studyGotoSource"/.test(viewerSrc5));
+  expect('卡片列表每行显示「第 N 页」并可点', /data-act="cardGotoSource"/.test(viewerSrc5) && /cardSourceOf\(this\.nb, c\)/.test(viewerSrc5));
+  expect('样式齐备（卡面来源行）', /\.lib-card-src/.test(fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-library.css'), 'utf8')) && /\.nb-card-src/.test(cssViewer));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

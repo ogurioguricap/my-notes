@@ -488,6 +488,28 @@ try {
     expect('质量清单渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
     nbStore.purge(bk.id);
   }
+
+  // 复习卡的来源上下文：会话卡面上有「来自第 N 页」与「去看原页」
+  {
+    const bk = nbStore.create({ title: '来源测试本' });
+    const page = nbStore.get(bk.id).pages[0];
+    nbStore.addCard(bk.id, '极限的定义', 'ε-δ', { pageId: page.id });
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(250);
+    const lib4 = globalThis.window.__notes.library ? globalThis.window.__notes.library() : null;
+    if (lib4) {
+      const session = lib4.startReviewSession();
+      const html = lib4._sheetReviewSession();
+      expect('复习会话卡面显示来源页并可跳过去', !!session && html.includes('来自《来源测试本》第 1 页') && html.includes('data-act="review-goto-source"'));
+      lib4.sheet = null;
+      lib4._review = null;
+    } else {
+      expect('复习会话卡面显示来源页并可跳过去', /来自《/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'library.mjs'), 'utf8')));
+    }
+    expect('来源上下文渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+  }
   // 笔记本内搜索（含手写识别）：打开面板 → 输入关键词 → 出现命中行 → 点一下跳页
   // 首页全局搜索要能搜到笔记本里的手写识别结果
   nbStore.setPageOcr(nb.id, nb.pages[0].id, { text: '拉格朗日中值定理 ξ 与 f(ξ)=0 的证明思路', model: 'test' });

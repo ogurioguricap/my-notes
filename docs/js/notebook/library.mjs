@@ -1242,6 +1242,28 @@ export class LibraryUI {
         this._reviewStep(hit.dataset.act.replace('review-', ''));
         break;
       case 'review-in-book': this.startReview(); break;
+      case 'review-goto-source': {
+        // 去看原页：会话状态留在内存里，从本子回资料库后还是这一张卡
+        const s = this._review;
+        const card = s && s.queue[s.i];
+        if (!card) { this.toast('没有正在复习的卡'); break; }
+        if (!card.sourceOk) { this.toast('这张卡的来源页已经不在了'); break; }
+        this._reviewReturn = true;
+        this.openBook(card.bookId, { page: card.pageIndex });
+        break;
+      }
+      case 'review-clear-source': {
+        const s = this._review;
+        const card = s && s.queue[s.i];
+        if (!card) break;
+        this.store.setCardPage(card.bookId, card.cardId, '');
+        card.pageId = '';
+        card.sourceOk = false;
+        card.pageIndex = -1;
+        this.toast('已清掉这张卡的来源');
+        this._renderLayer();
+        break;
+      }
       case 'review-again': this.startReviewSession({ filter: (this._review && this._review.filter) || this._reviewFilter }); break;
       case 'review-anki': this.exportAnki({ onlyDue: false }); break;
       case 'review-anki-due': this.exportAnki({ onlyDue: true }); break;
@@ -2025,6 +2047,9 @@ export class LibraryUI {
     }
     const total = s.queue.length;
     const pct = Math.round((s.i / total) * 100);
+    const src = card.sourceOk
+      ? `来自《${bkEsc(card.bookTitle)}》第 ${card.pageIndex + 1} 页${card.pageTitle ? ` · ${bkEsc(card.pageTitle)}` : ''}`
+      : (card.pageId ? '来源页已被删除' : '这张卡没记来源页');
     return `<div class="lib-sheet-head"><h3>复习 ${s.i + 1} / ${total}</h3><button class="lib-btn ghost" type="button" data-act="sheet-close">✕</button></div>
       <div class="lib-sheet-body">
         <div class="lib-bar"><i style="width:${pct}%"></i></div>
@@ -2032,6 +2057,11 @@ export class LibraryUI {
           <div class="lib-card-meta">${bkEsc(card.bookTitle)}${card.tags && card.tags.length ? ` · ${card.tags.map((t) => '#' + bkEsc(t)).join(' ')}` : ''} · 盒子 ${card.box}/5${card.lapses ? ` · 忘过 ${card.lapses} 次` : ''}</div>
           <div class="lib-card-front">${bkEsc(card.front)}</div>
           <div class="lib-card-back">${s.flipped ? bkEsc(card.back || '（这张卡没有背面）') : '<span class="lib-hint">点一下看答案</span>'}</div>
+          <div class="lib-card-src">
+            <span>${src}</span>
+            ${card.sourceOk ? '<button type="button" class="lib-btn ghost" data-act="review-goto-source" title="去看这一页的原文（回来接着复习）">去看原页</button>' : ''}
+            ${!card.sourceOk && card.pageId ? '<button type="button" class="lib-btn ghost" data-act="review-clear-source" title="来源页没了，把这条来源清掉">清掉来源</button>' : ''}
+          </div>
         </div>
         <div class="lib-row">
           ${s.flipped

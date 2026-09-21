@@ -17,7 +17,7 @@
  *   2. 所有交互走 root 上的事件委托（data-act / data-tool / data-x / data-z）
  *   3. 所有可见文字为中文；不引外部库、不发网络请求（录音用 getUserMedia 除外）
  */
-import { NotebookStore } from './store.mjs';
+import { NotebookStore, cardSourceOf } from './store.mjs';
 import {
   PageEditor, renderPage, PEN_TYPES, TOOLS, ERASER_MODES, HIGHLIGHTER_COLORS,
   TAPE_COLORS, ELEMENTS, FONTS, TEXT_SIZE_STEPS, findHitRects,
@@ -652,6 +652,16 @@ export class NotebookView {
     if (act === 'cardsFromText') { this.cardsFromText(); return true; }
     if (act === 'cardsFromSummary') { this.cardsFromSummary(); return true; }
     if (act === 'cardAdd') { this.addCardManual(); return true; }
+    if (act === 'studyGotoSource' || act === 'cardGotoSource') {
+      const card = act === 'cardGotoSource'
+        ? (this.nb.study || []).find((c) => c.id === actEl.dataset.id)
+        : (this.study.queue || [])[this.study.idx];
+      const src = cardSourceOf(this.nb, card);
+      if (!src.ok) { this.toast(card && card.pageId ? '这张卡的来源页已经不在了' : '这张卡没记来源页'); return true; }
+      this.gotoPage(src.pageIndex);
+      this.toast(`第 ${src.pageIndex + 1} 页${src.pageTitle ? ` · ${src.pageTitle}` : ''}（这张卡就是从这里出的）`);
+      return true;
+    }
     if (act === 'cardDelete') {
       this.store.removeCard(this.bookId, actEl.dataset.id);
       this.refresh();
@@ -2230,6 +2240,7 @@ export class NotebookView {
     const deck = this.study.queue || [];
     const card = deck[this.study.idx] || null;
     const all = (this.nb.study || []);
+    const src = card ? cardSourceOf(this.nb, card) : { ok: false, pageIndex: -1 };
     return `${this.panelHead('学习集（闪卡）')}
       <div class="nb-panel-body">
         <div class="nb-row">
@@ -2246,6 +2257,11 @@ export class NotebookView {
               ${card ? nbEsc(card.back || '（这张卡没有背面）') : '点「从当前页的文本对象生成卡片」开始'}
             </div>
           </div>
+          ${card ? `<div class="nb-card-src">
+            ${src.ok ? `来自本本第 ${src.pageIndex + 1} 页${src.pageTitle ? ` · ${nbEsc(src.pageTitle)}` : ''}`
+              : (card.pageId ? '来源页已被删除' : '（没记来源页）')}
+            ${src.ok ? '<button class="nb-btn ghost" type="button" data-act="studyGotoSource" title="翻到出这张卡的那一页">去看原页</button>' : ''}
+          </div>` : ''}
           <div class="nb-study-ops">
             <button class="nb-btn nb-good" type="button" data-act="studyRemember" ${card ? '' : 'disabled'}>记住了</button>
             <button class="nb-btn nb-bad" type="button" data-act="studyForget" ${card ? '' : 'disabled'}>忘了</button>
@@ -2268,11 +2284,15 @@ export class NotebookView {
 
         ${all.length ? `<div class="nb-divider"></div>
         <div class="nb-cards-list">
-          ${all.slice(-40).reverse().map((c) => `<div class="nb-cards-item">
+          ${all.slice(-40).reverse().map((c) => {
+    const cs = cardSourceOf(this.nb, c);
+    return `<div class="nb-cards-item">
             <span class="nb-cards-text">${nbEsc(c.front)}${c.back ? ' —— ' + nbEsc(c.back) : ''}${(c.tags || []).length ? ` <i class="nb-card-tags">${c.tags.map((t) => '#' + nbEsc(t)).join(' ')}</i>` : ''}</span>
+            ${cs.ok ? `<button class="nb-btn ghost" type="button" data-act="cardGotoSource" data-id="${nbEsc(c.id)}" title="翻到出这张卡的那一页">第 ${cs.pageIndex + 1} 页</button>` : '<span class="nb-chip">无来源</span>'}
             <span class="nb-chip">盒 ${c.box || 0}</span>
             <button class="nb-btn ghost icon" type="button" data-act="cardDelete" data-id="${nbEsc(c.id)}" title="删掉这张卡">🗑</button>
-          </div>`).join('')}
+          </div>`;
+  }).join('')}
         </div>` : ''}
         <div class="nb-hint">想按标签筛着复习、看复习热图、或把闪卡导出到 Anki：回资料库点「复习中心」。</div>
       </div>`;
