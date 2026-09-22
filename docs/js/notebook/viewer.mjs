@@ -139,6 +139,9 @@ export class NotebookView {
     this.plainPaper = false;    // 阅读版：导出时去格线
     this.pdfLayout = 'single';  // 省纸排版：single / nup2h / nup2v / booklet
     this.dropBlank = false;     // 导出时跳过完全空白的页
+    this.overviewOpen = false;  // 页面总览是否打开
+    this.ovSel = new Set();     // 总览里选中的页（0 基）
+    this.ovLast = -1;           // 总览里最后点的那一页（Shift 连选用）
     this.searchIndex = 0;       // 笔记本内搜索当前高亮的命中
     this.speaker = null;        // 朗读器（浏览器 TTS）
     this.speak = { sentences: [], index: -1 };
@@ -223,6 +226,7 @@ export class NotebookView {
         <button type="button" data-act="syncPull">从仓库拉取这本</button>
         <hr>
         <button type="button" data-act="scrollToggle">切换竖排 / 横排滚动</button>
+        <button type="button" data-act="overview">页面总览（批量管理）…</button>
         <button type="button" data-act="saveTemplate">另存为模板</button>
         <button type="button" data-act="publishMd">把 Markdown 发到仓库（进全站检索）</button>
         <button type="button" data-act="penDoubleTapCycle">手写笔双击：切换动作</button>
@@ -283,6 +287,28 @@ export class NotebookView {
     </div>
     <div class="nb-hint" id="nbHint" hidden><span>← →</span> 翻页 · <span>Esc</span> 退出演示</div>
     <input class="nb-file" type="file" accept="image/*" hidden>
+
+    <div class="nb-overview" id="nbOverview" hidden>
+      <div class="nb-ov-head">
+        <b>页面总览</b>
+        <span class="nb-ov-count" id="nbOvCount">共 0 页</span>
+        <span class="nb-spacer"></span>
+        <button class="nb-btn" type="button" data-act="ovAll">全选</button>
+        <button class="nb-btn" type="button" data-act="ovNone">清除选择</button>
+        <button class="nb-btn ghost" type="button" data-act="ovClose">✕ 关闭</button>
+      </div>
+      <div class="nb-ov-grid" id="nbOvGrid"></div>
+      <div class="nb-ov-bar" id="nbOvBar">
+        <span class="nb-ov-sel" id="nbOvSel">未选择页面</span>
+        <button class="nb-btn" type="button" data-act="ovDelete" disabled>删除选中</button>
+        <button class="nb-btn" type="button" data-act="ovDuplicate" disabled>复制选中</button>
+        <button class="nb-btn" type="button" data-act="ovToFront" disabled>移到最前</button>
+        <button class="nb-btn" type="button" data-act="ovToEnd" disabled>移到最后</button>
+        <button class="nb-btn" type="button" data-act="ovBookmark" disabled>加书签</button>
+        <button class="nb-btn" type="button" data-act="ovUnbookmark" disabled>去书签</button>
+        <button class="nb-btn primary" type="button" data-act="ovExport" disabled>导出选中页 PDF</button>
+      </div>
+    </div>
   </div>
 </div>`;
 
@@ -591,6 +617,40 @@ export class NotebookView {
       return true;
     }
     if (act === 'printCheck') { this.openPanel('printCheck'); return true; }
+
+    /* 页面总览 */
+    if (act === 'overview') { this.toggleOverview(true); return true; }
+    if (act === 'ovClose') { this.toggleOverview(false); return true; }
+    if (act === 'ovTile') {
+      const i = Number(actEl.dataset.page);
+      if (Number.isFinite(i)) {
+        // 双击跳到那一页（单击是选中/取消，总览的主要用途是批量操作）
+        if (this._ovTap === i && Date.now() - (this._ovTapAt || 0) < 400) {
+          this._ovTap = -1;
+          this.toggleOverview(false);
+          this.gotoPage(i);
+          return true;
+        }
+        this._ovTap = i;
+        this._ovTapAt = Date.now();
+        this.ovToggle(i, { range: !!e.shiftKey });
+      }
+      return true;
+    }
+    if (act === 'ovAll') {
+      this.ovSel = new Set((this.nb.pages || []).map((_, i) => i));
+      this.ovLast = -1;
+      this.renderOverview();
+      return true;
+    }
+    if (act === 'ovNone') { this.ovSel = new Set(); this.renderOverview(); return true; }
+    if (act === 'ovDelete') { this.ovBatch('delete'); return true; }
+    if (act === 'ovDuplicate') { this.ovBatch('duplicate'); return true; }
+    if (act === 'ovToFront') { this.ovBatch('front'); return true; }
+    if (act === 'ovToEnd') { this.ovBatch('end'); return true; }
+    if (act === 'ovBookmark') { this.ovBatch('bookmark'); return true; }
+    if (act === 'ovUnbookmark') { this.ovBatch('unbookmark'); return true; }
+    if (act === 'ovExport') { this.exportSelectedPagesPdf(); return true; }
     if (act === 'printCheckGoto') { this.gotoPage(Number(actEl.dataset.page) || 0); return true; }
     if (act === 'printCheckExport') { this.exportPdf(this.pdfQuality || 'high'); return true; }
     if (act === 'toggleLayout') {
@@ -1882,6 +1942,144 @@ export class NotebookView {
     if (k === 'ocr') this.renderOcrStatus();
     if (k === 'search') this.renderBookSearch();
     if (k === 'search') this.renderBookSearch();
+  }
+
+  /* ---------- 页面总览（一屏看完所有页 + 多选批量操作） ---------- */
+
+  toggleOverview(on) {
+    const box = q(this.root, '#nbOverview');
+    if (!box) return false;
+    const next = on === undefined ? box.hidden : !!on;
+    box.hidden = !next;
+    this.overviewOpen = next;
+    if (next) {
+      this.ovSel = new Set();
+      this.ovLast = -1;
+      this.renderOverview();
+    }
+    return next;
+  }
+
+  renderOverview() {
+    const box = q(this.root, '#nbOverview');
+    const host = q(this.root, '#nbOvGrid');
+    if (!box || !host || !this.nb) return;
+    const pages = this.nb.pages || [];
+    const sel = this.ovSel || (this.ovSel = new Set());
+    host.innerHTML = pages.map((p, i) => `<div class="nb-ov-tile${sel.has(i) ? ' on' : ''}${i === this.cur ? ' cur' : ''}" data-act="ovTile" data-page="${i}">
+      <canvas class="nb-ov-canvas" width="1" height="1"></canvas>
+      <span class="nb-ov-no">${i + 1}</span>
+      ${p.bookmarked ? '<span class="nb-ov-mark">🔖</span>' : ''}
+      ${p.title ? `<span class="nb-ov-title">${nbEsc(p.title)}</span>` : ''}
+      <span class="nb-ov-check" aria-hidden="true">${sel.has(i) ? '✓' : ''}</span>
+    </div>`).join('');
+    const cnt = q(this.root, '#nbOvCount');
+    if (cnt) cnt.textContent = `共 ${pages.length} 页${sel.size ? ` · 选中 ${sel.size}` : ''}`;
+    const label = q(this.root, '#nbOvSel');
+    if (label) label.textContent = sel.size ? `已选 ${sel.size} 页` : '未选择页面（点页面选中，双击跳到那一页）';
+    for (const act of ['ovDelete', 'ovDuplicate', 'ovToFront', 'ovToEnd', 'ovBookmark', 'ovUnbookmark', 'ovExport']) {
+      const btn = q(this.root, `[data-act="${act}"]`);
+      if (btn) btn.disabled = !sel.size;
+    }
+    this.paintOverview();
+  }
+
+  /** 缩略图比较费：分批画，别把主线程堵死 */
+  paintOverview() {
+    const host = q(this.root, '#nbOvGrid');
+    if (!host) return;
+    const tiles = qa(host, '.nb-ov-tile');
+    let done = 0;
+    const step = () => {
+      const batch = tiles.slice(done, done + 8);
+      if (!batch.length) return;
+      batch.forEach((el) => {
+        const i = Number(el.dataset.page);
+        const c = q(el, '.nb-ov-canvas');
+        if (c) this.paintThumb(c, i);
+      });
+      done += batch.length;
+      if (done < tiles.length) setTimeout(step, 0);
+    };
+    step();
+  }
+
+  ovToggle(i, { range = false } = {}) {
+    const sel = this.ovSel || (this.ovSel = new Set());
+    if (range && this.ovLast >= 0) {
+      const a = Math.min(this.ovLast, i), b = Math.max(this.ovLast, i);
+      for (let k = a; k <= b; k++) sel.add(k);
+    } else if (sel.has(i)) sel.delete(i);
+    else sel.add(i);
+    this.ovLast = i;
+    this.renderOverview();
+    return sel.size;
+  }
+
+  ovPageIds() {
+    const pages = (this.nb && this.nb.pages) || [];
+    return [...(this.ovSel || new Set())].sort((a, b) => a - b).map((i) => pages[i] && pages[i].id).filter(Boolean);
+  }
+
+  /** 总览里的批量操作：删除 / 复制 / 移动 / 书签 */
+  ovBatch(kind) {
+    const ids = this.ovPageIds();
+    if (!ids.length) { this.toast('先点几页选中'); return 0; }
+    const nb = this.nb;
+    let n = 0;
+    if (kind === 'delete') {
+      n = this.store.removePages(this.bookId, ids);
+      if (!n) { this.toast('至少得留一页：这一整本都被你选上了'); return 0; }
+      this.toast(`已删除 ${n} 页（本子至少保留一页）`);
+    } else if (kind === 'duplicate') {
+      n = this.store.duplicatePages(this.bookId, ids).length;
+      this.toast(`已复制 ${n} 页（副本就放在原页后面）`);
+    } else if (kind === 'front' || kind === 'end') {
+      const rest = (nb.pages || []).filter((p) => !ids.includes(p.id));
+      const at = kind === 'front' ? 0 : rest.length;
+      const ok = this.store.movePages(this.bookId, ids, at);
+      if (!ok) { this.toast('这一整本都被你选上了，没地方移'); return 0; }
+      n = ids.length;
+      this.toast(`已把 ${n} 页移到${kind === 'front' ? '最前' : '最后'}`);
+    } else if (kind === 'bookmark' || kind === 'unbookmark') {
+      n = this.store.setPagesBookmark(this.bookId, ids, kind === 'bookmark');
+      this.toast(n ? `${kind === 'bookmark' ? '已加书签' : '已去书签'} ${n} 页` : '这些页的书签状态没变化');
+    }
+    this.refresh();
+    this.ovSel = new Set();
+    this.renderOverview();
+    return n;
+  }
+
+  /** 只导出选中的页（子集导出不带书签/目录/内链：页号会错，宁可不放） */
+  async exportSelectedPagesPdf(qualityId = null) {
+    const indices = [...(this.ovSel || new Set())].sort((a, b) => a - b);
+    if (!indices.length) { this.toast('先点几页选中'); return null; }
+    this.flush();
+    const qid = qualityId || this.pdfQuality || 'high';
+    const ql = qualityOf(qid);
+    const pages = indices.map((i) => ({ paper: this.paperFor(i), items: (this.nb.pages[i] || {}).items || [], ocr: (this.nb.pages[i] || {}).ocr || null }));
+    this.toast(`正在导出选中的 ${pages.length} 页…`);
+    try {
+      const blob = await buildPdf(pages, {
+        title: `${this.nb.title || '笔记本'}-选中页`,
+        qualityId: qid,
+        dropTape: !!this.dropTape,
+        textLayer: this.textLayer !== false,
+        plain: !!this.plainPaper,
+        links: false,          // 子集导出：页内「见第 N 页」会指错，索性不放
+        outlines: [],
+        layoutId: this.pdfLayout || 'single',
+        renderPageImpl: renderPage,
+      });
+      if (!blob) { this.toast('导出失败'); return null; }
+      downloadBlob(blob, `${safeName(this.nb.title)}-选中${pages.length}页.pdf`);
+      this.toast(`已导出选中的 ${pages.length} 页（${ql.label}）`);
+      return blob;
+    } catch (e) {
+      this.toast('导出失败：' + ((e && e.message) || '未知错误'));
+      return null;
+    }
   }
 
   /* ---------- 打印检查单（导出前先算清楚） ---------- */

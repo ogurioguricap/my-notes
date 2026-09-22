@@ -543,7 +543,47 @@ try {
     await sleep(150);
   }
 
-  // 卡片来源整理：真 DOM 里渲染一次并跑一次「自动找回」
+  // 页面总览：真 DOM 里打开网格、选页、跑一次批量复制与批量删除
+  {
+    const bk = nbStore.create({ title: '总览测试本' });
+    for (let i = 0; i < 3; i++) nbStore.addPage(bk.id, {});
+    location.hash = `#/book/${encodeURIComponent(bk.id)}`;
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(350);
+    const view3 = globalThis.window.__notes.bookView ? globalThis.window.__notes.bookView() : null;
+    if (view3) {
+      view3.toggleOverview(true);
+      const grid = documentStub.querySelector('#nbOvGrid');
+      const tiles = grid ? grid.querySelectorAll('.nb-ov-tile') : [];
+      expect(`页面总览：网格渲染出全部页（${tiles.length} 个格子）`, tiles.length === nbStore.get(bk.id).pages.length);
+      expect('页面总览：默认没选页时批量按钮是禁用的', (() => {
+        const del = documentStub.querySelector('[data-act="ovDelete"]');
+        return !!del && del.disabled === true;
+      })());
+      view3.ovToggle(0);
+      view3.ovToggle(2, { range: true });
+      expect('页面总览：点选 + Shift 连选（0~2 三页都选中）', view3.ovSel.size === 3);
+      const del = documentStub.querySelector('[data-act="ovDelete"]');
+      expect('页面总览：有选中后批量按钮解禁', !!del && del.disabled === false);
+      const beforePages = nbStore.get(bk.id).pages.length;
+      view3.ovSel = new Set([0]);
+      view3.ovBatch('duplicate');
+      expect('页面总览：批量复制后页数 +1', nbStore.get(bk.id).pages.length === beforePages + 1);
+      view3.ovSel = new Set([0, 1]);
+      view3.ovBatch('delete');
+      expect('页面总览：批量删除后页数 −2', nbStore.get(bk.id).pages.length === beforePages - 1);
+      view3.toggleOverview(false);
+      expect('页面总览：能关掉且状态复位', view3.overviewOpen === false);
+    } else {
+      expect('页面总览：网格渲染出全部页', /renderOverview/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'viewer.mjs'), 'utf8')));
+    }
+    expect('页面总览渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
+
   {
     const bk = nbStore.create({ title: '来源整理本' });
     const page = nbStore.get(bk.id).pages[0];

@@ -2652,5 +2652,107 @@ head('卡片来源整理');
   expect('收集函数会跨本统计（无来源 / 来源已删 / 涉及几本）', /collectCardSources/.test(libSrc6) && /noSource/.test(libSrc6) && /pageMissing/.test(libSrc6));
 }
 
+/* ============================ 26. 页面总览（多选批量管理页面） ============================ */
+head('页面总览 · 批量页面操作');
+{
+  const mk = (store) => {
+    const b = store.create({ title: '总览本' });
+    for (let i = 0; i < 5; i++) store.addPage(b.id, {});
+    return store.get(b.id);
+  };
+  const s19 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const nb = mk(s19);
+  expect('初始 6 页（创建时自带 1 页 + 再加 5 页）', nb.pages.length === 6);
+
+  // --- 批量删除 ---
+  expect('批量删除：删掉选中的 2 页', (() => {
+    const ids = [nb.pages[1].id, nb.pages[3].id];
+    const n = s19.removePages(nb.id, ids);
+    return n === 2 && s19.get(nb.id).pages.length === 4 && !s19.get(nb.id).pages.some((p) => ids.includes(p.id));
+  })());
+  expect('批量删除：全选时拒绝（至少留一页）', (() => {
+    const all = s19.get(nb.id).pages.map((p) => p.id);
+    const n = s19.removePages(nb.id, all);
+    return n === 0 && s19.get(nb.id).pages.length === 4;
+  })());
+  expect('批量删除：不存在的 id 不会误删（返回 0）', s19.removePages(nb.id, ['pg-nope']) === 0);
+  expect('批量删除：传空数组安全', s19.removePages(nb.id, []) === 0 && s19.get(nb.id).pages.length === 4);
+
+  // --- 批量复制 ---
+  expect('批量复制：副本紧跟各自原页，页数 +2', (() => {
+    const before = s19.get(nb.id);
+    const ids = [before.pages[0].id, before.pages[2].id];
+    const copies = s19.duplicatePages(nb.id, ids);
+    const after = s19.get(nb.id);
+    const order = after.pages.map((p) => p.id);
+    return copies.length === 2
+      && after.pages.length === 6
+      && order.indexOf(copies[0].id) === order.indexOf(ids[0]) + 1
+      && order.indexOf(copies[1].id) === order.indexOf(ids[1]) + 1;
+  })());
+  expect('批量复制：副本是新 id（不是同一页被引用两次）', (() => {
+    const pages = s19.get(nb.id).pages;
+    return new Set(pages.map((p) => p.id)).size === pages.length;
+  })());
+  expect('批量复制：内容也复制一份（改副本不影响原页）', (() => {
+    const src = s19.get(nb.id).pages[0];
+    s19.setItems(nb.id, src.id, [{ kind: 'text', id: 't', x: 0.1, y: 0.1, text: '原页内容', size: 0.02, color: '#111', font: 'sans' }]);
+    const [copy] = s19.duplicatePages(nb.id, [src.id]);
+    s19.setItems(nb.id, copy.id, []);
+    return s19.get(nb.id).pages.find((p) => p.id === copy.id).items.length === 0
+      && s19.get(nb.id).pages.find((p) => p.id === src.id).items.length === 1;
+  })());
+  expect('批量复制：空选择返回空数组', s19.duplicatePages(nb.id, []).length === 0);
+
+  // --- 批量移动 ---
+  expect('批量移动：把选中的页整块搬到最前（保持选中的相对顺序）', (() => {
+    const before = s19.get(nb.id);
+    const ids = [before.pages[2].id, before.pages[5].id];
+    const ok = s19.movePages(nb.id, ids, 0);
+    const after = s19.get(nb.id);
+    return ok && after.pages[0].id === ids[0] && after.pages[1].id === ids[1] && after.pages.length === before.pages.length;
+  })());
+  expect('批量移动：搬到末尾（不越界、页数不变）', (() => {
+    const before = s19.get(nb.id);
+    const ids = [before.pages[0].id];
+    const ok = s19.movePages(nb.id, ids, 999);
+    const after = s19.get(nb.id);
+    return ok && after.pages[after.pages.length - 1].id === ids[0] && after.pages.length === before.pages.length;
+  })());
+  expect('批量移动：全选时拒绝（没地方移）', (() => {
+    const all = s19.get(nb.id).pages.map((p) => p.id);
+    return s19.movePages(nb.id, all, 0) === false;
+  })());
+  expect('批量移动：空选择返回 false', s19.movePages(nb.id, [], 0) === false);
+  expect('批量移动：页集合不变（只是顺序变了）', (() => {
+    const before = new Set(s19.get(nb.id).pages.map((p) => p.id));
+    s19.movePages(nb.id, [s19.get(nb.id).pages[1].id], 3);
+    const after = new Set(s19.get(nb.id).pages.map((p) => p.id));
+    return before.size === after.size && [...before].every((id) => after.has(id));
+  })());
+
+  // --- 批量书签 ---
+  expect('批量加书签 / 去书签（只统计真的变了的那几页）', (() => {
+    const ids = s19.get(nb.id).pages.slice(0, 2).map((p) => p.id);
+    const on = s19.setPagesBookmark(nb.id, ids, true);
+    const again = s19.setPagesBookmark(nb.id, ids, true);      // 已经是书签 → 不该重复计数
+    const off = s19.setPagesBookmark(nb.id, ids, false);
+    return on === 2 && again === 0 && off === 2;
+  })());
+
+  // --- 界面接线 ---
+  const viewerSrc8 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const cssViewer4 = fs.readFileSync(path.join(ROOT, 'docs', 'css', 'notebook-viewer.css'), 'utf8');
+  const shellHas = (act) => new RegExp(`data-act="${act}"`).test(viewerSrc8);
+  expect('总览界面齐备（网格 + 七个批量按钮 + 关闭）', ['ovTile', 'ovAll', 'ovNone', 'ovDelete', 'ovDuplicate', 'ovToFront', 'ovToEnd', 'ovBookmark', 'ovUnbookmark', 'ovExport', 'ovClose'].every(shellHas));
+  expect('总览入口在「更多」菜单里', /data-act="overview"/.test(viewerSrc8) && /页面总览（批量管理）/.test(viewerSrc8));
+  expect('总览：点选 / Shift 连选 / 双击跳页', /ovToggle\(i, \{ range: !!e\.shiftKey \}\)/.test(viewerSrc8) && /toggleOverview\(false\);\s*\n\s*this\.gotoPage\(i\)/.test(viewerSrc8));
+  expect('总览：缩略图分批画（不堵主线程）', /setTimeout\(step, 0\)/.test(viewerSrc8) && /batches|batch = tiles\.slice/.test(viewerSrc8));
+  expect('总览：没选页时批量按钮是 disabled（状态与选择同步）', /btn\.disabled = !sel\.size/.test(viewerSrc8));
+  expect('空选择时给提示而不是静默失败', /先点几页选中/.test(viewerSrc8));
+  expect('导出选中页：子集导出不带书签/目录/内链（页号会错）', /links: false,/.test(viewerSrc8) && /子集导出/.test(viewerSrc8));
+  expect('总览样式齐备（网格 / 选中态 / 底部操作条）', /\.nb-ov-grid/.test(cssViewer4) && /\.nb-ov-tile\.on/.test(cssViewer4) && /\.nb-ov-bar/.test(cssViewer4));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

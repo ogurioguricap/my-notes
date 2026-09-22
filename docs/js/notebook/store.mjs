@@ -725,6 +725,73 @@ export class NotebookStore {
     return true;
   }
 
+  /* ---------- 批量页面操作（「页面总览」里多选后用） ---------- */
+
+  /** 批量删除：至少留一页（和单页删除同一条规矩），返回真正删掉的页数 */
+  removePages(bookId, pageIds) {
+    const nb = this.get(bookId);
+    if (!nb) return 0;
+    const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
+    const kept = nb.pages.filter((p) => !want.has(p.id));
+    if (!kept.length) return 0;                     // 不能把整本删空
+    const removed = nb.pages.length - kept.length;
+    if (!removed) return 0;
+    nb.pages = kept;
+    nb.updatedAt = now();
+    this.save();
+    return removed;
+  }
+
+  /**
+   * 批量复制：副本插在「最后一页被选中的位置」后面，保持选中页的原有顺序
+   * @returns {Array} 新复制出来的页
+   */
+  duplicatePages(bookId, pageIds) {
+    const nb = this.get(bookId);
+    if (!nb) return [];
+    const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
+    const picked = nb.pages.map((p, i) => ({ p, i })).filter((x) => want.has(x.p.id));
+    if (!picked.length) return [];
+    const copies = picked.map(({ p }) => ({ ...clone(p), id: nid('pg'), createdAt: now(), updatedAt: now() }));
+    // 从后往前插，避免前面的插入把后面的下标顶偏
+    for (let k = picked.length - 1; k >= 0; k--) nb.pages.splice(picked[k].i + 1, 0, copies[k]);
+    nb.updatedAt = now();
+    this.save();
+    return copies;
+  }
+
+  /**
+   * 批量移动：把选中的页整块搬到 toIndex（0 基，按「搬完之后的期望位置」理解）
+   * @returns {boolean} 是否真的动了
+   */
+  movePages(bookId, pageIds, toIndex) {
+    const nb = this.get(bookId);
+    if (!nb) return false;
+    const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
+    const picked = nb.pages.filter((p) => want.has(p.id));
+    if (!picked.length || picked.length === nb.pages.length) return false;
+    const rest = nb.pages.filter((p) => !want.has(p.id));
+    const at = Math.max(0, Math.min(rest.length, Math.round(Number(toIndex)) || 0));
+    nb.pages = [...rest.slice(0, at), ...picked, ...rest.slice(at)];
+    nb.updatedAt = now();
+    this.save();
+    return true;
+  }
+
+  /** 批量加 / 取消书签（页面总览里顺手标记用） */
+  setPagesBookmark(bookId, pageIds, on = true) {
+    const nb = this.get(bookId);
+    if (!nb) return 0;
+    const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
+    let n = 0;
+    for (const p of nb.pages) {
+      if (!want.has(p.id)) continue;
+      if (on && !p.bookmarked) { p.bookmarked = true; n++; } else if (!on && p.bookmarked) { p.bookmarked = false; n++; }
+    }
+    if (n) this.touch(bookId);
+    return n;
+  }
+
   setPagePaper(bookId, pageId, paperPatch) {
     const p = this.page(bookId, pageId);
     if (!p) return null;
