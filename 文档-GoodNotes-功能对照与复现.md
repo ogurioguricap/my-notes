@@ -18,7 +18,20 @@
 | 纸张与封面 | `docs/js/notebook/paper.mjs`（14 种纸张模板、8 种尺寸含自定义、纸张颜色与自动线色、封面 12 色 × 6 花纹 + 首字标记） |
 | 手写引擎 | `docs/js/notebook/page.mjs`（4 笔型 + 速度与压感笔宽 + 起收笔笔锋、荧光笔自动拉直、橡皮 3 模式、套索自由/矩形 + 移动缩放旋转 + 改色改透明度 + 置顶置底、形状识别 + 填充、文本框、图片、贴纸元素库、和纸胶带 + 撕胶带、激光笔、尺子吸附、放大窗 + 自动推进、视口缩放、跨页撤销重做） |
 | 界面与产出 | `library.mjs` + `notebook-library.css`（多选批量 / 文件夹 / 标签 / 回收站 / 备份）、`viewer.mjs` + `notebook-viewer.css`（缩略图栏 / 页面管理 / 大纲 / 闪卡 / 录音 / 演示 / 导出 PDF·PNG·JSON / 打印）、`study.mjs`（自写 PDF 写出器、PNG、MediaRecorder、本地抽取式摘要）、`notebook-base.css` |
-| 测试怎么跑 | `node tools/test-notebook.mjs` → **696 项断言，当前全绿**（另有 `test-runtime.mjs` 93 项在最小 DOM 里把界面真跑一遍） |
+| 测试怎么跑 | `node tools/test-notebook.mjs` → **730 项断言，当前全绿**（另有 `test-runtime.mjs` 100 项在最小 DOM 里把界面真跑一遍） |
+
+### 第二十三批交付（页面级撤销 + 删页回收）
+
+| 能力 | 落点 | 说明 |
+| --- | --- | --- |
+| **页列表操作可逆** | 新模块 `docs/js/notebook/pageops.mjs`：`applyOp / invertOp / reorderOp / opLabel / class PageHistory` | 页面级操作只有三种形状，且三种都可逆：**insert**（把页插回指定位置）、**remove**（按 id 删掉；`page` 留着以便撤销）、**reorder**（before/after 两组 id 顺序）。`applyOp` 是纯函数、直接改 `nb.pages`，撤销就等于「应用反向操作」——不需要为每种功能单独写一套撤销代码 |
+| **所有改页面的入口都记账** | `store.addPage / duplicatePage / removePage / movePage / removePages / duplicatePages / movePages / restoreTrashedPages` | 不光总览里的批量操作，缩略图栏的单页操作、页面回收的「找回」也进撤销栈；撤销/重做过程中用 `_applyingPageOp` 标志**禁止自己记录自己** |
+| **一套快捷键管两件事** | `viewer.undo / redo` + `_inkHistoryAt()` + PageEditor 的 `onUndoKey / onRedoKey` | 笔迹撤销栈在 PageEditor 里（只管当前页内容），页面撤销栈在 store 里（管整本页列表），粒度不同。Ctrl/Cmd+Z 会**按时间戳决定先撤哪一个**（谁的最后一步更近就撤谁），笔迹的快捷键先把机会让给页面操作；撤销后仍走 `afterPageListChange`（夹紧 cur + 重绑编辑器），所以不会出现「看到的页 ≠ 写入的页」 |
+| **删页回收（能找回来）** | `store.pushPageTrash / pageTrash / restoreTrashedPages / emptyPageTrash`（每本最多 20 张，随笔记本持久化） | 删掉的页不再一去不回：进回收 → 总览里「**找回删除的页（N）**」一键放回末尾（也能再撤销）；撤销「加页 / 复制页 / 找回」时，**有内容**的页会顺手进回收，空白页不占位。撤销「删除」时对应页会从回收里移出（不重复留） |
+
+> **口径说明**：第二十三批**不改变状态统计**（仍是 `✅49 / 🟡13 / 🟠11 / ❌9`）。此前页面操作**完全不可撤销**：删错一页只能靠之前的备份；现在删页/复制页/移页/加页都能 Ctrl+Z，而且删掉的页还有 20 张的回收兜底。
+> **实现上的取舍**：撤销栈**放在内存里**（和笔迹历史一致），重开页面就清空——但「删页回收」是**持久化**的，所以真正不可逆的只有「撤销栈本身」而不是「你删掉的内容」。这样既避免了把大批页对象写进 localStorage，又保住了最要紧的安全性。
+> **顺手修掉一个真 bug（便携版离线包）**：`build-portable.mjs` 的模块清单是手写的，新加的 `pageops.mjs` 没写进去——**import 行会被删掉、`PageHistory` 在打包后变成 undefined**，也就是说便携版一打开笔记本就会 ReferenceError；同样漏掉的还有 `lib/html-to-md.mjs`。现在加了**依赖闭包检查**：清单里任何文件 import 的本地模块都必须在清单里（并校验 `docs/lib` 与 `lib` 两份副本内容一致），`test-desktop-scripts.mjs` 也会断言便携版里每个笔记本模块的符号真的在。
 
 ### 第二十二批补丁（审计抓到的两个真 bug）
 

@@ -307,6 +307,7 @@ export class NotebookView {
         <button class="nb-btn" type="button" data-act="ovBookmark" disabled>加书签</button>
         <button class="nb-btn" type="button" data-act="ovUnbookmark" disabled>去书签</button>
         <button class="nb-btn primary" type="button" data-act="ovExport" disabled>导出选中页 PDF</button>
+        <button class="nb-btn" type="button" data-act="ovRestore" ${this.store.pageTrash(this.bookId).length ? '' : 'hidden'} title="把删掉的页找回来（放在末尾）">找回删除的页（${this.store.pageTrash(this.bookId).length}）</button>
       </div>
     </div>
   </div>
@@ -478,8 +479,8 @@ export class NotebookView {
     // ---- 顶部 / 通用 ----
     if (act === 'back') { this.flush(); this.onExit(); return true; }
     if (act === 'title') { this.beginTitle(); return true; }
-    if (act === 'undo') { const e = ed(); if (e) { e.undo(); this.setStatus(e.info()); } return true; }
-    if (act === 'redo') { const e = ed(); if (e) { e.redo(); this.setStatus(e.info()); } return true; }
+    if (act === 'undo') { this.undo(); this.setStatus(this.editor ? this.editor.info() : null); return true; }
+    if (act === 'redo') { this.redo(); this.setStatus(this.editor ? this.editor.info() : null); return true; }
     if (act === 'present') { this.present(true); return true; }
     if (act === 'panel') { this.openPanel(actEl.dataset.panel); return true; }
     if (act === 'thumbs') { if (this.thumbsEl) this.thumbsEl.classList.toggle('open'); return true; }
@@ -650,6 +651,15 @@ export class NotebookView {
     if (act === 'ovToEnd') { this.ovBatch('end'); return true; }
     if (act === 'ovBookmark') { this.ovBatch('bookmark'); return true; }
     if (act === 'ovUnbookmark') { this.ovBatch('unbookmark'); return true; }
+    if (act === 'ovRestore') {
+      const n = this.store.pageTrash(this.bookId).length;
+      if (!n) { this.toast('没有可找回的页'); return true; }
+      const made = this.store.restoreTrashedPages(this.bookId, { all: true });
+      this.toast(made.length ? `已找回 ${made.length} 页（放在末尾，可撤销）` : '没有可找回的页');
+      this.afterPageListChange(this.nb.pages.length - 1);
+      if (this.overviewOpen) this.renderOverview();
+      return true;
+    }
     if (act === 'ovExport') { this.exportSelectedPagesPdf(); return true; }
     if (act === 'printCheckGoto') { this.gotoPage(Number(actEl.dataset.page) || 0); return true; }
     if (act === 'printCheckExport') { this.exportPdf(this.pdfQuality || 'high'); return true; }
@@ -1290,6 +1300,8 @@ export class NotebookView {
       onToast: (m) => this.toast(m),
       onDirty: () => { try { this.onChanged(); } catch (e) {} this.scheduleThumbUpdate(); },
       onGotoPage: (i) => this.gotoPage(i),
+      onUndoKey: () => this.undo(),
+      onRedoKey: () => this.redo(),
     });
     this.moveEditor(this.cur);
     this.editor.setPage(this.cur);
@@ -1941,6 +1953,92 @@ export class NotebookView {
     if (k === 'pages') this.paintPanelThumbs();
     if (k === 'ocr') this.renderOcrStatus();
     if (k === 'search') this.renderBookSearch();
+  }
+
+  /* ---------- 统一撤销 / 重做（笔迹 + 页面操作按时间先后决定先撤谁） ---------- */
+
+  /** 编辑器里最后一次笔迹操作的时间（没有编辑器/没操作过就返回 0） */
+  _inkHistoryAt() {
+    const e = this.editor;
+    const stack = e && e.history && e.history.undoStack;
+    if (!stack || !stack.length) return 0;
+    return stack[stack.length - 1].at || 0;
+  }
+
+  /**
+   * 撤销：谁的「最后一步」更近就先撤谁
+   *   · 页面操作（删页 / 复制页 / 移页 / 加页）在 store.pageHistory 里，带时间戳
+   *   · 笔迹操作在 PageEditor 的历史里（InkHistory 也记 at）
+   * @returns {boolean} 是否真的撤销了
+   */
+  undo() {
+    const st = this.store.pageUndoState ? this.store.pageUndoState() : { canUndo: false, at: 0 };
+    const inkAt = this._inkHistoryAt();
+    const pageAt = st.canUndo ? st.at : 0;
+    const ed = this.editor;
+    if (pageAt && pageAt >= inkAt) {
+      const keepPageId = ((this.nb && this.nb.pages) || [])[this.cur] ? this.nb.pages[this.cur].id : '';
+      const res = this.store.undoPageOp();
+      if (res) {
+        this.toast(`已撤销：${res.label}`);
+        if (res.bookId === this.bookId) {
+          const idx = (this.nb.pages || []).findIndex((p) => p.id === keepPageId);
+          this.afterPageListChange(idx >= 0 ? idx : Math.max(0, Math.min(this.cur, this.nb.pages.length - 1)));
+        } else {
+          this.toast(`（撤销的是另一本笔记本的操作：${res.label}）`);
+        }
+        return true;
+      }
+    }
+    if (ed) { const r = ed.undo(); this.setStatus(ed.info()); return !!r; }
+    return false;
+  }
+
+  /** 重做：与撤销同一套优先级（页面操作 vs 笔迹，比时间） */
+  redo() {
+    const st = this.store.pageUndoState ? this.store.pageUndoState() : { canRedo: false, redoAt: 0 };
+    const ed = this.editor;
+    const inkRedoAt = (() => {
+      const stack = ed && ed.history && ed.history.redoStack;
+      if (!stack || !stack.length) return 0;
+      return stack[stack.length - 1].at || 0;
+    })();
+    const pageAt = st.canRedo ? (st.redoAt || 0) : 0;
+    if (pageAt && pageAt >= inkRedoAt) {
+      const keepPageId = ((this.nb && this.nb.pages) || [])[this.cur] ? this.nb.pages[this.cur].id : '';
+      const res = this.store.redoPageOp();
+      if (res) {
+        this.toast(`已重做：${res.label}`);
+        if (res.bookId === this.bookId) {
+          const idx = (this.nb.pages || []).findIndex((p) => p.id === keepPageId);
+          this.afterPageListChange(idx >= 0 ? idx : Math.max(0, Math.min(this.cur, this.nb.pages.length - 1)));
+        }
+        return true;
+      }
+    }
+    if (ed) { const r = ed.redo(); this.setStatus(ed.info()); return !!r; }
+    return false;
+  }
+
+  /** 重做：与撤销同一套优先级 */
+  redo() {
+    const st = this.store.pageUndoState ? this.store.pageUndoState() : { canRedo: false, redoAt: 0 };
+    const ed = this.editor;
+    const pageAt = st.canRedo ? (st.redoAt || 0) : 0;
+    if (pageAt) {
+      const keepPageId = ((this.nb && this.nb.pages) || [])[this.cur] ? this.nb.pages[this.cur].id : '';
+      const res = this.store.redoPageOp();
+      if (res) {
+        this.toast(`已重做：${res.label}`);
+        if (res.bookId === this.bookId) {
+          const idx = (this.nb.pages || []).findIndex((p) => p.id === keepPageId);
+          this.afterPageListChange(idx >= 0 ? idx : Math.max(0, Math.min(this.cur, this.nb.pages.length - 1)));
+        }
+        return true;
+      }
+    }
+    if (ed) { const r = ed.redo(); this.setStatus(ed.info()); return !!r; }
+    return false;
   }
 
   /* ---------- 页面总览（一屏看完所有页 + 多选批量操作） ---------- */

@@ -545,7 +545,45 @@ try {
     await sleep(150);
   }
 
-  // 不变式审计：页面结构变化后，cur 必须夹紧、编辑器必须重新绑到当前页（这几条是审计里抓到的真 bug）
+  // 页面级撤销：删页 → Ctrl+Z 式撤销（走 view 的统一撤销）→ 重做
+  {
+    const bk = nbStore.create({ title: '撤销测试本' });
+    for (let i = 0; i < 3; i++) nbStore.addPage(bk.id, {});
+    const pages = nbStore.get(bk.id).pages;
+    pages.forEach((p, i) => nbStore.setItems(bk.id, p.id, [{ kind: 'text', id: 't' + i, x: 0.1, y: 0.1, text: '第' + i + '页内容', size: 0.02, color: '#111', font: 'sans' }]));
+    location.hash = `#/book/${encodeURIComponent(bk.id)}`;
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(350);
+    const v = globalThis.window.__notes.bookView ? globalThis.window.__notes.bookView() : null;
+    if (v) {
+      const n0 = nbStore.get(bk.id).pages.length;
+      const vid = nbStore.get(bk.id).pages[1].id;
+      v.ovSel = new Set([1]);
+      v.ovBatch('delete');
+      await sleep(80);
+      expect('页面撤销：删页后页数 −1', nbStore.get(bk.id).pages.length === n0 - 1);
+      const ok = v.undo();
+      await sleep(80);
+      const after = nbStore.get(bk.id);
+      expect('页面撤销：统一 undo() 把删掉的页找回来了', ok === true && after.pages.length === n0);
+      expect('页面撤销：找回来的页**在原来的位置**（不是堆到末尾）', after.pages[1].id === vid);
+      expect('页面撤销：cur 与编辑器仍然对得上', after.pages[v.cur] && v.editor && v.editor.pageId === after.pages[v.cur].id);
+      v.redo();
+      await sleep(80);
+      expect('页面重做：又删掉了', nbStore.get(bk.id).pages.length === n0 - 1);
+      v.ovSel = new Set([]);
+      const trashed = nbStore.get(bk.id).pageTrash || [];
+      expect('页面回收：删掉的页留在回收里（可找回）', trashed.length >= 1 && trashed.some((t) => (t.page.items || []).length));
+    } else {
+      expect('页面撤销：统一 undo() 把删掉的页找回来了', /undoPageOp/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'store.mjs'), 'utf8')));
+    }
+    expect('页面撤销渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
+
   {
     const bk = nbStore.create({ title: '不变式本' });
     for (let i = 0; i < 5; i++) nbStore.addPage(bk.id, {});

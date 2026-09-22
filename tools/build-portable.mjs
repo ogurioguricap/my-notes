@@ -29,6 +29,7 @@ export function main() {
   const parts = [
     'lib/markdown.mjs',
     'lib/site-build.mjs',
+    'lib/html-to-md.mjs',
     'docs/js/search.js',
     'docs/js/highlight.js',
     'docs/js/graph.js',
@@ -36,6 +37,7 @@ export function main() {
     'docs/js/rte.mjs',
     'docs/js/install.mjs',
     'docs/js/notebook/paper.mjs',
+    'docs/js/notebook/pageops.mjs',
     'docs/js/notebook/store.mjs',
     'docs/js/notebook/study.mjs',
     'docs/js/notebook/ocr.mjs',
@@ -48,6 +50,40 @@ export function main() {
     'docs/js/editor.mjs',
     'docs/js/app.js',
   ].map((f) => ({ f, code: fs.readFileSync(path.join(ROOT, f), 'utf8') }));
+
+  // 依赖闭包检查：清单里的文件 import 的本地模块也必须在清单里
+  // （漏一个的后果很隐蔽：import 行被删掉、那个模块的类/函数在打包后变成 undefined，
+  //   于是便携版一打开就 ReferenceError —— pageops.mjs 与 html-to-md.mjs 都踩过这个坑）
+  {
+    const listed = new Set(parts.map((x) => path.resolve(ROOT, x.f)));
+    const codeOf = new Map(parts.map((x) => [path.resolve(ROOT, x.f), x.code]));
+    const missing = [];
+    const stale = [];
+    for (const { f, code } of parts) {
+      const dir = path.dirname(path.resolve(ROOT, f));
+      for (const m of code.matchAll(/from\s+['"](\.[^'"]+)['"]/g)) {
+        const abs = path.resolve(dir, m[1]);
+        if (listed.has(abs) || !fs.existsSync(abs)) continue;
+        // docs/lib/x.mjs 与 lib/x.mjs 是同一份东西（build.mjs 会同步）——算命中，但要确认两份一致
+        const alt = path.resolve(ROOT, path.relative(ROOT, abs).replace(/^docs[\\/]/, ''));
+        if (listed.has(alt)) {
+          if (codeOf.get(alt) !== fs.readFileSync(abs, 'utf8')) stale.push(`${path.relative(ROOT, abs)} 与 ${path.relative(ROOT, alt)} 内容不一致（先跑 tools/build.mjs 同步）`);
+          continue;
+        }
+        missing.push(`${f} → ${path.relative(ROOT, abs).split(path.sep).join('/')}`);
+      }
+    }
+    if (missing.length) {
+      console.error('✗ 无法内联：这些被 import 的模块没写进清单，打包后会变成 undefined：');
+      for (const x of [...new Set(missing)].slice(0, 10)) console.error('   - ' + x);
+      return false;
+    }
+    if (stale.length) {
+      console.error('✗ 无法内联：以下模块的两份副本内容不一致（便携版会内联错的那份）：');
+      for (const x of [...new Set(stale)].slice(0, 10)) console.error('   - ' + x);
+      return false;
+    }
+  }
 
   // 打包后同一作用域内不得有重复的顶层声明
   const declRe = /^(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/gm;

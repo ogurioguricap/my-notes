@@ -2764,5 +2764,162 @@ head('页面总览 · 批量页面操作');
   expect('总览样式齐备（网格 / 选中态 / 底部操作条）', /\.nb-ov-grid/.test(cssViewer4) && /\.nb-ov-tile\.on/.test(cssViewer4) && /\.nb-ov-bar/.test(cssViewer4));
 }
 
+/* ============================ 27. 页面级撤销 + 删页回收 ============================ */
+head('页面级撤销 · 删页回收');
+{
+  const ops = await import(pathToFileURL(path.join(dir, 'pageops.mjs')).href);
+  const pageOf = (id) => ({ id, items: [{ kind: 'text', id: 't' + id, x: 0.1, y: 0.1, text: id, size: 0.02, color: '#111', font: 'sans' }] });
+
+  // --- 纯逻辑：三种操作都可逆 ---
+  expect('applyOp(insert)：按位置插回去（多个也保持顺序）', (() => {
+    const nb = { pages: [pageOf('a'), pageOf('c')] };
+    const r = ops.applyOp(nb, { kind: 'insert', entries: [{ index: 1, page: pageOf('b') }, { index: 3, page: pageOf('d') }] });
+    return r.ok && nb.pages.map((p) => p.id).join(',') === 'a,b,c,d';
+  })());
+  expect('applyOp(remove)：删掉指定页；全删时拒绝（至少留一页）', (() => {
+    const nb = { pages: [pageOf('a'), pageOf('b')] };
+    const r1 = ops.applyOp(nb, { kind: 'remove', entries: [{ index: 0, page: pageOf('a') }] });
+    const r2 = ops.applyOp(nb, { kind: 'remove', entries: [{ index: 0, page: pageOf('b') }] });
+    return r1.ok && nb.pages.length === 1 && r2.ok === false && nb.pages.length === 1;
+  })());
+  expect('applyOp(reorder)：按 after 的顺序重排，页集合不变', (() => {
+    const nb = { pages: [pageOf('a'), pageOf('b'), pageOf('c')] };
+    const r = ops.applyOp(nb, { kind: 'reorder', before: ['a', 'b', 'c'], after: ['c', 'a', 'b'] });
+    return r.ok && nb.pages.map((p) => p.id).join(',') === 'c,a,b';
+  })());
+  expect('applyOp(reorder)：after 漏掉的页会兜底留在末尾（不会丢页）', (() => {
+    const nb = { pages: [pageOf('a'), pageOf('b'), pageOf('c')] };
+    const r = ops.applyOp(nb, { kind: 'reorder', before: ['a', 'b', 'c'], after: ['c'] });
+    return r.ok === false || nb.pages.length === 3;
+  })());
+  expect('invertOp：insert ↔ remove 互为反向', (() => {
+    const op = { kind: 'insert', entries: [{ index: 1, page: pageOf('b') }] };
+    return ops.invertOp(op).kind === 'remove' && ops.invertOp(ops.invertOp(op)).kind === 'insert';
+  })());
+  expect('invertOp(reorder)：before / after 对调', (() => {
+    const op = { kind: 'reorder', before: ['a', 'b'], after: ['b', 'a'] };
+    const inv = ops.invertOp(op);
+    return inv.after.join(',') === 'a,b' && inv.before.join(',') === 'b,a';
+  })());
+  expect('reorderOp：顺序没变时返回 null（不记空操作）', ops.reorderOp(['a', 'b'], ['a', 'b']) === null && !!ops.reorderOp(['a', 'b'], ['b', 'a']));
+  expect('opLabel：给操作起人话名字', (() => {
+    return ops.opLabel({ kind: 'remove', entries: [1, 2] }) === '删 2 页'
+      && ops.opLabel({ kind: 'insert', entries: [1] }) === '加 1 页'
+      && ops.opLabel({ kind: 'reorder' }) === '调整页序';
+  })());
+
+  // --- 真 store：删页 → 撤销 → 重做 ---
+  const s20 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+  const bk = s20.create({ title: '撤销本' });
+  for (let i = 0; i < 4; i++) s20.addPage(bk.id, {});
+  const ids = () => s20.get(bk.id).pages.map((p) => p.id);
+  const before = ids();
+  expect('加页也会进撤销栈', s20.pageUndoState().canUndo === true && /加/.test(s20.pageUndoState().label));
+
+  const removed = s20.removePages(bk.id, [before[1], before[3]]);
+  expect('删 2 页（顺带进撤销栈）', removed === 2 && ids().length === 4 - 1);
+  expect('撤销状态：能撤销、标签是「删除 2 页」', s20.pageUndoState().canUndo && s20.pageUndoState().label === '删除 2 页');
+  const un = s20.undoPageOp();
+  expect('撤销删页：页回来了，而且**位置也对**（不是都堆到末尾）', !!un && ids().join(',') === before.join(','));
+  expect('撤销后能重做', s20.pageUndoState().canRedo === true);
+  const re = s20.redoPageOp();
+  expect('重做删页：又删掉了', !!re && ids().length === before.length - 2);
+
+  // --- 移动页的撤销 ---
+  const beforeMove = ids();
+  s20.movePages(bk.id, [beforeMove[0]], 999);
+  expect('移动页：末尾变了', ids().join(',') !== beforeMove.join(','));
+  s20.undoPageOp();
+  expect('撤销移动：页序完全回到操作前', ids().join(',') === beforeMove.join(','));
+
+  // --- 复制页的撤销 ---
+  const beforeDup = ids();
+  const copies = s20.duplicatePages(bk.id, [beforeDup[0]]);
+  expect('复制页：多了一页', ids().length === beforeDup.length + 1 && ids().includes(copies[0].id));
+  s20.undoPageOp();
+  expect('撤销复制：副本消失、其余不变', ids().join(',') === beforeDup.join(','));
+
+  // --- 删页回收（持久化，可找回） ---
+  expect('删掉的页进了「页面回收」（**有内容**的页）', (() => {
+    const two = s20.addPage(bk.id, {});
+    for (const p of two) s20.setItems(bk.id, p.id, [{ kind: 'text', id: 'tx', x: 0.1, y: 0.1, text: '被删页的内容', size: 0.02, color: '#111', font: 'sans' }]);
+    s20.removePages(bk.id, two.map((p) => p.id));
+    const trashed = s20.pageTrash(bk.id);
+    return trashed.length >= 2 && trashed.every((t) => t.page && t.page.id) && trashed.some((t) => (t.page.items || []).length);
+  })());
+  expect('空白页不会占满回收（撤销掉的空白页不进回收）', (() => {
+    const s26 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s26.create({ title: '空白页不进回收' });
+    s26.addPage(b.id, {});
+    s26.undoPageOp();                    // 撤销「加页」→ 加出来的是空白页
+    s26.removePages(b.id, [s26.get(b.id).pages[0].id]);
+    return s26.pageTrash(b.id).length === 0;
+  })());
+  expect('页面回收跟着笔记本一起持久化（重新打开还在）', (() => {
+    const raw = s20.exportJSON();
+    const j = JSON.parse(raw);
+    const one = j.notebooks.find((n) => n.id === bk.id);
+    return Array.isArray(one.pageTrash) && one.pageTrash.length >= 2;
+  })());
+  expect('找回删除的页：放回末尾，可撤销', (() => {
+    const n = s20.pageTrash(bk.id).length;
+    const made = s20.restoreTrashedPages(bk.id, { all: true });
+    return made.length === n && s20.pageTrash(bk.id).length === 0 && s20.pageUndoState().label === `找回 ${n} 页`;
+  })());
+  expect('撤销「找回」：页又回到回收里（不会凭空丢）', (() => {
+    s20.undoPageOp();
+    return s20.pageTrash(bk.id).length > 0;
+  })());
+  expect('页面回收有上限（最多 20 张）', (() => {
+    const s21 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s21.create({ title: '回收上限' });
+    for (let i = 0; i < 30; i++) {
+      const made = s21.addPage(b.id, {});
+      s21.removePage(b.id, made[0].id);
+    }
+    return s21.pageTrash(b.id).length === 20;
+  })());
+  expect('清空页面回收', s20.emptyPageTrash(bk.id) >= 0);
+
+  // --- 撤销栈的边界 ---
+  expect('撤销栈有上限（30 步）', (() => {
+    const s22 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s22.create({ title: '栈上限' });
+    for (let i = 0; i < 40; i++) s22.addPage(b.id, {});
+    return s22.pageUndoState().depth === 30;
+  })());
+  expect('撤销到空了再撤 → 返回 null（不炸）', (() => {
+    const s23 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s23.create({ title: '撤空' });
+    s23.addPage(b.id, {});
+    s23.undoPageOp();
+    return s23.undoPageOp() === null;
+  })());
+  expect('撤销时不再记账（不会自己撤自己）', (() => {
+    const s24 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s24.create({ title: '不自撤' });
+    s24.addPage(b.id, {});
+    const depth = s24.pageUndoState().depth;
+    s24.undoPageOp();
+    return s24.pageUndoState().depth === depth - 1 && s24.pageUndoState().canRedo === true;
+  })());
+  expect('笔记本被删了也能安全撤销（跳过即可）', (() => {
+    const s25 = new storeMod.NotebookStore({ storage: storeMod.memoryStorage() });
+    const b = s25.create({ title: '删本后撤销' });
+    s25.addPage(b.id, {});
+    s25.purge(b.id);
+    return s25.undoPageOp() === null;
+  })());
+
+  // --- 界面接线 ---
+  const viewerSrc9 = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'viewer.mjs'), 'utf8');
+  const pageSrc = fs.readFileSync(path.join(ROOT, 'docs', 'js', 'notebook', 'page.mjs'), 'utf8');
+  expect('查看器有统一撤销/重做（按时间决定先撤页面操作还是笔迹）', /undo\(\) \{[\s\S]{0,400}pageUndoState/.test(viewerSrc9) && /_inkHistoryAt\(\)/.test(viewerSrc9));
+  expect('笔迹快捷键也走统一撤销（onUndoKey / onRedoKey）', /onUndoKey: \(\) => this\.undo\(\)/.test(viewerSrc9) && /onUndoKey\(\) === true/.test(pageSrc));
+  expect('顶栏撤销/重做按钮走同一套', /if \(act === 'undo'\) \{ this\.undo\(\)/.test(viewerSrc9) && /if \(act === 'redo'\) \{ this\.redo\(\)/.test(viewerSrc9));
+  expect('总览里有「找回删除的页」入口', /data-act="ovRestore"/.test(viewerSrc9) && /restoreTrashedPages/.test(viewerSrc9));
+  expect('页面操作后仍然走 afterPageListChange（夹紧 cur + 重绑编辑器）', /afterPageListChange\(idx >= 0 \? idx/.test(viewerSrc9));
+}
+
 console.log(`\n================ 结果：通过 ${pass} / ${pass + fail} ================`);
 process.exit(fail ? 1 : 0);

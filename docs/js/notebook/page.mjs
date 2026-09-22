@@ -2475,8 +2475,17 @@ export class PageEditor {
     if (this.editing || tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return;
     const mod = !!(e.ctrlKey || e.metaKey);
     const k = String(e.key || '').toLowerCase();
-    if (mod && k === 'z' && !e.shiftKey) { e.preventDefault && e.preventDefault(); return this.undo(); }
-    if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault && e.preventDefault(); return this.redo(); }
+    if (mod && k === 'z' && !e.shiftKey) {
+      e.preventDefault && e.preventDefault();
+      // 页面级操作（删页 / 移页 / 加页）也吃 Ctrl+Z：先问宿主「有没有更近的页面操作要撤」，它有就它撤
+      if (typeof this.onUndoKey === 'function' && this.onUndoKey() === true) return true;
+      return this.undo();
+    }
+    if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) {
+      e.preventDefault && e.preventDefault();
+      if (typeof this.onRedoKey === 'function' && this.onRedoKey() === true) return true;
+      return this.redo();
+    }
     if (mod && k === 'c') return this.copy();
     if (mod && k === 'x') return this.cut();
     if (mod && k === 'v') return this.paste();

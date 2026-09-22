@@ -94,6 +94,32 @@ for (const f of vbsFiles) {
   }
 }
 
+/* ---------- 便携版内联完整性 ---------- */
+console.log('\n— 便携版内联完整性 —');
+{
+  const portable = path.join(ROOT, 'dist', '我的笔记-离线版.html');
+  if (fs.existsSync(portable)) {
+    const html = fs.readFileSync(portable, 'utf8');
+    // 每个笔记本模块都得真的内联进来：漏一个的话，import 行被删掉、符号变 undefined，
+    // 便携版一打开就 ReferenceError（pageops.mjs 与 html-to-md.mjs 都踩过）
+    const need = [
+      ['paper.mjs', /function paperDims|PAPER_TEMPLATES/],
+      ['pageops.mjs', /class PageHistory/],
+      ['store.mjs', /class NotebookStore/],
+      ['study.mjs', /function pdfFromImages/],
+      ['page.mjs', /class PageEditor/],
+      ['library.mjs', /class LibraryUI/],
+      ['viewer.mjs', /class NotebookView/],
+      ['lib/html-to-md.mjs', /function htmlToMarkdown|htmlToMarkdown\s*=/],
+    ];
+    const absent = need.filter(([, re]) => !re.test(html)).map(([n]) => n);
+    expect(`便携版把笔记本模块都内联进来了（缺：${absent.join('、') || '无'}）`, absent.length === 0);
+    expect('便携版里没有残留的 import 语句（都被拍平了）', !/^\s*import\s.+from\s+['"]\./m.test(html));
+  } else {
+    expect('便携版存在（先跑 node tools/build-portable.mjs）', false);
+  }
+}
+
 /* ---------- VBS 引用的文件 ---------- */
 console.log('\n— VBS 引用的文件 —');
 const shortcutVbs = vbsFiles.find((f) => /-shortcut|快捷方式/.test(path.basename(f)));

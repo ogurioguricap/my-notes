@@ -15,11 +15,15 @@
  *   学习集（闪卡 + 间隔重复）                              → 本文件 study 段 + study.mjs
  *   录音并与笔记时间点同步                                 → 本文件 audio 段 + study.mjs
  *   备份 / 导出 / 导入                                    → 本文件 export/import
+ *   页面级撤销（删页 / 复制页 / 移页 / 加页）                → pageops.mjs + 本文件的 removePages 等
  */
+
+import { PageHistory, applyOp, invertOp, reorderOp, opLabel } from './pageops.mjs';
 
 export const SCHEMA_VERSION = 3;
 export const DEFAULT_STORAGE_KEY = 'note-books-v1';
 export const TRASH_RETENTION_DAYS = 30;
+export const PAGE_TRASH_LIMIT = 20;      // 每本最多留多少张被删的页（可找回）
 
 /** 关键词在文本里出现了几次（大小写不敏感；用于「命中 N 处」） */
 export function countHits(text, needle) {
@@ -298,6 +302,8 @@ export class NotebookStore {
     this.data = emptyLibrary();
     this.audio = new Map();      // 音频内存兜底（IndexedDB 不可用时）
     this._idb = null;
+    this.pageHistory = new PageHistory();   // 页面级撤销栈（删页/复制页/移页/加页），内存态
+    this._applyingPageOp = false;           // 正在撤销/重做时不再记账
     this.load();
   }
 
@@ -686,9 +692,14 @@ export class NotebookStore {
     const made = [];
     for (let i = 0; i < Math.max(1, asInt(count, 1)); i++) made.push(makePage(template ? { paper: { ...nb.paper, template } } : {}));
     const at = afterPageId ? nb.pages.findIndex((p) => p.id === afterPageId) : nb.pages.length - 1;
-    nb.pages.splice((at < 0 ? nb.pages.length - 1 : at) + 1, 0, ...made);
+    const insertAt = (at < 0 ? nb.pages.length - 1 : at) + 1;
+    nb.pages.splice(insertAt, 0, ...made);
     nb.updatedAt = now();
     this.save();
+    this.recordPageOp(bookId, {
+      kind: 'insert', label: `加 ${made.length} 页`,
+      entries: made.map((p, k) => ({ index: insertAt + k, page: p })),
+    });
     return made;
   }
 
@@ -701,6 +712,7 @@ export class NotebookStore {
     nb.pages.splice(i + 1, 0, copy);
     nb.updatedAt = now();
     this.save();
+    this.recordPageOp(bookId, { kind: 'insert', label: `复制第 ${i + 1} 页`, entries: [{ index: i + 1, page: copy }] });
     return copy;
   }
 
@@ -708,9 +720,14 @@ export class NotebookStore {
     const nb = this.get(bookId);
     if (!nb) return false;
     if (nb.pages.length <= 1) return false;   // 最后一页不允许删（手账 App 也是这样）
+    const i = nb.pages.findIndex((p) => p.id === pageId);
+    if (i < 0) return false;
+    const gone = nb.pages[i];
     nb.pages = nb.pages.filter((p) => p.id !== pageId);
     nb.updatedAt = now();
+    this.pushPageTrash(bookId, [gone]);
     this.save();
+    this.recordPageOp(bookId, { kind: 'remove', label: `删除第 ${i + 1} 页`, entries: [{ index: i, page: clone(gone) }] });
     return true;
   }
 
@@ -718,11 +735,139 @@ export class NotebookStore {
     const nb = this.get(bookId);
     if (!nb) return false;
     if (from < 0 || from >= nb.pages.length || to < 0 || to >= nb.pages.length) return false;
+    const beforeIds = nb.pages.map((p) => p.id);
     const [p] = nb.pages.splice(from, 1);
     nb.pages.splice(to, 0, p);
     nb.updatedAt = now();
     this.save();
+    const op = reorderOp(beforeIds, nb.pages.map((x) => x.id), { label: `移动第 ${from + 1} 页` });
+    if (op) this.recordPageOp(bookId, op);
     return true;
+  }
+
+  /* ---------- 页面级撤销 / 重做 + 删页回收（可找回） ---------- */
+
+  /** 记一条页面操作（撤销栈在内存里；撤销/重做过程中不记账） */
+  recordPageOp(bookId, op) {
+    if (this._applyingPageOp || !op) return null;
+    return this.pageHistory.push({ bookId, ...op });
+  }
+
+  /** 页面操作能否撤销 / 重做，以及最后一条是什么（界面按钮与状态栏用） */
+  pageUndoState() {
+    const redoTop = this.pageHistory.peekRedo();
+    return {
+      canUndo: this.pageHistory.canUndo,
+      canRedo: this.pageHistory.canRedo,
+      label: this.pageHistory.lastLabel,
+      at: this.pageHistory.lastAt,
+      redoLabel: redoTop ? opLabel(redoTop) : '',
+      redoAt: redoTop ? (redoTop.at || 0) : 0,
+      depth: this.pageHistory.depth,
+    };
+  }
+
+  /**
+   * 撤销一步页面操作
+   * @returns {{ bookId:string, label:string, ids:string[] }|null}
+   */
+  undoPageOp() {
+    const op = this.pageHistory.peekUndo();
+    if (!op) return null;
+    const nb = this.get(op.bookId);
+    if (!nb) { this.pageHistory.confirmUndo(); return null; }
+    const inv = invertOp(op);
+    const before = nb.pages.map((p) => p.id).join(',');
+    this._applyingPageOp = true;
+    let res;
+    try { res = applyOp(nb, inv); } finally { this._applyingPageOp = false; }
+    if (!res.ok) return null;
+    // 撤销「删除」时，把页从回收里拿回来（还留着就不重复留）
+    if (op.kind === 'remove') {
+      const back = new Set(res.ids);
+      nb.pageTrash = (nb.pageTrash || []).filter((t) => !(t && t.page && back.has(t.page.id)));
+    }
+    // 撤销「找回 / 加页 / 复制页」时，这些页从本子里消失 → 有内容的顺手放进回收，避免「撤销一下就没影了」
+    if (op.kind === 'insert') {
+      const gone = op.entries.map((e) => e.page).filter((p) => p && ((p.items || []).length || String(p.title || '').trim()));
+      if (gone.length) this.pushPageTrash(op.bookId, gone);
+    }
+    nb.updatedAt = now();
+    this.save();
+    this.pageHistory.confirmUndo();
+    return { bookId: op.bookId, label: opLabel(op), ids: res.ids, changed: before !== nb.pages.map((p) => p.id).join(',') };
+  }
+
+  /** 重做一步页面操作 */
+  redoPageOp() {
+    const op = this.pageHistory.peekRedo();
+    if (!op) return null;
+    const nb = this.get(op.bookId);
+    if (!nb) { this.pageHistory.confirmRedo(); return null; }
+    this._applyingPageOp = true;
+    let res;
+    try { res = applyOp(nb, op); } finally { this._applyingPageOp = false; }
+    if (!res.ok) return null;
+    if (op.kind === 'remove') this.pushPageTrash(op.bookId, op.entries.map((e) => e.page));
+    nb.updatedAt = now();
+    this.save();
+    this.pageHistory.confirmRedo();
+    return { bookId: op.bookId, label: opLabel(op), ids: res.ids };
+  }
+
+  /** 删掉的页留在「页面回收」里（跟着笔记本一起持久化），换设备/刷新后也能找回 */
+  pushPageTrash(bookId, pages) {
+    const nb = this.get(bookId);
+    if (!nb) return 0;
+    const list = Array.isArray(nb.pageTrash) ? nb.pageTrash : (nb.pageTrash = []);
+    let n = 0;
+    for (const p of pages || []) {
+      if (!p) continue;
+      list.push({ at: now(), page: clone(p) });
+      n++;
+    }
+    while (list.length > PAGE_TRASH_LIMIT) list.shift();
+    return n;
+  }
+
+  /** 看看这个本子里有多少张被删掉、还能找回来的页 */
+  pageTrash(bookId) {
+    const nb = this.get(bookId);
+    return nb && Array.isArray(nb.pageTrash) ? nb.pageTrash.slice() : [];
+  }
+
+  /**
+   * 找回删除的页
+   * @param {object} o { index = -1 插到哪一页后面（-1 = 末尾）, all = true 全找回, limit = 1 }
+   * @returns {Array} 找回来的页
+   */
+  restoreTrashedPages(bookId, { index = -1, all = false, limit = 1 } = {}) {
+    const nb = this.get(bookId);
+    const list = nb && Array.isArray(nb.pageTrash) ? nb.pageTrash : [];
+    if (!list.length) return [];
+    const pick = all ? list.slice() : list.slice(-Math.max(1, limit));
+    const pages = pick.map((t) => clone(t.page));
+    const pickedIds = new Set(pages.map((p) => p.id));
+    nb.pageTrash = list.filter((t) => !(t && t.page && pickedIds.has(t.page.id)));
+    const at = index < 0 ? nb.pages.length : Math.max(0, Math.min(nb.pages.length, Math.round(index) + 1));
+    nb.pages.splice(at, 0, ...pages);
+    nb.updatedAt = now();
+    this.save();
+    this.recordPageOp(bookId, {
+      kind: 'insert', label: `找回 ${pages.length} 页`,
+      entries: pages.map((p, k) => ({ index: at + k, page: p })),
+    });
+    return pages;
+  }
+
+  /** 彻底清空「页面回收」 */
+  emptyPageTrash(bookId) {
+    const nb = this.get(bookId);
+    if (!nb || !Array.isArray(nb.pageTrash) || !nb.pageTrash.length) return 0;
+    const n = nb.pageTrash.length;
+    nb.pageTrash = [];
+    this.touch(bookId);
+    return n;
   }
 
   /* ---------- 批量页面操作（「页面总览」里多选后用） ---------- */
@@ -732,13 +877,16 @@ export class NotebookStore {
     const nb = this.get(bookId);
     if (!nb) return 0;
     const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
+    const entries = nb.pages.map((p, i) => ({ index: i, page: p })).filter((x) => want.has(x.page.id));
+    if (!entries.length) return 0;
     const kept = nb.pages.filter((p) => !want.has(p.id));
     if (!kept.length) return 0;                     // 不能把整本删空
     const removed = nb.pages.length - kept.length;
-    if (!removed) return 0;
     nb.pages = kept;
     nb.updatedAt = now();
+    this.pushPageTrash(bookId, entries.map((e) => e.page));
     this.save();
+    this.recordPageOp(bookId, { kind: 'remove', label: `删除 ${removed} 页`, entries: entries.map((e) => ({ index: e.index, page: clone(e.page) })) });
     return removed;
   }
 
@@ -757,6 +905,10 @@ export class NotebookStore {
     for (let k = picked.length - 1; k >= 0; k--) nb.pages.splice(picked[k].i + 1, 0, copies[k]);
     nb.updatedAt = now();
     this.save();
+    // 记「这些副本各自的落点」：撤销时按 id 删掉它们
+    const entries = [];
+    picked.forEach(({ i }, k) => entries.push({ index: i + 1 + k, page: copies[k] }));
+    this.recordPageOp(bookId, { kind: 'insert', label: `复制 ${copies.length} 页`, entries });
     return copies;
   }
 
@@ -770,11 +922,14 @@ export class NotebookStore {
     const want = new Set((Array.isArray(pageIds) ? pageIds : [pageIds]).filter(Boolean));
     const picked = nb.pages.filter((p) => want.has(p.id));
     if (!picked.length || picked.length === nb.pages.length) return false;
+    const beforeIds = nb.pages.map((p) => p.id);
     const rest = nb.pages.filter((p) => !want.has(p.id));
     const at = Math.max(0, Math.min(rest.length, Math.round(Number(toIndex)) || 0));
     nb.pages = [...rest.slice(0, at), ...picked, ...rest.slice(at)];
     nb.updatedAt = now();
     this.save();
+    const op = reorderOp(beforeIds, nb.pages.map((p) => p.id), { label: `移动 ${picked.length} 页` });
+    if (op) this.recordPageOp(bookId, op);
     return true;
   }
 
