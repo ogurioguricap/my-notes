@@ -323,8 +323,10 @@ try {
     await sleep(120);
   }
 
-  // 打开第一篇笔记
-  const slug = notes[0].slug;
+  // 打开一篇「内容足够长」的笔记：挑 HTML 最长的那条。
+  // （原来固定用 notes[0]，结果你从网站发布一篇只写了两行的笔记，这条断言就挂了——测试不该这么脆）
+  const longNote = notes.slice().sort((a, b) => String(b.html || '').length - String(a.html || '').length)[0] || notes[0];
+  const slug = longNote.slug;
   location.hash = `#/note/${encodeURIComponent(slug)}`;
   windowStub.dispatchEvent({ type: 'hashchange' });
   await sleep(300);
@@ -537,6 +539,62 @@ try {
       expect('跨页拖拽：目标缩略图会高亮', /highlightThumb/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'viewer.mjs'), 'utf8')));
     }
     expect('跨页拖拽渲染无运行期异常', errors.length === 0, errors.slice(-1).join(''));
+    nbStore.purge(bk.id);
+    location.hash = '#/books';
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(150);
+  }
+
+  // 不变式审计：页面结构变化后，cur 必须夹紧、编辑器必须重新绑到当前页（这几条是审计里抓到的真 bug）
+  {
+    const bk = nbStore.create({ title: '不变式本' });
+    for (let i = 0; i < 5; i++) nbStore.addPage(bk.id, {});
+    location.hash = `#/book/${encodeURIComponent(bk.id)}`;
+    windowStub.dispatchEvent({ type: 'hashchange' });
+    await sleep(350);
+    const v = globalThis.window.__notes.bookView ? globalThis.window.__notes.bookView() : null;
+    if (v) {
+      const issues = [];
+      const audit = (label) => {
+        const full = nbStore.get(bk.id);
+        if (full.pages.length < 1) issues.push(`${label}: 页数 0`);
+        if (!(v.cur >= 0 && v.cur < full.pages.length)) issues.push(`${label}: cur=${v.cur} 越界（页数 ${full.pages.length}）`);
+        if (v.editor && full.pages[v.cur] && v.editor.pageId !== full.pages[v.cur].id) issues.push(`${label}: 编辑器还停在别的页`);
+        if (v.thumbList) {
+          const n = v.thumbList.querySelectorAll('.nb-thumb').length;
+          if (n !== full.pages.length) issues.push(`${label}: 缩略图 ${n} ≠ 页数 ${full.pages.length}`);
+        }
+      };
+      audit('打开后');
+      v.gotoPage(5); await sleep(50);
+      v.ovSel = new Set([5]);
+      v.ovBatch('delete'); await sleep(80);
+      audit('删掉最后一页（原本停在最后一页）');
+      v.gotoPage(0); await sleep(50);
+      v.ovSel = new Set([0]);
+      v.ovBatch('delete'); await sleep(80);
+      audit('删掉当前页');
+      v.gotoPage(1); await sleep(50);
+      v.ovSel = new Set([0, 1]);
+      v.ovBatch('duplicate'); await sleep(80);
+      audit('批量复制');
+      v.ovSel = new Set([0]); v.ovBatch('end'); await sleep(80);
+      audit('批量移到末尾');
+      while (nbStore.get(bk.id).pages.length > 1) {
+        v.ovSel = new Set([nbStore.get(bk.id).pages.length - 1]);
+        v.ovBatch('delete');
+        await sleep(30);
+        audit('连续删除');
+      }
+      v.ovSel = new Set([0]);
+      const refused = v.ovBatch('delete');
+      audit('只剩一页时再删');
+      expect('不变式：只剩一页时拒绝删除', refused === 0 && nbStore.get(bk.id).pages.length === 1);
+      expect(`不变式：页面结构变化后 cur 夹紧 + 编辑器重新绑定 + 缩略图同步（${issues.length} 处异常）`, issues.length === 0, issues.slice(0, 3).join(' | '));
+    } else {
+      expect('不变式：页面结构变化后状态一致', /afterPageListChange\(Math\.max\(0, target\)\)/.test(fs.readFileSync(path.join(DOCS, 'js', 'notebook', 'viewer.mjs'), 'utf8')));
+    }
+    expect('不变式审计无运行期异常', errors.length === 0, errors.slice(-1).join(''));
     nbStore.purge(bk.id);
     location.hash = '#/books';
     windowStub.dispatchEvent({ type: 'hashchange' });

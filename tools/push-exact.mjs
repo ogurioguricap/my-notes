@@ -101,9 +101,37 @@ const utcIso = (stamp) => new Date(Number(String(stamp).split(' ')[0]) * 1000).t
 console.log(`本地提交 ${localHead.slice(0, 12)} | tree ${treeSha.slice(0, 12)} | parent ${parent.slice(0, 12)}`);
 const remoteRef = await req(`${API}/git/ref/heads/${BRANCH}`);
 console.log(`远端 ${BRANCH} = ${remoteRef.object.sha.slice(0, 12)}`);
+
+/**
+ * 上次推送被打断的情况：远端 HEAD 已经不是本地父提交，但它其实就是**我们这条提交**（内容一致、只是时间戳被规整过）
+ *   —— 判据：tree / parent / message 三项完全一致
+ *   这时不重复推送，直接把远端那个提交在本地重建出来并对齐 ref（省事，也不会造出第二条重复提交）
+ */
+let adopt = null;
 if (remoteRef.object.sha !== parent) {
-  console.error('❌ 远端 HEAD 不是本地父提交：先 `git fetch` 对齐再推（避免把别人的提交顶掉）');
-  process.exit(1);
+  const rsha = remoteRef.object.sha;
+  const rc = await req(`${API}/git/commits/${rsha}`);
+  const sameTree = rc.tree && rc.tree.sha === treeSha;
+  const sameParent = Array.isArray(rc.parents) && rc.parents.length === 1 && rc.parents[0].sha === parent;
+  const sameMsg = String(rc.message || '').replace(/\n+$/, '') === message;
+  if (sameTree && sameParent && sameMsg) {
+    console.log('ℹ️ 远端 HEAD 已经是「同一条提交」（tree / parent / message 全一致，只是时间戳被 GitHub 规整过）');
+    console.log('   → 不重复推送，直接把这个提交在本地重建出来并对齐 ref');
+    adopt = rc;
+  } else {
+    console.error('❌ 远端已经前进了，而本地这条不是它的后继：直接推会覆盖别人的提交，已中止。');
+    console.error(`   远端 HEAD = ${rsha.slice(0, 12)}（${String(rc.message || '').split('\n')[0].slice(0, 40)}）`);
+    console.error('   常见原因：有人从**网站编辑器**发布/新建过笔记——那会走 GitHub API 直接提交，本地 git 看不到。');
+    console.error('   这样对齐（两边改动都不丢）：');
+    console.error('     git fetch origin main');
+    console.error('     git branch -f tmp-local HEAD            # 保住本地这条提交');
+    console.error('     git checkout -B main origin/main        # 站到远端最新');
+    console.error('     git cherry-pick -n tmp-local            # 把本地改动放回来（-n 先不提交）');
+    console.error('     node tools/build.mjs                    # 若 docs/data/index.json 冲突：按 content/ 重新生成');
+    console.error('     git add -A && git commit -F <提交信息文件>');
+    console.error('   然后重跑本命令。');
+    process.exit(1);
+  }
 }
 
 const stats = { blobs: 0, reused: 0, trees: 0 };
@@ -131,7 +159,26 @@ console.log(`对象上传完成：新 blob ${stats.blobs} · 复用远端 ${stat
 
 const authorIso = utcIso(authorStamp);
 const committerIso = utcIso(committerStamp);
-const commit = await req(`${API}/git/commits`, {
+let commit = adopt;
+if (commit) {
+  // 采用远端已有的那条：用它的作者/提交时间重建（GitHub 会把时间戳规整成 UTC）
+  const rAuthorIso = String(commit.author.date).replace(/\.\d+Z$/, 'Z');
+  const rCommitterIso = String(commit.committer.date).replace(/\.\d+Z$/, 'Z');
+  const rObjText = `tree ${treeSha}\nparent ${parent}\nauthor ${commit.author.name} <${commit.author.email}> ${Math.floor(Date.parse(rAuthorIso) / 1000)} +0000\n`
+    + `committer ${commit.committer.name} <${commit.committer.email}> ${Math.floor(Date.parse(rCommitterIso) / 1000)} +0000\n\n${String(commit.message).replace(/\n+$/, '')}`;
+  const rPayload = Buffer.concat([Buffer.from(`commit ${Buffer.byteLength(rObjText)}\0`, 'utf8'), Buffer.from(rObjText, 'utf8')]);
+  const rSha = crypto.createHash('sha1').update(rPayload).digest('hex');
+  if (rSha !== commit.sha) throw new Error(`远端提交在本地重建失败：${rSha.slice(0, 12)} ≠ ${commit.sha.slice(0, 12)}`);
+  const rdir = path.join(GITDIR, 'objects', rSha.slice(0, 2));
+  fs.mkdirSync(rdir, { recursive: true });
+  if (!fs.existsSync(path.join(rdir, rSha.slice(2)))) fs.writeFileSync(path.join(rdir, rSha.slice(2)), zlib.deflateSync(rPayload));
+  fs.writeFileSync(path.join(GITDIR, 'refs', 'heads', BRANCH), `${rSha}\n`);
+  const rtracking = path.join(GITDIR, 'refs', 'remotes', 'origin', BRANCH);
+  if (fs.existsSync(path.dirname(rtracking))) fs.writeFileSync(rtracking, `${rSha}\n`);
+  console.log(`✅ 本地已对齐到远端同一条提交 ${rSha.slice(0, 12)}（本地内容与远端逐字节一致）`);
+  process.exit(0);
+}
+const created = await req(`${API}/git/commits`, {
   method: 'POST',
   body: JSON.stringify({
     message,
@@ -141,6 +188,7 @@ const commit = await req(`${API}/git/commits`, {
     committer: { name: committerName, email: committerEmail, date: committerIso },
   }),
 });
+commit = created;
 console.log(`远端新提交 = ${commit.sha.slice(0, 12)}`);
 
 // 按 GitHub 实际存储的格式在本地重建提交对象（UTC +0000 + 消息末尾不带换行），写回 .git 让两边同 sha

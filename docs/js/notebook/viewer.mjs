@@ -1941,7 +1941,6 @@ export class NotebookView {
     if (k === 'pages') this.paintPanelThumbs();
     if (k === 'ocr') this.renderOcrStatus();
     if (k === 'search') this.renderBookSearch();
-    if (k === 'search') this.renderBookSearch();
   }
 
   /* ---------- 页面总览（一屏看完所有页 + 多选批量操作） ---------- */
@@ -2026,6 +2025,8 @@ export class NotebookView {
     const ids = this.ovPageIds();
     if (!ids.length) { this.toast('先点几页选中'); return 0; }
     const nb = this.nb;
+    const keepId = (nb.pages[this.cur] || {}).id;                 // 操作前的当前页：能不动就不动
+    const firstSel = Math.min(...[...(this.ovSel || new Set())]);
     let n = 0;
     if (kind === 'delete') {
       n = this.store.removePages(this.bookId, ids);
@@ -2044,16 +2045,30 @@ export class NotebookView {
     } else if (kind === 'bookmark' || kind === 'unbookmark') {
       n = this.store.setPagesBookmark(this.bookId, ids, kind === 'bookmark');
       this.toast(n ? `${kind === 'bookmark' ? '已加书签' : '已去书签'} ${n} 页` : '这些页的书签状态没变化');
+      this.refresh();
+      if (this.overviewOpen) this.renderOverview();
+      return n;
     }
-    this.refresh();
+    // 页数/顺序变了：必须走 afterPageListChange —— 它会夹紧 cur、重建编辑器并重新绑定当前页
+    // （之前这里只 refresh()，结果 cur 会越界、编辑器还停在已被删的那一页上 → 会画错页）
+    const after = this.store.get(this.bookId) || { pages: [] };
+    let target;
+    if (kind === 'delete') target = Math.min(firstSel, after.pages.length - 1);
+    else {
+      const idx = after.pages.findIndex((p) => p.id === keepId);
+      target = idx >= 0 ? idx : Math.min(this.cur, after.pages.length - 1);
+    }
+    this.afterPageListChange(Math.max(0, target));
     this.ovSel = new Set();
-    this.renderOverview();
+    this.ovLast = -1;
+    if (this.overviewOpen) this.renderOverview();
     return n;
   }
 
   /** 只导出选中的页（子集导出不带书签/目录/内链：页号会错，宁可不放） */
   async exportSelectedPagesPdf(qualityId = null) {
-    const indices = [...(this.ovSel || new Set())].sort((a, b) => a - b);
+    const total = ((this.nb && this.nb.pages) || []).length;
+    const indices = [...(this.ovSel || new Set())].filter((i) => Number.isFinite(i) && i >= 0 && i < total).sort((a, b) => a - b);
     if (!indices.length) { this.toast('先点几页选中'); return null; }
     this.flush();
     const qid = qualityId || this.pdfQuality || 'high';

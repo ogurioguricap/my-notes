@@ -2524,6 +2524,16 @@ head('打印检查单 · 跳过空白页');
     return /dropBlank && !p\.items\.length/.test(src) && /const mapIndex =/.test(src) && /droppedBefore/.test(src) && /const linkPagesFinal = dropped/.test(src);
   })());
 
+  // --- 边界（审计时发现的真 bug）：一张图都没有时，原来的输出是「/Count 1 却没有 Page 对象」的坏 PDF ---
+  {
+    const t0 = latin(studyMod.pdfFromImages([], {}));
+    expect('空输入（整本被跳过）：仍然写出 1 个真实页面对象，而不是坏 PDF', (t0.match(/\/Type \/Page /g) || []).length === 1 && /\/Kids \[3 0 R\]/.test(t0) && /\/Count 1/.test(t0));
+    expect('空输入：MediaBox 与 xref / %%EOF 都正常', (t0.match(/\/MediaBox/g) || []).length === 1 && (() => {
+      const at = Number(/startxref\n(\d+)/.exec(t0)[1]);
+      return at > 0 && t0.slice(at, at + 4) === 'xref' && t0.trimEnd().endsWith('%%EOF');
+    })());
+  }
+
   // --- 端到端：真跑 buildPdf（假渲染），验证跳空白页后页数 / 书签 / 内链 / 目录页码都对 ---
   {
     const fakeRender = () => ({ jpeg: new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 0xFF, 0xD9]), w: 595, h: 842 });

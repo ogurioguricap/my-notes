@@ -168,13 +168,16 @@ export function pdfFromImages(images, o = {}) {
     margin: o.layoutMargin,
   });
   const single = plan.id === 'single';
-  const sheetPlans = single
+  const rawSheets = single
     ? plan.sheets.map((s) => {
       const d = s.draws[0];
       const im = d ? pages[d.page] : null;
       return { mediaW: Math.max(1, Math.round((im && im.w) || 595)), mediaH: Math.max(1, Math.round((im && im.h) || 842)), draws: s.draws };
     })
     : plan.sheets.map((s) => ({ mediaW: Math.round(plan.mediaW), mediaH: Math.round(plan.mediaH), draws: s.draws }));
+  // 一张图都没有（例如「跳过空白页」把整本都跳了）时，也要写出**一张空白页**：
+  // 否则会得到「/Count 1 但没有 Page 对象」的坏 PDF，阅读器打不开
+  const sheetPlans = rawSheets.length ? rawSheets : [{ mediaW: 595, mediaH: 842, draws: [] }];
   const sheetCount = Math.max(1, sheetPlans.length);
   const sheetOfPage = new Array(n).fill(0);
   sheetPlans.forEach((s, si) => s.draws.forEach((d) => { if (d.page >= 0 && d.page < n && !sheetOfPage[d.page]) sheetOfPage[d.page] = si; }));
@@ -508,7 +511,6 @@ export async function buildPdf(pages, o = {}) {
   }
 
   // 自动目录页（可选）：插在最前面，条目自带隐形文字层与可点链接
-  let tocInfo = null;
   if (o.toc && Array.isArray(o.toc.entries) && o.toc.entries.length && !o.render) {
     // 跳过空白页时，目录里的页号与跳转目标都要按「新页序」重编（不然页码全是错的）
     let entries = o.toc.entries;
@@ -525,7 +527,7 @@ export async function buildPdf(pages, o = {}) {
     const firstPaper = (list[0] && list[0].paper) || { template: 'lined', size: 'a4' };
     const toc = renderTocPage(entries, { paper: firstPaper, title: o.toc.title || '目录', scale, quality: jpegQuality });
     if (toc) {
-      tocInfo = { entries: toc.entries };      rendered.unshift({
+      rendered.unshift({
         im: { jpeg: toc.jpeg, w: toc.w, h: toc.h },
         page: { paper: firstPaper, items: [], ocr: null, extraRuns: toc.runs, extraLinks: toc.links },
       });
